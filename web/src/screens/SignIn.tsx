@@ -1,15 +1,25 @@
 import type { LoginProvider } from "@contract";
 import { useEffect, useRef, useState } from "react";
-import { InfoIcon, Mark, WarnIcon } from "../components/Icons";
-import { ThemeToggle, Wordmark } from "../components/TopBar";
+import { GitHubLogo, GoogleLogo } from "../components/AgentLogos";
+import { InfoIcon, WarnIcon } from "../components/Icons";
 import { linkProps, navigate, takeReturnAfterSignIn } from "../lib/router";
+import { Landing, SignInShell } from "../site/Landing";
 import type { Theme } from "../lib/theme";
 import { useApp, useAuth } from "../state/app";
 
-export function SignIn({ theme, onToggleTheme }: { theme: Theme; onToggleTheme(): void }) {
+/**
+ * Sign-in is the landing page with the live panel in its hero: "/" and "/signin" are one page for
+ * someone signed out. "/signin?with=github" (the static page's buttons) starts that sign-in at once.
+ */
+export function SignIn({ onToggleTheme }: { theme?: Theme; onToggleTheme(): void }) {
+	return <Landing onToggleTheme={onToggleTheme} signIn={<SignInPanel />} />;
+}
+
+function SignInPanel() {
 	const { client, signIn, signedOutReason, platform, explain } = useApp();
 	const [busy, setBusy] = useState<LoginProvider | "finish" | "demo" | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const asked = useRef<string | null>(new URL(location.href).searchParams.get("with"));
 
 	useEffect(() => {
 		const url = new URL(location.href);
@@ -35,6 +45,17 @@ export function SignIn({ theme, onToggleTheme }: { theme: Theme; onToggleTheme()
 		}
 	};
 
+	// The static landing's buttons: start the provider they named once the server says it is offered.
+	useEffect(() => {
+		const wanted = asked.current;
+		if (!wanted || !platform.info) return;
+		asked.current = null;
+		history.replaceState(history.state, "", location.pathname);
+		if (wanted === "github" && platform.info.github) void start("github");
+		else if (wanted === "google" && platform.info.googleLogin) void start("google");
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [platform.info]);
+
 	const demo = async () => {
 		setBusy("demo");
 		setError(null);
@@ -48,124 +69,95 @@ export function SignIn({ theme, onToggleTheme }: { theme: Theme; onToggleTheme()
 		}
 	};
 
+	const info = platform.info;
+	const accounts = !!info && (info.github || info.googleLogin);
 	return (
-		<div className="signin">
-			<div className="signin-bar">
-				<Wordmark />
-				<div className="signin-bar-end">
-					<a className="topbar-docs" {...linkProps({ name: "docs", slug: "" })}>
-						Docs
-					</a>
-					<ThemeToggle theme={theme} onToggle={onToggleTheme} />
-				</div>
-			</div>
-
-			<main className="signin-main">
-				<section className="signin-pitch" aria-labelledby="pitch">
-					<Mark size={132} className="signin-mark" />
-					<h1 id="pitch" className="display">
-						Put an agent to work, and watch every turn.
-					</h1>
-					<p className="signin-lede">
-						Windlass is a coding agent for the terminal. Here it runs in a sandbox you choose, and you see each file it
-						reads, each command it runs and what the work cost.
-					</p>
-					<ul className="signin-points">
-						<li>
-							<span className="signin-point-key">sandbox</span>
-							Hosted or on your machine, locked down by default.
-						</li>
-						<li>
-							<span className="signin-point-key">trace</span>
-							Every step live, as it happens.
-						</li>
-						<li>
-							<span className="signin-point-key">changes</span>
-							The diff of the workspace after every turn.
-						</li>
-					</ul>
-				</section>
-
-				<section className="signin-card" aria-label="Sign in">
-					{signedOutReason ? (
-						<p className="callout callout-warn" role="status">
-							<WarnIcon />
-							<span>{signedOutReason}</span>
-						</p>
-					) : null}
-
-					<h2 className="signin-title">Sign in</h2>
-					{platform.info?.github && (
-						<button
-							type="button"
-							className="button button-primary button-large signin-primary"
-							onClick={() => void start("github")}
-							disabled={busy !== null}
-						>
-							Continue with GitHub
+		<SignInShell
+			foot={
+				client.kind === "mock" ? (
+					<>
+						<InfoIcon size={13} /> Mock backend: nothing leaves this browser.
+					</>
+				) : undefined
+			}
+		>
+			{signedOutReason ? (
+				<p className="callout callout-warn" role="status">
+					<WarnIcon />
+					<span>{signedOutReason}</span>
+				</p>
+			) : null}
+			{info?.github && (
+				<button
+					type="button"
+					className="lp-btn lp-btn-accent lp-btn-lg lp-signin-btn"
+					onClick={() => void start("github")}
+					disabled={busy !== null}
+				>
+					<GitHubLogo /> {busy === "github" ? "Opening GitHub…" : "Continue with GitHub"}
+				</button>
+			)}
+			{info?.googleLogin && (
+				<button
+					type="button"
+					className={`lp-btn ${info.github ? "lp-btn-line" : "lp-btn-accent"} lp-btn-lg lp-signin-btn`}
+					onClick={() => void start("google")}
+					disabled={busy !== null}
+				>
+					<GoogleLogo /> {busy === "google" ? "Opening Google…" : "Continue with Google"}
+				</button>
+			)}
+			{info && !accounts && !info.demoEnabled && (
+				<p className="lp-signin-note">Account sign-in is unavailable on this deployment.</p>
+			)}
+			{platform.loading ? (
+				<p className="lp-signin-note">Asking the server what it offers…</p>
+			) : platform.error ? (
+				<p className="callout callout-bad" role="alert">
+					<WarnIcon />
+					<span>
+						The server did not answer: {platform.error}{" "}
+						<button type="button" className="link" onClick={platform.reload}>
+							Try again
 						</button>
+					</span>
+				</p>
+			) : info?.demoEnabled ? (
+				<>
+					{accounts && (
+						<span className="lp-signin-or" aria-hidden="true">
+							or
+						</span>
 					)}
-					{platform.info?.googleLogin && (
-						<button
-							type="button"
-							className="button button-outline button-large signin-primary"
-							onClick={() => void start("google")}
-							disabled={busy !== null}
-						>
-							Continue with Google
-						</button>
-					)}
-					{platform.info?.github && (
-						<details className="signin-aside">
-							<summary>GitHub rejected the callback URL?</summary>
-							Add {location.origin}/signin to the GitHub App's callback URLs.
-						</details>
-					)}
-					{busy === "finish" && <p role="status">Finishing sign-in…</p>}
-					{platform.info && !platform.info.github && !platform.info.googleLogin && (
-						<p className="signin-aside">Account sign-in is unavailable on this deployment.</p>
-					)}
-					{platform.loading ? (
-						<p className="signin-aside signin-aside-quiet">Asking the server what it offers…</p>
-					) : platform.error ? (
-						<p className="callout callout-bad" role="alert">
-							<WarnIcon />
-							<span>
-								The server did not answer: {platform.error}{" "}
-								<button type="button" className="link" onClick={platform.reload}>
-									Try again
-								</button>
-							</span>
-						</p>
-					) : platform.info?.demoEnabled ? (
-						<div className="signin-demo">
-							{(platform.info.github || platform.info.googleLogin) && (
-								<span className="signin-or" aria-hidden="true">
-									or
-								</span>
-							)}
-							<button type="button" className="button button-outline" onClick={demo} disabled={busy !== null}>
-								{busy === "demo" ? "Starting the demo…" : "Try the demo"}
-							</button>
-							<p className="signin-aside">The demo runs a scripted model with real tool calls and needs no account.</p>
-						</div>
-					) : null}
-					{error ? (
-						<p className="callout callout-bad" role="alert">
-							<WarnIcon />
-							<span>{error}</span>
-						</p>
-					) : null}
-
-					{client.kind === "mock" ? (
-						<p className="signin-foot">
-							<InfoIcon size={14} />
-							Mock backend: the sign-in page is a stand-in and nothing leaves this browser.
-						</p>
-					) : null}
-				</section>
-			</main>
-		</div>
+					<button
+						type="button"
+						className={`lp-btn ${accounts ? "lp-btn-line" : "lp-btn-accent"} lp-btn-lg lp-signin-btn`}
+						onClick={demo}
+						disabled={busy !== null}
+					>
+						{busy === "demo" ? "Starting the demo…" : "Try the demo"}
+					</button>
+					<p className="lp-signin-note">A scripted model with real tool calls. No account needed.</p>
+				</>
+			) : null}
+			{busy === "finish" && (
+				<p className="lp-signin-note" role="status">
+					Finishing sign-in…
+				</p>
+			)}
+			{info?.github && (
+				<details className="lp-signin-help">
+					<summary>GitHub rejected the callback URL?</summary>
+					Add {location.origin}/signin to the GitHub App's callback URLs.
+				</details>
+			)}
+			{error ? (
+				<p className="callout callout-bad" role="alert">
+					<WarnIcon />
+					<span>{error}</span>
+				</p>
+			) : null}
+		</SignInShell>
 	);
 }
 

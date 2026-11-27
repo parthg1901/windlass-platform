@@ -66,7 +66,24 @@
 				font-weight: 600;
 				letter-spacing: -0.02em;
 			}
-			.brand svg {
+			.brand {
+				gap: 0;
+				font-size: 34px;
+				font-weight: 640;
+				letter-spacing: -0.045em;
+				line-height: 1;
+			}
+			/* The wordmark's i-dot is the drum, as in web/src/components/Wordmark.tsx. */
+			.brand-i {
+				position: relative;
+				display: inline-block;
+			}
+			.brand-i svg {
+				position: absolute;
+				left: calc(50% - 0.18em);
+				top: 0.01em;
+				width: 0.36em;
+				height: 0.36em;
 				color: #cfdb6e;
 			}
 			.pill {
@@ -279,10 +296,7 @@
 	<body>
 		<div class="grid"></div>
 		<div class="glow"></div>
-		<p class="brand">
-			<svg width="34" height="34" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11.5" cy="11.5" r="7.5" /><path d="M11.5 4v4.2M5 15.25l3.64-2.1M18 15.25l-3.64-2.1" /><circle cx="11.5" cy="11.5" r="1.5" fill="currentColor" stroke="none" /><path d="M19 11.5V23" /><rect x="17" y="22" width="4" height="4" rx="1" fill="currentColor" stroke="none" /></svg>
-			windlass
-		</p>
+		<p class="brand" aria-label="Windlass">w<span class="brand-i">ı<svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="14" r="9" stroke="currentColor" stroke-width="5.2" /><circle cx="14" cy="14" r="2.6" fill="currentColor" /></svg></span>ndlass</p>
 		<p class="pill">
 			<b>Coding agents</b>
 			in sandboxes you choose

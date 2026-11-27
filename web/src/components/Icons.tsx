@@ -262,10 +262,13 @@ export const UserIcon = (props: IconProps) => (
 	</Svg>
 );
 
+/** The tile's outline: a rounded square with the drum and the line it hauls cut out of it. */
+export const MARK_TILE_PATH =
+	"M7 2h14a5 5 0 0 1 5 5v14a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5Zm5 5.5a5.5 5.5 0 1 0 0 11h14v-2.6h-9.4A5.5 5.5 0 0 0 12 7.5Zm0 3.3a2.2 2.2 0 1 1 0 4.4a2.2 2.2 0 0 1 0-4.4Z";
+
 /**
- * The mark: a windlass seen end on. A drum with three handspikes and the line it hauls, running off
- * its side and down to a link. With `turning` the drum turns, which is how the interface says an
- * agent is at work.
+ * The mark: a solid tile with a windlass drum and its line cut out of it. With `turning` it draws the
+ * drum alone, the dot of the wordmark's i, turning: how the interface says an agent is at work.
  */
 export function Mark({
 	size = 20,
@@ -276,26 +279,48 @@ export function Mark({
 	turning?: boolean;
 	className?: string;
 }) {
+	if (turning) return <Drum size={size} turning className={className} />;
+	return (
+		<svg
+			width={size}
+			height={size}
+			viewBox="0 0 28 28"
+			aria-hidden="true"
+			focusable="false"
+			className={`mark${className ? ` ${className}` : ""}`}
+		>
+			<path fill="currentColor" fillRule="evenodd" d={MARK_TILE_PATH} />
+		</svg>
+	);
+}
+
+/** The drum: a ring round a hub, with one handspike so that it is seen to turn. The wordmark's i-dot draws it without the handspike. */
+export function Drum({
+	size = 20,
+	turning = false,
+	spoke = true,
+	className,
+}: {
+	size?: number;
+	turning?: boolean;
+	spoke?: boolean;
+	className?: string;
+}) {
 	return (
 		<svg
 			width={size}
 			height={size}
 			viewBox="0 0 28 28"
 			fill="none"
-			stroke="currentColor"
-			strokeWidth={2}
-			strokeLinecap="round"
 			aria-hidden="true"
 			focusable="false"
-			className={`mark${turning ? " mark-turning" : ""}${className ? ` ${className}` : ""}`}
+			className={`mark mark-drum-only${turning ? " mark-turning" : ""}${className ? ` ${className}` : ""}`}
 		>
 			<g className="mark-drum">
-				<circle cx="11.5" cy="11.5" r="7.5" />
-				<path d="M11.5 4v4.2M5 15.25l3.64-2.1M18 15.25l-3.64-2.1" />
-				<circle cx="11.5" cy="11.5" r="1.5" fill="currentColor" stroke="none" />
+				<circle cx="14" cy="14" r="9" stroke="currentColor" strokeWidth="3.6" />
+				<circle cx="14" cy="14" r="2.6" fill="currentColor" />
+				{spoke ? <path d="M14 14V6.5" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" /> : null}
 			</g>
-			<path d="M19 11.5V23" />
-			<rect x="17" y="22" width="4" height="4" rx="1" fill="currentColor" stroke="none" />
 		</svg>
 	);
 }

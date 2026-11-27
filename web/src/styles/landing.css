@@ -114,6 +114,9 @@
 .lp-brand .mark {
 	color: var(--accent-text);
 }
+.lp-brand .wordmark-name {
+	font-size: 19px;
+}
 
 .lp-nav {
 	display: flex;
@@ -3041,5 +3044,515 @@
 @keyframes lp-drop {
 	from {
 		transform: translateY(-40px);
+	}
+}
+
+/* ---- the hero: copy and sign-in beside the isometric windlass (IsoWindlass.tsx) ---------------------- */
+
+.lp-hero-top {
+	grid-template-columns: minmax(0, 0.84fr) minmax(0, 1.16fr);
+	align-items: center;
+	gap: 24px;
+	padding-top: 56px;
+}
+.lp-hero-top .lp-h1 {
+	font-size: clamp(2.4rem, 1.1rem + 3.4vw, 4rem);
+}
+.lp-hero-top .lp-lede {
+	max-width: 520px;
+	font-size: clamp(1rem, 0.92rem + 0.3vw, 1.0625rem);
+}
+
+/* The manifest sits under the hero as one row of three. */
+.lp-hero .lp-manifest {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 0;
+	margin: 36px 0 0;
+	padding: 0;
+	border-left: 0;
+	border-top: 1px solid var(--line);
+}
+.lp-hero .lp-manifest > div {
+	padding: 18px 20px 0 0;
+}
+.lp-hero .lp-manifest > div + div {
+	padding-left: 20px;
+	border-left: 1px solid var(--line);
+}
+
+/* The sign-in panel: a raised card with a hairline, buttons full width. */
+.lp-signin {
+	margin-top: 30px;
+	max-width: 440px;
+	scroll-margin-top: 96px;
+	outline: none;
+}
+.lp-signin-card {
+	padding: 18px;
+	border-radius: var(--r-box);
+	background: var(--bg-raised);
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.lp-signin:target .lp-signin-card,
+.lp-signin:focus-within .lp-signin-card {
+	box-shadow: inset 0 0 0 1px var(--line-field);
+}
+.lp-signin-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 14px;
+}
+.lp-signin-title {
+	margin: 0;
+	font-size: var(--text-15);
+	font-weight: var(--weight-strong);
+	letter-spacing: var(--tracking-tight);
+}
+.lp-signin-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--ink-faint);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+}
+.lp-signin-badge::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--accent-text);
+}
+.lp-signin-actions {
+	display: grid;
+	gap: 8px;
+}
+.lp-signin-btn {
+	width: 100%;
+	border: 0;
+	cursor: pointer;
+	font-family: inherit;
+}
+.lp-signin-btn:disabled {
+	cursor: default;
+	opacity: 0.6;
+}
+.lp-btn-line.lp-signin-btn {
+	background: transparent;
+}
+.lp-signin-or {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--ink-faint);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+}
+.lp-signin-or::before,
+.lp-signin-or::after {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: var(--line);
+}
+.lp-signin-note,
+.lp-signin-help {
+	margin: 2px 0 0;
+	color: var(--ink-faint);
+	font-size: var(--text-12);
+	line-height: 1.5;
+}
+.lp-signin-help summary {
+	cursor: pointer;
+}
+.lp-signin-actions .callout {
+	margin: 0;
+}
+.lp-signin-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 6px;
+	margin: 14px 0 0;
+	padding-top: 12px;
+	border-top: 1px solid var(--line);
+	color: var(--ink-faint);
+	font-size: var(--text-12);
+}
+.lp-signin-foot a {
+	color: var(--ink-dim);
+	text-decoration: underline;
+	text-decoration-color: var(--line-strong);
+	text-underline-offset: 3px;
+}
+.lp-signin-foot a:hover {
+	color: var(--ink);
+}
+
+/* ---- the isometric windlass ------------------------------------------------------------------------ */
+
+.lp-iso-stage {
+	position: relative;
+	margin: 0 -72px 0 -32px;
+}
+.iso {
+	--iso-t: #17181c;
+	--iso-r: #111215;
+	--iso-l: #0d0e10;
+	--iso-edge: rgb(255 255 255 / 0.16);
+	--iso-edge-soft: rgb(255 255 255 / 0.06);
+	--iso-ink: var(--ink-dim);
+	display: block;
+	width: 100%;
+	height: auto;
+	overflow: visible;
+	font-family: var(--font-mono);
+}
+:root[data-theme="light"] .iso {
+	--iso-t: #ffffff;
+	--iso-r: #f0f0ee;
+	--iso-l: #e6e6e3;
+	--iso-edge: rgb(16 17 20 / 0.22);
+	--iso-edge-soft: rgb(16 17 20 / 0.07);
+}
+.iso polygon,
+.iso .iso-drum,
+.iso .iso-flange,
+.iso .iso-cap {
+	stroke: var(--iso-edge);
+	stroke-width: 1;
+	stroke-linejoin: round;
+	vector-effect: non-scaling-stroke;
+}
+.iso .iso-t {
+	fill: var(--iso-t);
+}
+.iso .iso-r {
+	fill: var(--iso-r);
+}
+.iso .iso-l {
+	fill: var(--iso-l);
+}
+.iso-deck .iso-t {
+	fill: var(--bg);
+}
+.iso-grid {
+	fill: none;
+	stroke: var(--iso-edge-soft);
+	stroke-width: 1;
+}
+.iso-track {
+	fill: none;
+	stroke: var(--iso-edge);
+	stroke-dasharray: 2 5;
+}
+.iso-drum {
+	fill: var(--iso-l);
+}
+.iso-coils,
+.iso-rope,
+.iso-rope-lay {
+	fill: none;
+	stroke-linecap: round;
+}
+.iso-coils {
+	stroke: var(--ink-faint);
+	stroke-width: 2;
+	stroke-dasharray: 22 1.6;
+	opacity: 0.7;
+}
+.iso-rope {
+	stroke: var(--ink-faint);
+	stroke-width: 2.4;
+}
+.iso-rope-lay {
+	stroke: var(--bg);
+	stroke-width: 1;
+	stroke-dasharray: 1.2 6.8;
+	opacity: 0.85;
+}
+.iso-ratchet {
+	fill: none;
+	stroke: var(--ink-faint);
+	stroke-width: 1;
+}
+.iso-spokes,
+.iso-crank {
+	fill: none;
+	stroke: var(--ink-dim);
+	stroke-width: 2;
+	stroke-linecap: round;
+}
+.iso-crank {
+	stroke-width: 3;
+}
+.iso-crank-knob,
+.iso-axle {
+	fill: var(--iso-t);
+	stroke: var(--ink-dim);
+	stroke-width: 1.4;
+}
+.iso-tick {
+	fill: var(--accent-text);
+}
+.iso-hub {
+	fill: var(--ink-faint);
+}
+.iso-pawl path {
+	fill: var(--iso-t);
+	stroke: var(--ink-dim);
+	stroke-width: 1;
+	stroke-linejoin: round;
+}
+.iso-pawl circle {
+	fill: var(--ink-dim);
+}
+.iso-lamp {
+	fill: var(--iso-t);
+	stroke: var(--iso-edge);
+}
+.iso-vents,
+.iso-truss,
+.iso-cable {
+	fill: none;
+	stroke: var(--iso-edge);
+}
+.iso-cable {
+	stroke-dasharray: 2 3;
+}
+.iso .iso-sandbox {
+	fill: none;
+	stroke: var(--ink-faint);
+	stroke-dasharray: 3 3;
+}
+.iso-screen {
+	fill: var(--bg);
+	stroke: var(--iso-edge);
+}
+.iso-screen-lines {
+	fill: none;
+	stroke: var(--ok);
+	stroke-linecap: round;
+}
+.iso .iso-window {
+	fill: var(--bg);
+}
+.iso-lens {
+	fill: var(--bg);
+	stroke: var(--ink-dim);
+	stroke-width: 1.4;
+}
+.iso .iso-cone {
+	fill: var(--accent-text);
+	stroke: none;
+	opacity: 0;
+}
+
+/* Items on the line. Still, each waits where --iso-p puts it; moving, the haul keyframes take over. */
+.iso-crate {
+	transform: translate(calc(var(--iso-dx) * var(--iso-p, 0)), calc(var(--iso-dy) * var(--iso-p, 0)));
+}
+.iso-crate-label {
+	fill: var(--ink-dim);
+	font-size: 7.5px;
+	font-weight: 500;
+}
+.iso-crate-dot {
+	fill: var(--accent-text);
+}
+.iso-pull {
+	opacity: 0;
+}
+.iso-pull-still {
+	opacity: 1;
+}
+.iso-pull rect {
+	fill: var(--bg-raised);
+	stroke: var(--line-strong);
+}
+.iso-pull circle {
+	fill: var(--ok);
+}
+.iso-pull text {
+	fill: var(--ink);
+	font-family: var(--font-text);
+	font-size: 11px;
+	font-weight: 520;
+}
+
+.iso-label text {
+	fill: var(--ink-dim);
+	font-size: 10.5px;
+}
+.iso-label .iso-label-n {
+	fill: var(--accent-text);
+}
+.iso-label .iso-label-sub {
+	fill: var(--ink-faint);
+	font-size: 9.5px;
+}
+.iso-leader {
+	fill: none;
+	stroke: var(--line-strong);
+}
+
+@media (max-width: 900px) {
+	.lp-hero-top {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.lp-iso-stage {
+		margin: 8px -8px 0;
+	}
+	.lp-signin {
+		max-width: none;
+	}
+	.lp-hero .lp-manifest {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.lp-hero .lp-manifest > div + div {
+		padding-left: 0;
+		border-left: 0;
+	}
+}
+
+@media (max-width: 600px) {
+	.iso-label {
+		display: none;
+	}
+	.lp-iso-stage {
+		margin: 8px calc(-1 * var(--gutter)) 0;
+	}
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.iso-spin {
+		animation: lp-spin var(--iso-turn) linear infinite;
+	}
+	.iso-pawl-arm {
+		animation: iso-click var(--iso-click) ease-out infinite;
+	}
+	.iso-rope-lay {
+		animation: iso-lay var(--iso-dash) linear infinite;
+	}
+	.iso-coils {
+		animation: iso-coil calc(var(--iso-dash) * 2.8) linear infinite;
+	}
+	.iso-crate {
+		animation: iso-haul var(--iso-loop) linear infinite;
+	}
+	.iso-lamp {
+		animation: iso-lamp var(--iso-gap) linear infinite;
+	}
+	.iso .iso-cone {
+		animation: iso-flash var(--iso-gap) linear infinite;
+	}
+	.iso-lens {
+		animation: iso-lens var(--iso-gap) linear infinite;
+	}
+	.iso-pull,
+	.iso-pull-still {
+		opacity: 0;
+		animation: iso-pull var(--iso-loop) linear infinite;
+	}
+	.iso-pull-in {
+		animation: iso-pull-in var(--iso-loop) var(--ease-out) infinite;
+		animation-delay: inherit;
+	}
+}
+@keyframes iso-haul {
+	0% {
+		transform: translate(0, 0);
+		opacity: 0;
+	}
+	5% {
+		opacity: 1;
+	}
+	93% {
+		opacity: 1;
+	}
+	100% {
+		transform: translate(var(--iso-dx), var(--iso-dy));
+		opacity: 0;
+	}
+}
+@keyframes iso-flash {
+	0%,
+	2% {
+		opacity: 0;
+	}
+	6% {
+		opacity: 0.22;
+	}
+	24%,
+	100% {
+		opacity: 0;
+	}
+}
+@keyframes iso-lens {
+	0%,
+	20% {
+		stroke: var(--accent-text);
+	}
+	36%,
+	100% {
+		stroke: var(--ink-dim);
+	}
+}
+@keyframes iso-lay {
+	to {
+		stroke-dashoffset: -8;
+	}
+}
+@keyframes iso-coil {
+	to {
+		stroke-dashoffset: 23.6;
+	}
+}
+@keyframes iso-lamp {
+	0%,
+	22% {
+		fill: var(--accent-text);
+		stroke: var(--accent-text);
+	}
+	40%,
+	100% {
+		fill: var(--iso-t);
+		stroke: var(--iso-edge);
+	}
+}
+@keyframes iso-click {
+	0%,
+	62% {
+		transform: rotate(0deg);
+	}
+	82% {
+		transform: rotate(-14deg);
+	}
+	100% {
+		transform: rotate(0deg);
+	}
+}
+@keyframes iso-pull {
+	0% {
+		opacity: 0;
+	}
+	3%,
+	20% {
+		opacity: 1;
+	}
+	26%,
+	100% {
+		opacity: 0;
+	}
+}
+@keyframes iso-pull-in {
+	0% {
+		transform: translateY(8px);
+	}
+	6%,
+	100% {
+		transform: translateY(0);
 	}
 }

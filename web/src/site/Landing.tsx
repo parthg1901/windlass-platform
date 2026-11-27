@@ -11,7 +11,7 @@
  * move too. Under prefers-reduced-motion each holds its finished state.
  */
 import type { ReactNode } from "react";
-import { ClaudeLogo } from "../components/AgentLogos";
+import { ClaudeLogo, GitHubLogo, GoogleLogo } from "../components/AgentLogos";
 import { machineProfileName } from "../lib/machines";
 import {
 	ArrowUpIcon,
@@ -34,8 +34,15 @@ import {
 } from "../components/Icons";
 import { ACCESS_URL } from "./config";
 import { AGENTS, FACTORY_STEPS, FAQ, SESSION_FEATURES, type Feature } from "./content";
+import { IsoWindlass } from "./IsoWindlass";
+import { Wordmark } from "../components/Wordmark";
 
-export function Landing({ onToggleTheme }: { onToggleTheme?: () => void }) {
+/**
+ * `signIn` is the live sign-in panel when the app renders the page (at "/" and "/signin" for someone
+ * signed out). The static page has no script for it, so it draws `StaticSignIn`: links into the app's
+ * "/signin", which starts the chosen sign-in straight away.
+ */
+export function Landing({ onToggleTheme, signIn }: { onToggleTheme?: () => void; signIn?: ReactNode }) {
 	return (
 		<div className="landing">
 			<a className="landing-skip" href="#main">
@@ -43,7 +50,7 @@ export function Landing({ onToggleTheme }: { onToggleTheme?: () => void }) {
 			</a>
 			<SiteBar onToggleTheme={onToggleTheme} />
 			<main id="main" className="lp-main">
-				<Hero />
+				<Hero signIn={signIn} />
 				<Sessions />
 				<WhereItRuns />
 				<Factory />
@@ -58,30 +65,9 @@ export function Landing({ onToggleTheme }: { onToggleTheme?: () => void }) {
 
 /* ---- the mark and the bar ----------------------------------------------------------------------- */
 
-/** The windlass: the drum turns (CSS), the line hangs, the weight at its end. */
+/** The mark (the tile), or the drum alone turning: the site draws the app's own (components/Icons.tsx). */
 function MarkGlyph({ size, turning = false }: { size: number; turning?: boolean }) {
-	return (
-		<svg
-			width={size}
-			height={size}
-			viewBox="0 0 28 28"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth={2}
-			strokeLinecap="round"
-			aria-hidden="true"
-			focusable="false"
-			className="mark"
-		>
-			<g className={`mark-drum${turning ? " lp-turn" : ""}`}>
-				<circle cx="11.5" cy="11.5" r="7.5" />
-				<path d="M11.5 4v4.2M5 15.25l3.64-2.1M18 15.25l-3.64-2.1" />
-				<circle cx="11.5" cy="11.5" r="1.5" fill="currentColor" stroke="none" />
-			</g>
-			<path d="M19 11.5V23" />
-			<rect x="17" y="22" width="4" height="4" rx="1" fill="currentColor" stroke="none" />
-		</svg>
-	);
+	return <Mark size={size} turning={turning} />;
 }
 
 function SiteBar({ onToggleTheme }: { onToggleTheme?: () => void }) {
@@ -89,8 +75,7 @@ function SiteBar({ onToggleTheme }: { onToggleTheme?: () => void }) {
 		<header className="lp-bar">
 			<div className="lp-wrap lp-bar-inner">
 				<a className="lp-brand" href="/" aria-label="Windlass, home">
-					<MarkGlyph size={22} turning />
-					<span>windlass</span>
+					<Wordmark />
 				</a>
 				<nav className="lp-nav" aria-label="On this page">
 					<a href="#sessions">Sessions</a>
@@ -112,7 +97,7 @@ function SiteBar({ onToggleTheme }: { onToggleTheme?: () => void }) {
 						<SunIcon className="lp-theme-sun" />
 						<MoonIcon className="lp-theme-moon" />
 					</button>
-					<a className={`lp-btn lp-btn-line${ACCESS_URL ? " lp-bar-signin" : ""}`} href="/signin">
+					<a className={`lp-btn lp-btn-line${ACCESS_URL ? " lp-bar-signin" : ""}`} href="#sign-in">
 						Sign in
 					</a>
 					{ACCESS_URL ? (
@@ -135,13 +120,13 @@ function Calls({ note = true }: { note?: boolean }) {
 					<a className="lp-btn lp-btn-accent lp-btn-lg" href={ACCESS_URL}>
 						Request access
 					</a>
-					<a className="lp-btn lp-btn-line lp-btn-lg" href="/signin">
+					<a className="lp-btn lp-btn-line lp-btn-lg" href="#sign-in">
 						Sign in
 					</a>
 				</>
 			) : (
 				<>
-					<a className="lp-btn lp-btn-accent lp-btn-lg" href="/signin">
+					<a className="lp-btn lp-btn-accent lp-btn-lg" href="#sign-in">
 						Sign in
 					</a>
 					<a className="lp-btn lp-btn-line lp-btn-lg" href="/docs">
@@ -156,7 +141,7 @@ function Calls({ note = true }: { note?: boolean }) {
 
 /* ---- the hero ----------------------------------------------------------------------------------- */
 
-function Hero() {
+function Hero({ signIn }: { signIn?: ReactNode }) {
 	return (
 		<section className="lp-hero" aria-labelledby="hero-title">
 			<div className="lp-grid-bg" aria-hidden="true" />
@@ -173,39 +158,78 @@ function Hero() {
 							<span className="lp-dim"> Watch every turn.</span>
 						</h1>
 						<p className="lp-lede">
-							Windlass runs coding agents — its own, Windlass, and Claude Code — each in a sandbox of its own: hosted,
-							or on a machine of yours. Every file read and every command run shows up as it happens. Steer it, answer
-							what it asks, and take the work as a pull request.
+							Windlass runs coding agents in a sandbox of their own, hosted or on a machine of yours. Every step shows
+							up as it happens, and the work comes in as a pull request for you to merge.
 						</p>
-						<Calls />
+						<div id="sign-in" className="lp-signin" tabIndex={-1}>
+							{signIn ?? <StaticSignIn />}
+						</div>
 					</div>
-					<dl className="lp-manifest">
-						<div>
-							<dt>agents</dt>
-							<dd>
-								<b>Windlass, Claude Code and OpenCode</b>
-								<span>Codex coming</span>
-							</dd>
-						</div>
-						<div>
-							<dt>sandbox</dt>
-							<dd>
-								<b>Hosted or on your machine</b>
-								<span>a runner that dials out; nothing exposed</span>
-							</dd>
-						</div>
-						<div>
-							<dt>output</dt>
-							<dd>
-								<b>A pull request you review</b>
-								<span>checks, CI and a second agent first; never merges</span>
-							</dd>
-						</div>
-					</dl>
+					<figure className="lp-iso-stage">
+						<IsoWindlass />
+					</figure>
 				</div>
+				<dl className="lp-manifest">
+					<div>
+						<dt>agents</dt>
+						<dd>
+							<b>Windlass, Claude Code and OpenCode</b>
+							<span>Codex coming</span>
+						</dd>
+					</div>
+					<div>
+						<dt>sandbox</dt>
+						<dd>
+							<b>Hosted or on your machine</b>
+							<span>a runner that dials out; nothing exposed</span>
+						</dd>
+					</div>
+					<div>
+						<dt>output</dt>
+						<dd>
+							<b>A pull request you review</b>
+							<span>checks, CI and a second agent first; never merges</span>
+						</dd>
+					</div>
+				</dl>
 				<SessionFrame />
 			</div>
 		</section>
+	);
+}
+
+/** The sign-in panel's frame, shared by the static page and the app's live panel (screens/SignIn.tsx). */
+export function SignInShell({ children, foot }: { children: ReactNode; foot?: ReactNode }) {
+	return (
+		<div className="lp-signin-card">
+			<div className="lp-signin-head">
+				<h2 className="lp-signin-title">Sign in</h2>
+				<span className="lp-signin-badge">by invitation</span>
+			</div>
+			<div className="lp-signin-actions">{children}</div>
+			<p className="lp-signin-foot">
+				{foot ?? (
+					<>
+						No public sign-up or pricing yet.{" "}
+						{ACCESS_URL ? <a href={ACCESS_URL}>Request access</a> : <a href="/docs">Read the docs</a>}
+					</>
+				)}
+			</p>
+		</div>
+	);
+}
+
+/** Without the app: each button opens "/signin?with=…", where the app starts that sign-in at once. */
+function StaticSignIn() {
+	return (
+		<SignInShell>
+			<a className="lp-btn lp-btn-accent lp-btn-lg lp-signin-btn" href="/signin?with=github">
+				<GitHubLogo /> Continue with GitHub
+			</a>
+			<a className="lp-btn lp-btn-line lp-btn-lg lp-signin-btn" href="/signin?with=google">
+				<GoogleLogo /> Continue with Google
+			</a>
+		</SignInShell>
 	);
 }
 
@@ -907,8 +931,7 @@ function SiteFoot() {
 		<footer className="lp-foot">
 			<div className="lp-wrap lp-foot-inner">
 				<span className="lp-brand lp-foot-brand">
-					<MarkGlyph size={18} />
-					<span>windlass</span>
+					<Wordmark />
 				</span>
 				<nav className="lp-foot-nav" aria-label="Site">
 					<a href="/docs">Docs</a>
