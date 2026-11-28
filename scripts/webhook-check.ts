@@ -2197,7 +2197,7 @@ async function run() {
 			await repo({ ...policy, placeFallback: "hosted" });
 			await machine.checkPlaceMachine(mac, "signed-out");
 			assert.match((await file(true)).question!.text, /not signed in|nothing can pay/i);
-			await assert.rejects(repo(policy), /sign-in|supports/i);
+			await assert.rejects(repo(policy), /not signed in|can pay for/i);
 			const draftFeature = make(++number, reader);
 			await applyLabel(draftFeature, "windlass:orchestrate", writer);
 			const [draftPlan] = await items(draftFeature, account);

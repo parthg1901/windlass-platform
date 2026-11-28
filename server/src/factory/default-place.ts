@@ -7,17 +7,8 @@ import {
 	type SandboxPlace,
 	type SandboxProfileId,
 } from "../contract.js";
-import {
-	harnessName,
-	itemModeOf,
-	itemProfiles,
-	initialHarnessModels,
-	machinePayerProblem,
-	itemSignInMessage,
-	itemSignInMethodProblem,
-	knownHarness,
-	machineHarness,
-} from "../sandbox/harnesses.js";
+import { type Availability, availability, availableProfiles } from "../sandbox/availability.js";
+import { initialHarnessModels, machinePayerProblem, knownHarness } from "../sandbox/harnesses.js";
 import { resolveRun, runAgent, type ResolvedRun } from "./resolve-run.js";
 import { agentModelRefusal, machineSlots, runnerProblem, type AgentModels } from "./placement.js";
 
@@ -42,25 +33,28 @@ export function placeMachines(place: ItemPlaceDefaults["place"], machines: reado
 	return typeof place === "object" && place ? machines.filter(m => m.machineId === place.machine) : [];
 }
 
+/** Whether a work item can run this agent on the machine, in the profile named or in any (availability.ts). */
+function itemAvailability(machine: MachineSummary, harness: HarnessId, profile?: SandboxProfileId | null) {
+	return availability({
+		agent: harness,
+		role: "quick",
+		place: { kind: "machine", machine },
+		...(profile && { profile }),
+		credentials: NO_CREDENTIALS,
+	});
+}
+/** A machine's report says what pays for its agents, and Windlass's payer is the turn's to judge. */
+const NO_CREDENTIALS = { keys: [] };
+
+/** A refusal as one line: the rule, then what to do about it. */
+const refusalLine = (refused: Extract<Availability, { ok: false }>) =>
+	refused.fix ? `${refused.message} ${refused.fix.text}` : refused.message;
+
+/** The profiles of the machine a work item can run this agent in, the agent's own default first. */
 export function profilesForItems(machine: MachineSummary, harness: HarnessId) {
-	const available = machine.profiles.filter(
-		p => p.available && (!machine.allowedProfiles || machine.allowedProfiles.some(id => id === p.id)),
-	);
-	if (machine.egress === "none" || machine.warnings.some(w => w.kind === "outdated" || w.kind === "signing-disabled"))
-		return [];
-	const agent = machineHarness(harness);
-	if (!agent) return available;
-	const offered = machine.harnesses?.find(h => h.id === harness);
-	if (
-		!offered ||
-		itemSignInMessage(agent, machineLabel(machine), offered.signIn) ||
-		itemSignInMethodProblem(agent, machineLabel(machine), offered.method)
-	)
-		return [];
-	return itemProfiles(harness).flatMap(id =>
-		available.filter(
-			p => p.id === id && (!agent.sandboxedOn.includes(id) || offered.modes?.includes(itemModeOf(harness, id) ?? "")),
-		),
+	const place = { kind: "machine" as const, machine };
+	return availableProfiles({ agent: harness, role: "quick", place, credentials: NO_CREDENTIALS }).flatMap(id =>
+		machine.profiles.filter(p => p.id === id),
 	);
 }
 
@@ -86,13 +80,10 @@ export function placeProblem(policy: ItemPlaceDefaults, machines: readonly Machi
 		return place === "any-machine"
 			? "There are no paired machines."
 			: "The selected machine is no longer in your account.";
-	if (
-		!candidates.some(m =>
-			profilesForItems(m, harness ?? "windlass").some(p => machineProfile == null || p.id === machineProfile),
-		)
-	)
-		return `No selected machine currently supports ${harnessName(harness ?? "windlass")}${machineProfile ? " with " + machineProfile : ""} for work items. Check its profiles and agent sign-in.`;
-	return null;
+	const verdicts = candidates.map(m => itemAvailability(m, harness ?? "windlass", machineProfile));
+	const refused = verdicts.find(v => !v.ok);
+	if (verdicts.some(v => v.ok) || !refused || refused.ok) return null;
+	return (candidates.length > 1 ? "None of your machines can run this. " : "") + refusalLine(refused);
 }
 
 export function defaultPlaceRetryAt(at: number, attempt: number) {
@@ -146,8 +137,8 @@ export function checkRunPlace(
 	let refusal: DefaultDestination["refusal"];
 	for (const machine of candidates) {
 		const label = machineLabel(machine);
-		const profiles = profilesForItems(machine, harness);
-		const profile = run.profile ?? profiles[0]?.id;
+		const verdict = itemAvailability(machine, harness, run.profile);
+		const profile = verdict.ok ? verdict.profile : (run.profile ?? undefined);
 		const offered = machine.harnesses?.find(h => h.id === harness);
 		const runner = runnerProblem(machine.warnings);
 		const source = "machine";
@@ -175,14 +166,7 @@ export function checkRunPlace(
 			const catalogModel = model.code === "bad_model" && list?.source === "harness" && list.fetchedAt != null;
 			refusal = { code: catalogModel ? "bad_input" : model.code, message: model.message };
 			reasons.push(`“${label}”: ${model.reason}.`);
-		} else if (run.profile && !machine.profiles.some(p => p.id === run.profile && p.available))
-			reasons.push(
-				`“${label}” cannot run ${run.profile}. ${machine.profiles.find(p => p.id === run.profile)?.unavailableReason ?? "Choose another profile or enable it on the runner."}`,
-			);
-		else if (!profiles.some(p => p.id === profile))
-			reasons.push(
-				`“${label}” cannot run ${harnessName(harness)} with ${profile ?? "an available profile"}. Check its allowed profiles and payer.`,
-			);
+		} else if (!verdict.ok) reasons.push(refusalLine(verdict));
 		else {
 			const room = roomProblem(machine);
 			const place = { kind: "machine" as const, machineId: machine.machineId };
