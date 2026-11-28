@@ -177,7 +177,7 @@ export async function linearCallbackResponse(request: Request, deps: LinearConne
 
 /**
  * The end of a sign-in as oneself (`linear/app.ts` `person`): the person's token proves who they are and is revoked at once.
- * The web app is sent back with a ticket only the user who began it can redeem (`linkAccount`), or `link-error`.
+ * The web app is sent back with a ticket only the user who began it can redeem (`linkAccount`, at once), or `link-error`.
  */
 async function linked(
 	app: LinearApp,
@@ -186,7 +186,7 @@ async function linked(
 	log: (line: string) => void,
 ): Promise<Response> {
 	const { uid, origin } = claimed;
-	const failure = (code: LinearConnectFailure) => back(origin, `link-error=${code}`);
+	const failure = (code: LinearConnectFailure) => back(origin, `link-error=linear.${code}`);
 	if (params.get("error") !== null) return failure(params.get("error") === "access_denied" ? "denied" : "failed");
 	const code = params.get("code");
 	if (code === null || code === "" || code.length > 2048) return failure("code");
@@ -196,7 +196,10 @@ async function linked(
 		const { person, workspace } = await app.person(token.accessToken);
 		const ticket: LinearLinkTicket = { nonce: claimed.nonce, person, workspace };
 		log(`[wlp] linear.link.confirmed uid=${uid} workspace=${workspace.id}`);
-		return back(origin, `link=linear.${serverSealer().seal("transit", linkSubject(uid), JSON.stringify(ticket))}`);
+		return back(
+			origin,
+			`link-return=linear.${serverSealer().seal("transit", linkSubject(uid), JSON.stringify(ticket))}`,
+		);
 	} catch (error) {
 		const unreachable = error instanceof LinearError && error.unreachable;
 		log(

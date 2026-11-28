@@ -255,6 +255,8 @@
  *   WLP_SLACK_CLIENT_ID, WLP_SLACK_CLIENT_SECRET   workspace bot OAuth v2 client
  *   WLP_SLACK_SIGNING_SECRET   key for the exact event/command request bytes
  *   WLP_SLACK_URL              Slack origin (the checks point it at a local stand-in)
+ *   WLP_SLACK_SIGN_IN=1        offer Sign in with Slack to link a Slack user (needs the app's openid and profile
+ *                              user token scopes). Off, a Slack user links through the private link the bot sends
  *
  * Machines of the users' own (Plans/2026-11-19 "bring your own computer"). A user pairs a Linux
  * machine with Docker, and the runner on it dials out to the platform and runs the sandboxes of the
@@ -818,7 +820,12 @@ export function slackConfig() {
 	)
 		throw new Error("WLP_SLACK_URL needs HTTPS or loopback HTTP.");
 	const publicUrl = process.env.WLP_PUBLIC_URL || `http://localhost:${config.httpPort}`;
-	return { clientId, url: url.origin, redirectUrl: `${publicUrl.replace(/\/+$/, "")}/slack/callback` };
+	return {
+		clientId,
+		url: url.origin,
+		redirectUrl: `${publicUrl.replace(/\/+$/, "")}/slack/callback`,
+		signIn: process.env.WLP_SLACK_SIGN_IN === "1",
+	};
 }
 
 /** A day: the longest a Rivet Cloud cluster issues a token for. */

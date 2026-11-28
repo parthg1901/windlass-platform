@@ -15,7 +15,7 @@ export interface SlackMapping {
 export type SlackStatus =
 	| { state: "off" }
 	| { state: "disconnected" }
-	| { state: "connected"; workspaceName: string; mappings: SlackMapping[] };
+	| { state: "connected"; teamId: string; workspaceName: string; mappings: SlackMapping[] };
 
 export interface SlackSettingsActions {
 	slack(): Promise<SlackStatus>;

@@ -165,6 +165,40 @@
 	color: var(--ink-faint);
 }
 
+/* Whether the signed-in user is linked on this source (LinkedAccounts.tsx), under the connection status. */
+.integration-you {
+	display: grid;
+	gap: 8px;
+	min-width: 0;
+}
+.integration-you > * {
+	margin: 0;
+}
+.integration-you-line {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 6px;
+	margin: 0;
+	font-size: var(--text-13);
+	color: var(--ink);
+}
+.integration-you-line svg {
+	color: var(--ok);
+}
+.integration-you-label {
+	color: var(--ink-faint);
+}
+.integration-you-unlinked {
+	color: var(--warn);
+}
+.integration-you-line .faint {
+	color: var(--ink-faint);
+}
+.integration-link-notice {
+	margin: 0 0 4px;
+}
+
 /* While not connected: what connecting it gets you, in three steps. */
 .integration-steps {
 	display: grid;

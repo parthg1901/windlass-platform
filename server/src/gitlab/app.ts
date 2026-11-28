@@ -55,6 +55,7 @@ const MAX_BYTES = 4 * 1024 * 1024;
 const MAX_PAGES = 10;
 /** Hooks, merge requests, notes, award emoji, pipelines, job retries and project access tokens all need `api`. */
 export const GITLAB_SCOPES = ["api"] as const;
+export const GITLAB_PERSON_SCOPES = ["read_user"] as const;
 /** Names the project access tokens this platform makes for Git, so a stale one can be found and revoked. */
 export const GIT_TOKEN_PREFIX = "windlass-git-";
 export const newVerifier = () => randomBytes(32).toString("base64url");
@@ -190,12 +191,13 @@ export class GitlabApp {
 		return `${this.settings.baseUrl}/${parts.map(encodeURIComponent).join("/")}.git`;
 	}
 
-	authorizeUrl(state: string, codeChallenge: string): string {
+	/** `person`: someone signing in as themselves with `read_user` only, to prove which GitLab user they are (a linked account). */
+	authorizeUrl(state: string, codeChallenge: string, as: "app" | "person" = "app"): string {
 		const params = new URLSearchParams({
 			client_id: this.settings.clientId,
 			redirect_uri: this.settings.redirectUrl,
 			response_type: "code",
-			scope: GITLAB_SCOPES.join(" "),
+			scope: (as === "app" ? GITLAB_SCOPES : GITLAB_PERSON_SCOPES).join(" "),
 			state,
 			code_challenge: codeChallenge,
 			code_challenge_method: "S256",

@@ -96,15 +96,15 @@ Choose **Disconnect…** and confirm to forget the connection and selected proje
 
 ### Linear
 
-Where Linear is available, connect your workspace and map each team to a GitHub repository. **Disconnect…** removes its mappings and stops new filings. Existing items stay. Label an issue `windlass` or assign it to the Windlass app. Use `windlass-quick` or `windlass:quick` for Quick mode. Connecting doesn't link your own Linear account: link it under [Linked accounts](#linked-accounts) to file from Linear. See [From a Linear issue](/docs/factory#from-a-linear-issue).
+Where Linear is available, connect your workspace and map each team to a GitHub repository. **Disconnect…** removes its mappings and stops new filings. Existing items stay. Label an issue `windlass` or assign it to the Windlass app. Use `windlass-quick` or `windlass:quick` for Quick mode. Linear's connection acts as the Windlass app, not as you, so right after connecting Windlass asks you to sign in to Linear as yourself once more to [link your account](#linked-accounts). See [From a Linear issue](/docs/factory#from-a-linear-issue).
 
 ### Jira Cloud
 
-Connect Jira, approve access in Atlassian, then choose a site. Under **Jira Cloud**, map a project to a writable GitHub repository. Remove a mapping or choose **Disconnect Jira** to stop filing. Existing items stay. Connecting also links the Jira account you approved with, under [Linked accounts](#linked-accounts). See [From a Jira issue](/docs/factory#from-a-jira-issue).
+Connect Jira, approve access in Atlassian, then choose a site. Under **Jira Cloud**, map a project to a writable GitHub repository. Remove a mapping or choose **Disconnect Jira** to stop filing. Existing items stay. Connecting also [links](#linked-accounts) the Jira account you approved with. See [From a Jira issue](/docs/factory#from-a-jira-issue).
 
 ### Slack
 
-Choose **Connect Slack…**, approve the workspace, and invite Windlass to a public or private channel. In Settings, choose **#channel** and a repository you can push to, then **Map channel**. Disconnecting removes the bot token, the workspace's [linked accounts](#linked-accounts) and mappings. Existing items stay. See [From Slack](/docs/factory#from-slack).
+Choose **Connect Slack…**, approve the workspace, and invite Windlass to a public or private channel. In Settings, choose **#channel** and a repository you can push to, then **Map channel**. Installing the app [links](#linked-accounts) your own Slack account. Disconnecting removes the bot token, the workspace's linked accounts and mappings. Existing items stay. See [From Slack](/docs/factory#from-slack).
 
 **Post plan and question details** is set per channel. Every member of the channel can read what Windlass posts there. With it on, Windlass posts the plan's goal, parts, checks and budget, and a question's text. With it off, Windlass posts links and choice buttons only. A new mapping turns it on for a public repository and off for a private one.
 
@@ -112,15 +112,22 @@ Slack appears only when the deployment operator has [configured the Slack app](h
 
 ### Linked accounts
 
-Work filed from Slack, Linear or Jira belongs to the person who asked for it: whoever mentioned Windlass, added the label or made the assignment. It is filed in the Windlass account linked to that person, and runs with that account's connections, limits and repository access. It never runs in the account of whoever connected the workspace on their behalf. Nothing is filed for a person who hasn't linked an account. On GitHub and GitLab, connecting your account is the link.
+Work filed from Slack, Linear, Jira or GitLab belongs to the person who asked for it: whoever mentioned Windlass, added the label or made the assignment. It is filed in the Windlass account linked to that person, and runs with that account's connections, limits and repository access. It never runs in the account of whoever connected the workspace on their behalf. Nothing is filed for a person who hasn't linked an account.
 
-Link each account once:
+Each of those cards under **Integrations** has a **You:** line under its status. It reads **linked as** your name there, or **not linked yet**, with a button to link. A notice at the top of Integrations names each source you connected but aren't linked on, because what you file there won't run.
 
-- **Slack.** Mention Windlass in a mapped channel. Windlass sends you a private, one-time link. Open it while signed in to Windlass and choose **Link this account**, then send the request again.
-- **Linear.** Choose **Link Linear account…** and sign in to Linear as yourself. Windlass reads only who you are, then forgets the sign-in. Back in Settings, choose **Link this account**. When someone who hasn't linked labels or assigns an issue, Windlass comments once on that issue asking them to link.
-- **Jira.** Connecting Jira links the Jira account you approve with. When someone who hasn't linked labels or assigns an issue, Windlass comments once on that issue asking them to link.
+Linking is a read-only sign-in as yourself at that service. Windlass reads only who you are, then drops the sign-in. Back in Settings, you're linked straight away, and the card names the account, for example "Linked Linear user Ada Lovelace (Acme workspace)".
 
-A link ticket works once, and only for the Windlass account it was made for. A newer link of the same Slack, Linear or Jira account replaces the older one. **Unlink** removes a link. That person is then treated as not linked again.
+- **Slack.** Choose **Sign in with Slack…**. Where the operator hasn't set up Sign in with Slack, mention Windlass in a mapped channel instead. Windlass sends you a private, one-time link. Installing the app links the person who installs it.
+- **Linear.** Choose **Link Linear…**. Connecting Linear asks for this sign-in right after.
+- **Jira.** Choose **Link Jira…** and pick a Jira site you use when Atlassian asks. This doesn't touch the Jira connection. Connecting Jira links the account you connect with.
+- **GitLab.** Choose **Link GitLab…**. Connecting GitLab links the account you connect with.
+
+When someone who hasn't linked labels or assigns a Linear or Jira issue, Windlass comments once on that issue asking them to link. On Slack, Windlass sends them the private link.
+
+A private link from Slack may have been forwarded, so opening it doesn't link anything by itself. The Slack card names the Slack user and workspace on its button, for example **Link Slack user ada in Acme to this account**. Choose it only if that's your Slack account.
+
+A sign-in's return works only for the Windlass account that started it, and a private link works once. A newer link of the same account replaces the older one. **Unlink me** in a card's **⋯** menu removes your link there. You're then treated as not linked again.
 
 ### API tokens
 

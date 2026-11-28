@@ -16,7 +16,7 @@ Both checks form the `linear` group in `scripts/ci-groups.json`; Linear itself i
 ## Module map
 
 - `./app.ts` is the OAuth and GraphQL client: token exchange and revoke, identity, teams, issue reads and item writebacks (`writeIssue`), `LinearError` and `redactLinear`.
-- `./connect.ts` serves `/linear/callback`: consumes the OAuth state, exchanges the code with PKCE, refuses a person's token and seals the connection ticket. A state whose nonce starts `link.` is a person signing in as themselves to link their Linear user: their token is read once (`person`), revoked, and sealed into a `#link=` ticket for `linkAccount`.
+- `./connect.ts` serves `/linear/callback`: consumes the OAuth state, exchanges the code with PKCE, refuses a person's token and seals the connection ticket. A state whose nonce starts `link.` is a person signing in as themselves to link their Linear user: their token is read once (`person`), revoked, and sealed into a `#link-return=linear.` ticket that the web app redeems with `linkAccount` as soon as it lands. The web app starts that sign-in right after a connection too, because the connection's token is the app's and names nobody.
 - `./webhook.ts` serves `/linear/webhook`: size limit, HMAC over the raw bytes, signed-timestamp freshness, then `classify` and `dispatch`.
 - [User integration](../actors/user-linear.ts) stores the owner's connection and team mappings, and exports `dispatchLinearDelivery` and the connect store that `server/src/index.ts` wires to the routes.
 

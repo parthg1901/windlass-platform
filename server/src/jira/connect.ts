@@ -7,6 +7,7 @@ import { readSignedPayload } from "../signatures.js";
 import { serverSealer } from "../signin/seal.js";
 
 export const JIRA_CALLBACK_PATH = "/jira/callback";
+export const jiraLinkSubject = (uid: string) => `jira-link:${uid}`;
 export const digest = (key: string) => createHash("sha256").update(key).digest("hex");
 let client: ReturnType<typeof createClient<Registry>> | undefined;
 export const jiraActors = () => (client ??= createClient<Registry>({ endpoint: ownEngineEndpoint() }));
@@ -31,6 +32,17 @@ export async function jiraCallbackResponse(request: Request): Promise<Response> 
 		return invalid();
 	const code = params.get("code"),
 		ticket = randomBytes(32).toString("base64url");
+	// A sign-in to link a Jira user comes back as a ticket only the user who began it can redeem (`linkAccount`).
+	if (state.link === true) {
+		const fragment =
+			!params.has("error") && code && code.length <= 4096
+				? `link-return=jira.${serverSealer().seal("transit", jiraLinkSubject(state.uid), JSON.stringify({ code, nonce: state.nonce }))}`
+				: `link-error=jira.${params.get("error") === "access_denied" ? "denied" : "failed"}`;
+		return new Response(null, {
+			status: 302,
+			headers: { ...headers, location: `${state.origin}/settings#${fragment}` },
+		});
+	}
 	const sealed =
 		!params.has("error") && code && code.length <= 4096
 			? serverSealer().seal("transit", `jira:${state.uid}:${state.nonce}`, code)

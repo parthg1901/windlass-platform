@@ -246,7 +246,7 @@ function FilterMenu({
 }
 
 /** No work item yet: what the factory does, in three sentences, under the composer that files the first. */
-function FactoryEmpty({ github }: { github: boolean }) {
+function FactoryEmpty({ github, sources }: { github: boolean; sources: boolean }) {
 	return (
 		<div className="state state-empty factory-empty">
 			<Mark size={56} />
@@ -273,6 +273,16 @@ function FactoryEmpty({ github }: { github: boolean }) {
 					</>
 				)}
 			</p>
+			{sources ? (
+				<p>
+					Work filed from Slack, Linear, Jira or GitLab runs in the account of whoever asked for it, and only once they
+					have linked their account there: link yours on each card under{" "}
+					<a className="link" {...linkProps({ name: "settings", section: "settings-integrations" })}>
+						Integrations
+					</a>
+					.
+				</p>
+			) : null}
 		</div>
 	);
 }
@@ -457,7 +467,7 @@ export function Factory({
 						</ul>
 					)
 				) : list.length === 0 ? (
-					<FactoryEmpty github={Boolean(platform.info?.github)} />
+					<FactoryEmpty github={Boolean(platform.info?.github)} sources={Boolean(platform.info?.items)} />
 				) : (
 					<>
 						{items.error ? (

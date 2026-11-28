@@ -12,6 +12,7 @@ import {
 	MappingList,
 	MappingRow,
 } from "./IntegrationCard";
+import { LinkLine, useReportConnection, useUnlinkItems } from "./LinkedAccounts";
 import { useRepositorySearch } from "./RepositoryMenu";
 
 const callbackErrors = new Map([
@@ -28,6 +29,7 @@ export function JiraSettings() {
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [siteId, setSiteId] = useState("");
+	const unlinkItems = useUnlinkItems("jira");
 
 	// StrictMode can restart the effect after the single-use fragment has been stripped.
 	const redemption = useRef<{ auth: typeof auth; client: typeof client; result: Promise<JiraStatus> } | null>(null);
@@ -76,6 +78,8 @@ export function JiraSettings() {
 			setBusy(false);
 		}
 	}
+	// Jira's accounts are Atlassian's, one directory for every site.
+	useReportConnection("jira", status?.state === "connected" ? "*" : null);
 	if (status?.state === "off") return null;
 	const api = client.user(auth);
 	const connection = status?.state === "connected" ? status.connection : null;
@@ -109,12 +113,22 @@ export function JiraSettings() {
 					</button>
 				) : null
 			}
-			more={
-				connection
-					? [{ id: "disconnect", label: "Disconnect Jira…", tone: "warn", disabled: busy, onSelect: disconnect }]
-					: []
-			}
+			more={[
+				...unlinkItems,
+				...(connection
+					? [
+							{
+								id: "disconnect",
+								label: "Disconnect Jira…",
+								tone: "warn" as const,
+								disabled: busy,
+								onSelect: disconnect,
+							},
+						]
+					: []),
+			]}
 		>
+			<LinkLine surface="jira" />
 			{!status && !error && (
 				<div className="usage-loading" aria-busy="true" aria-label="Loading Jira">
 					<span className="skeleton skeleton-meta" style={{ width: "58%" }} />

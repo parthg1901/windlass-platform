@@ -414,8 +414,9 @@ async function checkGitlab(sections: string[]) {
 			client.userGitlab.get([ownerAuth.profile.uid], { params: { token: ownerAuth.token } }).gitlab(),
 			(error: { group?: string; code?: string }) => error.group === "actor" && error.code === "not_found",
 		);
+		const neighbourAuth = await loginHttp(api, origin).demo();
 		const owner = await login(),
-			neighbour = await login(await loginHttp(api, origin).demo());
+			neighbour = await login(neighbourAuth);
 		const disconnected = { state: "disconnected" };
 		assert.deepEqual(await owner.gitlab(), disconnected);
 		assert.equal(
@@ -468,6 +469,51 @@ async function checkGitlab(sections: string[]) {
 		assert.ok(status.state === "connected" && status.baseUrl === fixture.url && status.project === null);
 		await assert.rejects(owner.gitlabComplete(ticket));
 		console.log("PASS connect: PKCE callback issues a single-use ticket for the initiating owner");
+
+		// Connecting links the owner's GitLab user; a teammate links theirs by a read-only sign-in, revoked at once.
+		const accountOf = (auth: typeof ownerAuth) =>
+			client.user.get([auth.profile.uid], { params: { token: auth.token } });
+		const host = new URL(fixture.url).host;
+		const ownerLink = { surface: "gitlab", tenantName: host, name: `@${fixture.user.username}` };
+		const { accounts: ownerAccounts, signIn } = await accountOf(ownerAuth).linkedAccounts();
+		assert.deepEqual(
+			ownerAccounts.map(({ tenant: _, ...a }) => a),
+			[ownerLink],
+		);
+		assert.ok(signIn.includes("gitlab"));
+		const teammate = { id: 72, username: "bea", name: "Bea Teammate" };
+		const linkStart = new URL((await accountOf(neighbourAuth).linkAccountStart({ surface: "gitlab", origin })).url);
+		assert.equal(linkStart.searchParams.get("scope"), "read_user", "a link signs in read-only");
+		fixture.consentAs = teammate;
+		const linkBack = await callback(fixture.authorize(linkStart.href));
+		fixture.consentAs = undefined;
+		const linkLanding = new URL(linkBack.headers.get("location")!);
+		assert.equal(linkLanding.origin + linkLanding.pathname, origin + "/settings");
+		assert.match(linkLanding.hash, /^#link-return=gitlab\..+$/);
+		assert.ok(![...fixture.sessions.values()].some(s => s.as === teammate), "the sign-in's token is revoked");
+		const linkTicket = linkLanding.hash.slice("#link-return=".length);
+		await assert.rejects(accountOf(ownerAuth).linkAccount(linkTicket), { code: "link_ticket" });
+		const teammateLink = await accountOf(neighbourAuth).linkAccount(linkTicket);
+		assert.deepEqual(teammateLink.linked, {
+			...teammateLink.linked,
+			surface: "gitlab",
+			name: "@bea",
+			tenantName: host,
+		});
+		assert.deepEqual(teammateLink.accounts, [teammateLink.linked]);
+		assert.deepEqual(await neighbour.gitlab(), disconnected, "linking connects nothing");
+		const unlinked = await accountOf(neighbourAuth).unlinkAccount({
+			surface: "gitlab",
+			tenant: teammateLink.linked.tenant,
+		});
+		assert.deepEqual(unlinked.accounts, []);
+		assert.equal((await accountOf(ownerAuth).linkedAccounts()).accounts.length, 1, "the owner's link stays");
+		const deniedStart = (await accountOf(neighbourAuth).linkAccountStart({ surface: "gitlab", origin })).url;
+		const denied = await callback(fixture.authorize(deniedStart, true));
+		assert.equal(new URL(denied.headers.get("location")!).hash, "#link-error=gitlab.denied");
+		console.log(
+			"PASS connect: connecting links the owner; a teammate links by a read-only sign-in for their own account only",
+		);
 
 		fixture.addProject({ owner: "group", name: "other" });
 		const project = fixture.addProject({

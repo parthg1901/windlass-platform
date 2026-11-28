@@ -310,8 +310,8 @@ async function run() {
 				assert.equal(start.searchParams.get("scope"), "read");
 				const answer = await callback(new URL(await linear.authorize(start.href)).searchParams);
 				const landing = new URL(answer.headers.get("location")!);
-				assert.match(landing.hash, /^#link=linear\..+$/);
-				return landing.hash.slice("#link=".length);
+				assert.match(landing.hash, /^#link-return=linear\..+$/);
+				return landing.hash.slice("#link-return=".length);
 			} finally {
 				linear.consent = { approve: true };
 			}
@@ -409,9 +409,12 @@ async function run() {
 				const someone = client.user.getOrCreate([third.profile.uid], { params: { token: third.token } });
 				const ticket = await linkTicket(owner, linear.human);
 				assert.equal(await code(someone.linkAccount(ticket)), "link_ticket", "another user's ticket is refused");
-				assert.deepEqual(await owner.linkAccount(ticket), linked);
+				const result = await owner.linkAccount(ticket);
+				assert.deepEqual(result.linked, linked[0], "the return names the account it linked");
+				assert.deepEqual(result.accounts, linked);
+				assert.ok(result.signIn.includes("linear"));
 				assert.equal(await code(owner.linkAccount(ticket)), "link_ticket", "a ticket works once");
-				assert.deepEqual(await someone.linkedAccounts(), []);
+				assert.deepEqual((await someone.linkedAccounts()).accounts, []);
 			},
 		);
 
@@ -585,11 +588,11 @@ async function run() {
 				assert.equal((await linearItems()).length, count);
 
 				// Revoked, the owner is unlinked too; linked again, what they label is theirs, with them as its verified filer.
-				assert.deepEqual(await owner.unlinkAccount({ surface: "linear", tenant: linear.workspace.id }), []);
+				assert.deepEqual((await owner.unlinkAccount({ surface: "linear", tenant: linear.workspace.id })).accounts, []);
 				const unlinked = created(eng, { labels: ["windlass"] });
 				assert.equal((await qualifying(unlinked.payload)).kind, "ignored");
 				assert.equal(prompts(unlinked.issue), 1);
-				assert.deepEqual(await owner.linkAccount(await linkTicket(owner, linear.human)), linked);
+				assert.deepEqual((await owner.linkAccount(await linkTicket(owner, linear.human))).accounts, linked);
 				const own = created(eng, { labels: ["windlass"] });
 				assert.equal((await qualifying(own.payload)).kind, "filed");
 				const [item] = await itemsOf(own.issue);

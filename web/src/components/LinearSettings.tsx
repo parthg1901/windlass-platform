@@ -9,6 +9,7 @@ import type { GithubRepository, LinearStatus, LinearTeam } from "@contract";
 import { useEffect, useId, useRef, useState } from "react";
 import { useApp, useAuth } from "../state/app";
 import { WarnIcon } from "./Icons";
+import { LinkLine, useLinks, useReportConnection, useUnlinkItems } from "./LinkedAccounts";
 import {
 	IntegrationCard,
 	IntegrationFacts,
@@ -44,6 +45,9 @@ export function LinearSettings() {
 	const repositorySelect = useRef<HTMLSelectElement>(null);
 	// A return to the page already open (only its fragment changes) is read again.
 	const returned = useReturnRound(RETURN);
+	const links = useLinks();
+	const ensureLinked = links?.ensureLinked;
+	const unlinkItems = useUnlinkItems("linear");
 
 	useEffect(() => {
 		const back = /^#(linear|linear-error)=(.+)$/.exec(location.hash);
@@ -60,10 +64,14 @@ export function LinearSettings() {
 			.user(auth)
 			.linearComplete(value!)
 			.then(
-				() => setConnected(true),
+				next => {
+					setConnected(true);
+					// Linear's connection acts as the app, not as you: a read-only sign-in as yourself links you too.
+					if (next.state === "connected") ensureLinked?.("linear", next.connection.workspace.id);
+				},
 				failure => setError(explain(failure)),
 			);
-	}, [client, auth, explain, returned]);
+	}, [client, auth, explain, returned, ensureLinked]);
 
 	useEffect(() => {
 		let live = true;
@@ -135,6 +143,8 @@ export function LinearSettings() {
 	const remove = (team: LinearTeam) =>
 		run(async () => setTeams((await client.user(auth).removeLinearMapping(team.id)).teams));
 
+	const workspaceId = status?.state === "connected" ? status.connection.workspace.id : null;
+	useReportConnection("linear", workspaceId);
 	if (status?.state === "off") return null;
 	const ready = teamId !== "" && repositoryId !== "";
 	const unmapped = teams?.filter(team => !team.mapping) ?? [];
@@ -171,12 +181,14 @@ export function LinearSettings() {
 					</button>
 				) : null
 			}
-			more={
-				status?.state === "connected"
-					? [{ id: "disconnect", label: "Disconnect…", tone: "warn", disabled: busy, onSelect: disconnect }]
-					: []
-			}
+			more={[
+				...unlinkItems,
+				...(status?.state === "connected"
+					? [{ id: "disconnect", label: "Disconnect…", tone: "warn" as const, disabled: busy, onSelect: disconnect }]
+					: []),
+			]}
 		>
+			<LinkLine surface="linear" tenant={workspaceId} />
 			{connected && status?.state === "connected" ? (
 				<p className="callout" role="status">
 					Linear is connected. Choose a repository for a team below.
