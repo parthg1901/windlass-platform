@@ -403,13 +403,30 @@ async function checkGitlab(sections: string[]) {
 		});
 		const client = createClient<Registry>({ endpoint: `http://127.0.0.1:${engine}`, headers: { Origin: origin } });
 		const ownerAuth = await loginHttp(api, origin).demo();
+		// As the web app does: browsers may not create actors, so the user's actor creates the GitLab one.
 		const login = async (auth = ownerAuth) => {
-			return client.userGitlab.getOrCreate([auth.profile.uid], { params: { token: auth.token } });
+			const params = { params: { token: auth.token } };
+			assert.equal(await client.user.get([auth.profile.uid], params).openGitlab(), true);
+			return client.userGitlab.get([auth.profile.uid], params);
 		};
+		// A user whose actor was made before (by this sign-in, as by any earlier one) has no GitLab actor until asked.
+		await assert.rejects(
+			client.userGitlab.get([ownerAuth.profile.uid], { params: { token: ownerAuth.token } }).gitlab(),
+			(error: { group?: string; code?: string }) => error.group === "actor" && error.code === "not_found",
+		);
 		const owner = await login(),
 			neighbour = await login(await loginHttp(api, origin).demo());
 		const disconnected = { state: "disconnected" };
 		assert.deepEqual(await owner.gitlab(), disconnected);
+		assert.equal(
+			await client.user.get([ownerAuth.profile.uid], { params: { token: ownerAuth.token } }).openGitlab(),
+			true,
+		);
+		assert.deepEqual(await owner.gitlab(), disconnected);
+		if (sections.includes("connect"))
+			console.log(
+				"PASS connect: the user's actor creates the GitLab actor for an existing user, and asking again is harmless",
+			);
 		await assert.rejects(owner.gitlabConnect({ origin: "https://other.invalid" }));
 		const begin = async () => fixture.authorize((await owner.gitlabConnect({ origin })).url);
 		const callback = (url: URL | string) => fetch(url, { redirect: "manual" });

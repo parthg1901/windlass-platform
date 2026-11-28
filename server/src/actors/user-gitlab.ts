@@ -2,7 +2,7 @@
 import { actor, UserError } from "rivetkit";
 import { createClient } from "rivetkit/client";
 import { db, type RawAccess } from "rivetkit/db";
-import { assertOrigin, authenticate, checkGeneration, requireServiceFor, serviceParams } from "../auth.js";
+import { assertOrigin, authenticate, checkGeneration, clientError, requireServiceFor, serviceParams } from "../auth.js";
 import { config, ownEngineEndpoint } from "../config.js";
 import type { GitlabProjectList, GitlabStatus, SessionRepository } from "../contract.js";
 import { challengeOf, GitlabApp, GitlabError, newVerifier, projectAccess, type GitlabToken } from "../gitlab/app.js";
@@ -167,6 +167,47 @@ function hookBinding(saved: Grant | undefined) {
 
 const accounts = (c: Context, app: GitlabApp) => surfaceAccountsOf(c as HasClient, "gitlab", gitlabTenant(app));
 
+/**
+ * Browsers hold an engine token that may look actors up and never create one (connection-tokens.ts),
+ * so the user's actor creates userGitlab[uid] before the web app opens it, as it does a session's.
+ * The engine is asked once per wake of the user's actor; later calls only wait for that answer.
+ * Says whether GitLab is configured: without it there is nothing to create.
+ */
+const opened = new WeakMap<object, Promise<void>>();
+export async function openUserGitlab(c: {
+	key: string[];
+	vars: object;
+	log: { error(entry: unknown): void };
+	client(): unknown;
+}): Promise<boolean> {
+	if (!gitlabApp()) return false;
+	let pending = opened.get(c.vars);
+	if (!pending) {
+		const client = c.client() as {
+			userGitlab: { getOrCreate(key: string[], options: { params: unknown }): { resolve(): Promise<string> } };
+		};
+		pending = client.userGitlab
+			.getOrCreate([c.key[0]!], { params: serviceParams() })
+			.resolve()
+			.then(() => undefined);
+		opened.set(c.vars, pending);
+		pending.catch(() => opened.delete(c.vars));
+	}
+	try {
+		await pending;
+	} catch (error) {
+		throw clientError(c.log, error, "GitLab settings could not be opened. Try again.", "gitlab_unavailable");
+	}
+	return true;
+}
+
+/** A GitLab call that failed for a reason the owner is not told in words is written to the server's log. */
+const reported =
+	(c: { log: { error(entry: unknown): void } }, action: string) =>
+	(error: unknown): never => {
+		throw clientError(c.log, error, `GitLab could not be reached (${action}). Try again.`, "gitlab_unavailable");
+	};
+
 type Claimed = { origin: string; verifier: string };
 export const userGitlab = actor({
 	onBeforeConnect: async (c, params: { token: string } | undefined) => {
@@ -319,7 +360,7 @@ export const userGitlab = actor({
 			return serialized(c, async () => {
 				const page = await app.projects(await tokenInQueue(c, app), query);
 				return { projects: page.items.flatMap(item => project(app, item) ?? []), more: page.truncated };
-			});
+			}).catch(reported(c, "projects"));
 		},
 		gitlabPickProject: async (c, projectId: string): Promise<GitlabStatus> => {
 			await owner(c);
@@ -370,7 +411,7 @@ export const userGitlab = actor({
 					await removeHook(app, token, saved.project, saved.hook_id);
 				}
 				return status(c);
-			});
+			}).catch(reported(c, "pick project"));
 		},
 		gitlabDisconnect: async c => {
 			await owner(c);
