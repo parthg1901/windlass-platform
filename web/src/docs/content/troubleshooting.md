@@ -130,6 +130,7 @@ A new runner pairs and connects only with a platform that signs its runner conne
 **"Claude Code is not turned on on this machine: start the runner with --harness claude."**\
 **"Start the runner with --harness opencode."**\
 **"This machine does not offer …."**\
+**"The runner on “…” was not started with …. Restart it with --harness … added."**\
 The runner was started without that agent's `--harness`. The runner does not save it, so give it each time. See [Agents on your machine](/docs/machines#agents-on-your-machine).
 
 **"OpenCode on “…” is not signed in. Run windlass-runner login opencode there."**\

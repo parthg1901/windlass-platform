@@ -496,7 +496,7 @@ test("a refusal is one sentence and what to do about it", () => {
 	assert.equal(denied.ok, false);
 	assert.equal(
 		!denied.ok && denied.fix?.text,
-		"Restart the runner with --allow-profile docker-windlass-sandbox, or choose Open.",
+		"Restart the runner with --allow-profile docker-windlass-sandbox, or choose another isolation.",
 	);
 
 	// An agent a plan pays for is connected on Connections; OpenCode signs in on the machine.

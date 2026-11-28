@@ -19,6 +19,7 @@ import {
 	type SandboxProfile,
 	type SandboxProfileId,
 } from "../contract.js";
+import { isPlanProvider } from "../contract/connect.js";
 import { isolationName } from "../contract/isolation.js";
 import { payWithFor } from "../pay-with.js";
 import {
@@ -73,11 +74,17 @@ export const AGENT_ROLES: Readonly<Record<HarnessId, readonly Role[]>> = {
 };
 
 /** A machine as the Machines page lists it: the runner's report with the account's keys and plans applied (`listedHarness`). */
-export type MachineFacts = Pick<
-	MachineSummary,
-	"name" | "os" | "arch" | "profiles" | "allowedProfiles" | "harnesses" | "egress" | "warnings"
+export type ListedProfile = Pick<SandboxProfile, "id" | "available" | "platformKeys" | "unavailableReason">;
+/** An agent as a machine's runner last reported it, with the account's keys and plans applied. */
+export type ReportedAgent = Pick<
+	NonNullable<MachineSummary["harnesses"]>[number],
+	"id" | "signIn" | "method" | "modes" | "platformKeys" | "machineProviders" | "keyRelay" | "paysWith"
 >;
-export type HostedProfile = Pick<SandboxProfile, "id" | "available" | "platformKeys" | "unavailableReason">;
+export type MachineFacts = Pick<MachineSummary, "name" | "os" | "arch" | "allowedProfiles" | "egress" | "warnings"> & {
+	profiles: readonly ListedProfile[];
+	harnesses?: readonly ReportedAgent[];
+};
+export type HostedProfile = ListedProfile;
 export type Place =
 	| { kind: "hosted"; profiles: readonly HostedProfile[]; egress?: EgressMode }
 	| { kind: "machine"; machine: MachineFacts };
@@ -205,7 +212,7 @@ const RULES: Record<Code, { says: (w: Words) => string; fix?: (w: Words) => Fix 
 	profile_not_allowed: {
 		says: w => `The owner of the machine has not allowed ${w.isolation} isolation ${w.place}.`,
 		fix: w => ({
-			text: `Restart the runner with --allow-profile ${w.profile}, or choose Open.`,
+			text: `Restart the runner with --allow-profile ${w.profile}, or choose another isolation.`,
 			where: "machine-shell",
 		}),
 	},
@@ -325,6 +332,12 @@ function notesFor(ask: Ask, profile: SandboxProfileId): Note[] {
 		});
 	return notes;
 }
+
+/** The plans and keys that can pay on Hosted (`hostedCredentials`), as `Credentials`. */
+export const credentialsOf = (hosted: readonly HostedCredential[]): Credentials => ({
+	keys: hosted.filter(c => !c.plan).map(c => c.provider),
+	plans: hosted.flatMap(c => (c.plan && isPlanProvider(c.provider) ? [c.provider] : [])),
+});
 
 /** A refusal as one line: the rule, then what to do about it. */
 export const refusalText = (refused: Extract<Availability, { ok: false }>) =>

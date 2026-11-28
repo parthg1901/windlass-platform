@@ -184,7 +184,7 @@ import {
 } from "../github/state.js";
 import { getLayer } from "../layer.js";
 import { initialSessionModes } from "../sandbox/profiles.js";
-import { type Code, availability, refusalText } from "../sandbox/availability.js";
+import { type Code, availability, credentialsOf, refusalText } from "../sandbox/availability.js";
 import { codexModes } from "../sandbox/codex-modes.js";
 import {
 	capabilitiesOf,
@@ -1291,10 +1291,7 @@ async function makeSession(
 			role: item ? "quick" : "session",
 			place: machine ? { kind: "machine", machine } : { kind: "hosted", profiles },
 			profile: input.profile,
-			credentials: {
-				keys: (credentials ?? []).filter(c => !c.plan).map(c => c.provider),
-				plans: (credentials ?? []).flatMap(c => (c.plan && isPlanProvider(c.provider) ? [c.provider] : [])),
-			},
+			credentials: credentialsOf(credentials ?? []),
 			repo: false,
 		});
 		if (!verdict.ok) throw new UserError(refusalText(verdict), { code: REFUSAL_CODES[verdict.code] });

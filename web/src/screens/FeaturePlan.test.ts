@@ -1371,14 +1371,18 @@ describe("agents in a feature's plan", () => {
 			plan: { ...plan, subtasks: [{ ...plan.subtasks[0]!, agent: { harness: "opencode" } }, plan.subtasks[1]!] },
 		});
 		await show(`/items/${feature.id}`);
-		expect(fact("templates", "can't place")).toBe("‘nas’: it does not offer OpenCode.");
+		expect(fact("templates", "can't place")).toBe(
+			"The runner on “nas” was not started with OpenCode. Restart it with --harness opencode added.",
+		);
 		const card = host.querySelector(".plan-question") as HTMLElement;
 		expect(card.querySelector(".plan-route-problem")?.textContent).toBe(
-			"Can't be placed: ‘nas’: it does not offer OpenCode.",
+			"Can't be placed: The runner on “nas” was not started with OpenCode. Restart it with --harness opencode added.",
 		);
 		await expect(
 			api().actOnItem(feature.id, { kind: "approve_plan", version: 2, agents: ["templates"] }),
-		).rejects.toThrow("Write the alert email templates: ‘nas’: it does not offer OpenCode.");
+		).rejects.toThrow(
+			"Write the alert email templates: The runner on “nas” was not started with OpenCode. Restart it with --harness opencode added.",
+		);
 	});
 });
 
