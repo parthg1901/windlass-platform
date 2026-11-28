@@ -45,8 +45,33 @@
 	font-size: 1.75rem;
 	letter-spacing: -0.03em;
 }
-.topbar-home:hover .mark-drum {
-	transform-origin: 11.5px 11.5px;
+/* The i's dot is the drum: a dotless i with the drum set over it, in the accent. */
+.wordmark-name {
+	font-size: 17px;
+	font-weight: 640;
+	letter-spacing: -0.045em;
+	line-height: 1;
+}
+.wordmark-i {
+	position: relative;
+	display: inline-block;
+}
+.wordmark-drum {
+	position: absolute;
+	left: calc(50% - 0.2em);
+	top: -0.01em;
+	width: 0.4em;
+	height: 0.4em;
+	color: var(--accent-text);
+}
+.wordmark-drum circle:first-child {
+	stroke-width: 5.2;
+}
+.wordmark-tile {
+	display: none;
+	color: var(--accent-text);
+}
+.topbar-home:hover .wordmark-drum .mark-drum {
 	transform: rotate(40deg);
 	transition: transform 400ms var(--ease-out);
 }
@@ -534,6 +559,9 @@ a.trail-link:hover {
 	.topbar-home .wordmark-name,
 	.mock-flag {
 		display: none;
+	}
+	.topbar-home .wordmark-tile {
+		display: block;
 	}
 	.crumb {
 		gap: 8px;

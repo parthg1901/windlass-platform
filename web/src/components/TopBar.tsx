@@ -12,18 +12,12 @@ import { useGithub } from "../state/github";
 import { useChatgpt } from "../state/hooks";
 import { shownInSettings } from "./GithubSettings";
 import { SectionMenu } from "./Nav";
-import { CheckIcon, Mark, MoonIcon, SunIcon, UserIcon, WarnIcon } from "./Icons";
+import { CheckIcon, MoonIcon, SunIcon, UserIcon, WarnIcon } from "./Icons";
+import { Wordmark } from "./Wordmark";
 import { PickerPanel } from "./ui/Menu";
 import { Tooltip } from "./ui/Tooltip";
 
-export function Wordmark({ size = "small" }: { size?: "small" | "large" }) {
-	return (
-		<span className={`wordmark wordmark-${size}`}>
-			<Mark size={size === "large" ? 44 : 22} />
-			<span className="wordmark-name">windlass</span>
-		</span>
-	);
-}
+export { Wordmark };
 
 export function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle(): void }) {
 	const next = theme === "dark" ? "light" : "dark";

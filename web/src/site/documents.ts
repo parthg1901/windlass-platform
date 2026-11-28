@@ -133,7 +133,7 @@ export function llmsTxt(pages: PublicPage[]): string {
 		"",
 		`> ${ONE_LINER}`,
 		"",
-		"Windlass is also the name of the platform's own agent, a coding agent for the terminal. The platform runs it, Claude Code and OpenCode today; Codex is planned and not available yet. Access is by invitation: there is no public sign-up and no pricing yet.",
+		"It runs the Windlass agent, Claude Code, Codex and OpenCode, hosted or on your own machines, with your own API keys. The platform is open source (Apache-2.0) and can be self-hosted; the hosted service signs in invited accounts.",
 		"",
 	];
 	for (const [section, members] of sections) {

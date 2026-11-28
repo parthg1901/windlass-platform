@@ -11,15 +11,19 @@ import {
 	filterCount,
 	itemStatus,
 	loadFilters,
-	loadFoldedOwners,
+	loadOpenQuiet,
+	loadPinned,
 	loadRailFolded,
 	matchesItem,
 	matchesSession,
 	railBadge,
 	railOf,
+	railSections,
 	saveFilters,
-	saveFoldedOwners,
+	saveOpenQuiet,
+	savePinned,
 	saveRailFolded,
+	togglePin,
 	searchRail,
 	sessionStatus,
 	toggleFilter,
@@ -286,14 +290,64 @@ describe("the filters", () => {
 		expect(loadRailFolded(storage(true))).toBe(false);
 	});
 
-	it("keep the owners folded in the rail", () => {
+	it("keep the owners whose quiet repositories are unfolded, and the pins", () => {
 		const kept = storage();
-		expect([...loadFoldedOwners(kept)]).toEqual([]);
-		saveFoldedOwners(new Set(["ada", "acme"]), kept);
-		expect([...loadFoldedOwners(kept)].sort()).toEqual(["acme", "ada"]);
-		saveFoldedOwners(new Set(), kept);
+		expect([...loadOpenQuiet(kept)]).toEqual([]);
+		saveOpenQuiet(new Set(["ada", "acme"]), kept);
+		expect([...loadOpenQuiet(kept)].sort()).toEqual(["acme", "ada"]);
+		saveOpenQuiet(new Set(), kept);
 		expect(kept.map.size).toBe(0);
-		expect(() => saveFoldedOwners(new Set(["ada"]), storage(true))).not.toThrow();
-		expect([...loadFoldedOwners(storage(true))]).toEqual([]);
+		expect(() => saveOpenQuiet(new Set(["ada"]), storage(true))).not.toThrow();
+		expect([...loadOpenQuiet(storage(true))]).toEqual([]);
+		expect(loadPinned(kept)).toEqual([]);
+		savePinned(togglePin(togglePin([], "7"), "9"), kept);
+		expect(loadPinned(kept)).toEqual(["7", "9"]);
+		savePinned(togglePin(loadPinned(kept), "7"), kept);
+		expect(loadPinned(kept)).toEqual(["9"]);
+		savePinned([], kept);
+		expect(kept.map.size).toBe(0);
+		expect(loadPinned(storage(true))).toEqual([]);
+	});
+
+	it("sort the rail by activity: pinned, active, recent, then by owner with the quiet ones folded, each repository once", () => {
+		const now = Date.parse("2026-11-27T12:00:00Z");
+		const day = 24 * 60 * 60 * 1000;
+		const repo = (
+			id: number,
+			owner: string,
+			name: string,
+			usedAt: number,
+			more: { running?: number; needs?: number; saved?: boolean } = {},
+		) => ({ id, owner, name, agents: 1, items: 0, running: 0, needs: 0, saved: false, usedAt, ...more });
+		const groups = [
+			{
+				owner: "acme",
+				repositories: [
+					repo(1, "acme", "busy", now - day, { running: 1 }),
+					repo(2, "acme", "lately", now - 2 * day),
+					repo(3, "acme", "month", now - 10 * day),
+					repo(4, "acme", "old", now - 40 * day),
+					repo(5, "acme", "saved", 0, { saved: true }),
+				],
+			},
+			{
+				owner: "ada",
+				repositories: [repo(6, "ada", "asks", now - 3 * day, { needs: 2 }), repo(7, "ada", "pinned", now - 60 * day)],
+			},
+		];
+		const sections = railSections(groups, { pinned: ["7"], now });
+		const names = (list: { name: string }[]) => list.map(one => one.name);
+		expect(names(sections.pinned)).toEqual(["pinned"]);
+		expect(names(sections.active)).toEqual(["asks", "busy"]);
+		expect(names(sections.recent)).toEqual(["lately"]);
+		expect(sections.owners).toEqual([
+			{
+				owner: "acme",
+				shown: [groups[0]!.repositories[2]],
+				quiet: [groups[0]!.repositories[3], groups[0]!.repositories[4]],
+			},
+		]);
+		// The chosen repository is never folded away as quiet.
+		expect(names(railSections(groups, { now, keep: "4" }).owners[0]!.shown)).toEqual(["month", "old"]);
 	});
 });

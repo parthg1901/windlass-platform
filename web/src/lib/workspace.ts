@@ -371,10 +371,110 @@ export function activeRepositories(groups: readonly RailGroup[]): RailRepository
 		.sort((a, b) => Number(b.needs > 0) - Number(a.needs > 0) || b.usedAt - a.usedAt || a.name.localeCompare(b.name));
 }
 
-const OWNERS_KEY = "wlp.workspace.folded-owners";
+// ---- the rail's sections ----------------------------------------------------------------------------
 
-/** The owners whose repositories the viewer folded away in the rail, as this browser kept them. */
-export function loadFoldedOwners(storage: Pick<Storage, "getItem"> | null = safeStorage()): Set<string> {
+const DAY = 24 * 60 * 60 * 1000;
+/** A repository used this recently can stand under Recent; at most this many do. */
+export const RECENT_DAYS = 7;
+export const RECENT_MOST = 5;
+/** A repository not used for this long (or with only saved settings) is quiet: folded under its owner. */
+export const QUIET_DAYS = 14;
+
+export interface RailOwnerSection {
+	owner: string;
+	/** Its repositories used lately, the one used last first. */
+	shown: RailRepository[];
+	/** The rest, folded into one "N quiet" row. */
+	quiet: RailRepository[];
+}
+
+export interface RailSections {
+	/** The ones the viewer pinned, in the order they were pinned. */
+	pinned: RailRepository[];
+	/** Something running or asking: what asks first. */
+	active: RailRepository[];
+	/** Used in the last RECENT_DAYS, the one used last first. */
+	recent: RailRepository[];
+	/** Every other repository, by owner. */
+	owners: RailOwnerSection[];
+}
+
+/**
+ * The rail by activity: what is pinned, then what runs or asks, then what was used lately, then the
+ * rest by owner with the quiet ones folded. Each repository stands in one section only, the first it
+ * belongs to; `keep` (the chosen one) is never folded away as quiet.
+ */
+export function railSections(
+	groups: readonly RailGroup[],
+	{ pinned = [], now, keep = null }: { pinned?: readonly string[]; now: number; keep?: string | null },
+): RailSections {
+	const all = groups.flatMap(group => group.repositories);
+	const byId = new Map(all.map(repository => [String(repository.id), repository]));
+	const taken = new Set<string>();
+	const take = (list: RailRepository[]) => {
+		for (const repository of list) taken.add(String(repository.id));
+		return list;
+	};
+	const pins = take(
+		pinned.map(id => byId.get(id)).filter((repository): repository is RailRepository => repository !== undefined),
+	);
+	const active = take(activeRepositories(groups).filter(repository => !taken.has(String(repository.id))));
+	const recent = take(
+		all
+			.filter(
+				repository =>
+					!taken.has(String(repository.id)) && repository.usedAt > 0 && repository.usedAt >= now - RECENT_DAYS * DAY,
+			)
+			.sort((a, b) => b.usedAt - a.usedAt || a.name.localeCompare(b.name))
+			.slice(0, RECENT_MOST),
+	);
+	const owners: RailOwnerSection[] = [];
+	for (const group of groups) {
+		const rest = group.repositories.filter(repository => !taken.has(String(repository.id)));
+		if (rest.length === 0) continue;
+		const lively = (repository: RailRepository) =>
+			String(repository.id) === keep || (repository.usedAt > 0 && repository.usedAt >= now - QUIET_DAYS * DAY);
+		owners.push({
+			owner: group.owner,
+			shown: rest.filter(lively),
+			quiet: rest.filter(repository => !lively(repository)),
+		});
+	}
+	return { pinned: pins, active, recent, owners };
+}
+
+const PINNED_KEY = "wlp.workspace.pinned";
+
+/** The repositories the viewer pinned to the rail's top, as this browser kept them (their ids, in order). */
+export function loadPinned(storage: Pick<Storage, "getItem"> | null = safeStorage()): string[] {
+	try {
+		const value: unknown = JSON.parse(storage?.getItem(PINNED_KEY) ?? "[]");
+		return Array.isArray(value) ? [...new Set(value.filter((one): one is string => typeof one === "string"))] : [];
+	} catch {
+		return [];
+	}
+}
+
+export function savePinned(
+	pinned: readonly string[],
+	storage: Pick<Storage, "setItem" | "removeItem"> | null = safeStorage(),
+): void {
+	try {
+		if (pinned.length === 0) storage?.removeItem(PINNED_KEY);
+		else storage?.setItem(PINNED_KEY, JSON.stringify(pinned));
+	} catch {
+		// Kept for this visit only.
+	}
+}
+
+/** One repository pinned or unpinned: a new pin goes last. */
+export const togglePin = (pinned: readonly string[], id: string): string[] =>
+	pinned.includes(id) ? pinned.filter(one => one !== id) : [...pinned, id];
+
+const OWNERS_KEY = "wlp.workspace.open-quiet";
+
+/** The owners whose quiet repositories the viewer unfolded in the rail, as this browser kept them. */
+export function loadOpenQuiet(storage: Pick<Storage, "getItem"> | null = safeStorage()): Set<string> {
 	try {
 		const value: unknown = JSON.parse(storage?.getItem(OWNERS_KEY) ?? "[]");
 		return new Set(Array.isArray(value) ? value.filter((one): one is string => typeof one === "string") : []);
@@ -383,7 +483,7 @@ export function loadFoldedOwners(storage: Pick<Storage, "getItem"> | null = safe
 	}
 }
 
-export function saveFoldedOwners(
+export function saveOpenQuiet(
 	owners: ReadonlySet<string>,
 	storage: Pick<Storage, "setItem" | "removeItem"> | null = safeStorage(),
 ): void {

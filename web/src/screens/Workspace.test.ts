@@ -45,6 +45,8 @@ beforeEach(() => {
 	root = null;
 	localStorage.removeItem("wlp.workspace.filters");
 	localStorage.removeItem("wlp.workspace.rail");
+	localStorage.removeItem("wlp.workspace.pinned");
+	localStorage.removeItem("wlp.workspace.open-quiet");
 	localStorage.removeItem("wlp.workspace.folded-owners");
 });
 
@@ -78,93 +80,109 @@ const owners = () =>
 			.filter(name => !name.closest("[inert]"))
 			.map(name => name.textContent),
 	}));
-const ownerRow = (owner: string) =>
-	[...rail().querySelectorAll<HTMLButtonElement>(".ws-rail-owner-row")].find(
-		button => button.querySelector(".ws-rail-owner-name")?.textContent === owner,
-	) as HTMLButtonElement;
+const sections = () =>
+	[...rail().querySelectorAll(".ws-rail-group")].map(group => ({
+		label: group.querySelector(".ws-rail-label")?.textContent ?? "",
+		names: [...group.querySelectorAll("a .ws-rail-name")]
+			.filter(name => !name.closest("[inert]"))
+			.map(name => name.textContent),
+	}));
+const quiet = (owner: string) =>
+	[...rail().querySelectorAll(".ws-rail-group")]
+		.find(group => group.querySelector(".ws-rail-owner-name")?.textContent === owner)
+		?.querySelector<HTMLButtonElement>(".ws-rail-more") as HTMLButtonElement;
 const row = (name: string) =>
+	// A folded row stays mounted (it folds away), inert: it is not there to see.
 	[...rail().querySelectorAll<HTMLAnchorElement>("a.ws-rail-row")].find(
-		link => link.querySelector(".ws-rail-name")?.textContent === name,
+		link => link.querySelector(".ws-rail-name")?.textContent === name && !link.closest("[inert]"),
 	) as HTMLAnchorElement;
 const current = () => rail().querySelector('a.ws-rail-row[aria-current="page"] .ws-rail-name')?.textContent;
 const press = (key: string, init: KeyboardEventInit = {}, target: EventTarget = document.body) =>
 	act(() => void target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init })));
 
 describe("the rail", () => {
-	it("groups the repositories by owner, with Everything and No repository at its top and the day's meter at its foot", async () => {
+	it("sorts the repositories by activity under Everything and No repository, each once, with the day's meter at its foot", async () => {
 		await show("/?mock=1");
-		const groups = owners();
-		expect(groups.map(group => group.owner)).toEqual(expect.arrayContaining(["acme", "ada"]));
-		const acme = groups.find(group => group.owner === "acme");
-		expect(acme?.names).toEqual(
-			expect.arrayContaining(["harbor", "lighthouse-docs", "signal-flags", "quay", "old-pier"]),
-		);
-		// The repositories with only saved settings come after those with work.
-		expect(acme?.names.slice(-2).sort()).toEqual(["old-pier", "quay"]);
 		const tops = [...rail().querySelectorAll(".ws-rail-rows")][0] as HTMLElement;
 		expect([...tops.querySelectorAll(".ws-rail-name")].map(name => name.textContent)).toEqual([
 			"Everything",
 			"No repository",
 		]);
 		expect(current()).toBe("Everything");
+		const all = sections();
+		expect(all.map(section => section.label)).toEqual(["Active now", "Recent", "acme"]);
+		expect(all[0]?.names).toEqual(expect.arrayContaining(["harbor", "tide-tables"]));
+		// Each repository stands once, in the first section it belongs to.
+		// Two repositories may share a name (acme/harbor on GitHub, acme/tools/harbor on GitLab): count links.
+		const links = [...rail().querySelectorAll<HTMLAnchorElement>(".ws-rail-group a.ws-rail-row")].map(link =>
+			link.getAttribute("href"),
+		);
+		expect(new Set(links).size).toBe(links.length);
 		expect(rail().querySelector(".ws-rail-foot")?.textContent).toMatch(/Hosted time today.* kept sandboxes/);
 		expect(rail().querySelector(".ws-rail-foot")?.getAttribute("href")).toBe("/usage?mock=1");
 	});
 
-	it("badges each repository: the amber count of what asks, a ring while something runs, nothing for a quiet one, or saved", async () => {
+	it("shows each repository's state instead of a tile: the drum while it runs, the amber count of what asks, nothing for a quiet one", async () => {
 		await show("/");
 		const harbor = row("harbor");
 		expect(Number(harbor.querySelector(".ws-badge-needs")?.textContent)).toBeGreaterThan(0);
-		expect(harbor.querySelector(".ws-badge-running")).not.toBeNull();
+		expect(harbor.querySelector(".ws-state-running")).not.toBeNull();
+		expect(harbor.querySelector(".repo-tile")).toBeNull();
 		expect(harbor.textContent).toMatch(/needs? you/);
-		// Each row has the repository's tile.
-		expect(harbor.querySelector(".repo-tile")?.textContent).toBe("Ha");
-		expect(row("quay").querySelector(".ws-badge-saved")?.textContent).toBe("saved");
-		// A quiet repository shows no count, and its row steps back.
+		// Outside its owner's section a row names its owner.
+		expect(harbor.querySelector(".ws-rail-owner-prefix")?.textContent).toBe("acme/");
 		expect(row("signal-flags").querySelector(".ws-badge-count")).toBeNull();
 		expect(row("signal-flags").parentElement?.classList.contains("ws-rail-quiet")).toBe(true);
 		expect(harbor.parentElement?.classList.contains("ws-rail-quiet")).toBe(false);
-		// Each row has its actions: a new agent there, and its saved settings.
-		const actions = [...(harbor.parentElement?.querySelectorAll(".ws-rail-action") ?? [])].map(link =>
-			link.getAttribute("href"),
+		// Each row has its actions: a pin, a new agent there, and its saved settings.
+		const actions = harbor.parentElement?.querySelector(".ws-rail-actions") as HTMLElement;
+		expect(actions.querySelector("button")?.getAttribute("aria-label")).toBe("Pin acme/harbor to the top");
+		expect([...actions.querySelectorAll("a.ws-rail-action")].map(link => link.getAttribute("href"))).toEqual([
+			"/repositories/7101/new",
+			"/repositories/7101/settings",
+		]);
+	});
+
+	it("folds an owner's quiet repositories into one row, which this browser remembers", async () => {
+		await show("/");
+		const more = quiet("acme");
+		expect(more.textContent).toBe("2 quiet");
+		expect(more.getAttribute("aria-expanded")).toBe("false");
+		expect(row("quay")).toBeUndefined();
+		act(() => more.click());
+		expect(quiet("acme").getAttribute("aria-expanded")).toBe("true");
+		expect(row("quay").querySelector(".ws-badge-saved")?.textContent).toBe("saved");
+		expect(row("old-pier")).toBeDefined();
+		expect(JSON.parse(localStorage.getItem("wlp.workspace.open-quiet") ?? "[]")).toEqual(["acme"]);
+		act(() => quiet("acme").click());
+		expect(row("quay")).toBeUndefined();
+		expect(localStorage.getItem("wlp.workspace.open-quiet")).toBeNull();
+	});
+
+	it("pins a repository to the top from its row, which this browser remembers, and a search shows every match by owner", async () => {
+		await show("/");
+		const pin = row("signal-flags").parentElement?.querySelector(".ws-rail-actions button") as HTMLButtonElement;
+		act(() => pin.click());
+		expect(sections()[0]).toEqual({ label: "Pinned", names: ["signal-flags"] });
+		expect(
+			sections()
+				.flatMap(section => section.names)
+				.filter(name => name === "signal-flags"),
+		).toHaveLength(1);
+		expect(JSON.parse(localStorage.getItem("wlp.workspace.pinned") ?? "[]")).toHaveLength(1);
+		act(() =>
+			(row("signal-flags").parentElement?.querySelector(".ws-rail-actions button") as HTMLButtonElement).click(),
 		);
-		expect(actions).toEqual(["/repositories/7101/new", "/repositories/7101/settings"]);
-	});
-
-	it("repeats the repositories with something running or asking under Active now", async () => {
-		await show("/");
-		const active = [...rail().querySelectorAll(".ws-rail-active .ws-rail-name")].map(name => name.textContent);
-		expect(active).toEqual(expect.arrayContaining(["harbor", "tide-tables"]));
-		expect(active).not.toContain("quay");
-		expect(active).not.toContain("signal-flags");
-	});
-
-	it("folds an owner's repositories away from its row, which this browser remembers, and shows them again for a search", async () => {
-		await show("/");
-		const acme = ownerRow("acme");
-		expect(acme.getAttribute("aria-expanded")).toBe("true");
-		expect(acme.querySelector("img.owner-avatar")?.getAttribute("src")).toBe("https://github.com/acme.png?size=40");
-		act(() => acme.click());
-		expect(ownerRow("acme").getAttribute("aria-expanded")).toBe("false");
-		expect(owners().find(group => group.owner === "acme")?.names).toEqual([]);
-		expect(JSON.parse(localStorage.getItem("wlp.workspace.folded-owners") ?? "[]")).toEqual(["acme"]);
+		expect(localStorage.getItem("wlp.workspace.pinned")).toBeNull();
 		const search = rail().querySelector(".ws-search input") as HTMLInputElement;
 		act(() => {
-			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(search, "harb");
+			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(search, "a");
 			search.dispatchEvent(new Event("input", { bubbles: true }));
 		});
-		// The mock's GitLab project acme/tools/harbor is found too, under its own group.
-		expect(owners()).toEqual([
-			{ owner: "acme", names: ["harbor"] },
-			{ owner: "acme/tools", names: ["harbor"] },
-		]);
-		act(() => {
-			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(search, "");
-			search.dispatchEvent(new Event("input", { bubbles: true }));
-		});
-		act(() => ownerRow("acme").click());
-		expect(owners().find(group => group.owner === "acme")?.names.length).toBeGreaterThan(0);
-		expect(localStorage.getItem("wlp.workspace.folded-owners")).toBeNull();
+		// Quiet ones too: a search folds nothing.
+		expect(owners().find(group => group.owner === "acme")?.names).toEqual(
+			expect.arrayContaining(["harbor", "quay", "old-pier"]),
+		);
 	});
 
 	it("puts the focus in its search with /, finds by name, opens the first match with Enter, and moves through the rows with the arrow keys", async () => {

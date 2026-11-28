@@ -114,6 +114,9 @@
 .lp-brand .mark {
 	color: var(--accent-text);
 }
+.lp-brand .wordmark-name {
+	font-size: 19px;
+}
 
 .lp-nav {
 	display: flex;
@@ -3042,4 +3045,1393 @@
 	from {
 		transform: translateY(-40px);
 	}
+}
+
+/* ---- the hero: copy and sign-in beside the isometric windlass (IsoWindlass.tsx) ---------------------- */
+
+.lp-hero-top {
+	grid-template-columns: minmax(0, 0.84fr) minmax(0, 1.16fr);
+	align-items: center;
+	gap: 24px;
+	padding-top: 56px;
+}
+.lp-hero-top .lp-h1 {
+	font-size: clamp(2.4rem, 1.1rem + 3.4vw, 4rem);
+}
+.lp-hero-top .lp-lede {
+	max-width: 520px;
+	font-size: clamp(1rem, 0.92rem + 0.3vw, 1.0625rem);
+}
+
+/* The manifest sits under the hero as one row of three. */
+.lp-hero .lp-manifest {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 0;
+	margin: 36px 0 0;
+	padding: 0;
+	border-left: 0;
+	border-top: 1px solid var(--line);
+}
+.lp-hero .lp-manifest > div {
+	padding: 18px 20px 0 0;
+}
+.lp-hero .lp-manifest > div + div {
+	padding-left: 20px;
+	border-left: 1px solid var(--line);
+}
+
+/* The sign-in panel: a raised card with a hairline, buttons full width. */
+.lp-signin {
+	margin-top: 30px;
+	max-width: 440px;
+	scroll-margin-top: 96px;
+	outline: none;
+}
+.lp-signin-card {
+	padding: 18px;
+	border-radius: var(--r-box);
+	background: var(--bg-raised);
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.lp-signin:target .lp-signin-card,
+.lp-signin:focus-within .lp-signin-card {
+	box-shadow: inset 0 0 0 1px var(--line-field);
+}
+.lp-signin-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 14px;
+}
+.lp-signin-title {
+	margin: 0;
+	font-size: var(--text-15);
+	font-weight: var(--weight-strong);
+	letter-spacing: var(--tracking-tight);
+}
+.lp-signin-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--ink-faint);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+}
+.lp-signin-badge::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--accent-text);
+}
+.lp-signin-actions {
+	display: grid;
+	gap: 8px;
+}
+.lp-signin-btn {
+	width: 100%;
+	border: 0;
+	cursor: pointer;
+	font-family: inherit;
+}
+.lp-signin-btn:disabled {
+	cursor: default;
+	opacity: 0.6;
+}
+.lp-btn-line.lp-signin-btn {
+	background: transparent;
+}
+.lp-signin-or {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--ink-faint);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+}
+.lp-signin-or::before,
+.lp-signin-or::after {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: var(--line);
+}
+.lp-signin-note,
+.lp-signin-help {
+	margin: 2px 0 0;
+	color: var(--ink-faint);
+	font-size: var(--text-12);
+	line-height: 1.5;
+}
+.lp-signin-help summary {
+	cursor: pointer;
+}
+.lp-signin-actions .callout {
+	margin: 0;
+}
+.lp-signin-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 6px;
+	margin: 14px 0 0;
+	padding-top: 12px;
+	border-top: 1px solid var(--line);
+	color: var(--ink-faint);
+	font-size: var(--text-12);
+}
+.lp-signin-foot a {
+	color: var(--ink-dim);
+	text-decoration: underline;
+	text-decoration-color: var(--line-strong);
+	text-underline-offset: 3px;
+}
+.lp-signin-foot a:hover {
+	color: var(--ink);
+}
+
+/* ---- the isometric windlass ------------------------------------------------------------------------ */
+
+.lp-iso-stage {
+	position: relative;
+	margin: 0 -72px 0 -32px;
+}
+.iso {
+	--iso-t: #17181c;
+	--iso-r: #111215;
+	--iso-l: #0d0e10;
+	--iso-edge: rgb(255 255 255 / 0.16);
+	--iso-edge-soft: rgb(255 255 255 / 0.06);
+	--iso-ink: var(--ink-dim);
+	display: block;
+	width: 100%;
+	height: auto;
+	overflow: visible;
+	font-family: var(--font-mono);
+}
+:root[data-theme="light"] .iso {
+	--iso-t: #ffffff;
+	--iso-r: #f0f0ee;
+	--iso-l: #e6e6e3;
+	--iso-edge: rgb(16 17 20 / 0.22);
+	--iso-edge-soft: rgb(16 17 20 / 0.07);
+}
+.iso polygon,
+.iso .iso-drum,
+.iso .iso-flange,
+.iso .iso-cap {
+	stroke: var(--iso-edge);
+	stroke-width: 1;
+	stroke-linejoin: round;
+	vector-effect: non-scaling-stroke;
+}
+.iso .iso-t {
+	fill: var(--iso-t);
+}
+.iso .iso-r {
+	fill: var(--iso-r);
+}
+.iso .iso-l {
+	fill: var(--iso-l);
+}
+.iso-deck .iso-t {
+	fill: var(--bg);
+}
+.iso-grid {
+	fill: none;
+	stroke: var(--iso-edge-soft);
+	stroke-width: 1;
+}
+.iso-track {
+	fill: none;
+	stroke: var(--iso-edge);
+	stroke-dasharray: 2 5;
+}
+.iso-drum {
+	fill: var(--iso-l);
+}
+.iso-coils,
+.iso-rope,
+.iso-rope-lay {
+	fill: none;
+	stroke-linecap: round;
+}
+.iso-coils {
+	stroke: var(--ink-faint);
+	stroke-width: 2;
+	stroke-dasharray: 22 1.6;
+	opacity: 0.7;
+}
+.iso-rope {
+	stroke: var(--ink-faint);
+	stroke-width: 2.4;
+}
+.iso-rope-lay {
+	stroke: var(--bg);
+	stroke-width: 1;
+	stroke-dasharray: 1.2 6.8;
+	opacity: 0.85;
+}
+.iso-ratchet {
+	fill: none;
+	stroke: var(--ink-faint);
+	stroke-width: 1;
+}
+.iso-spokes,
+.iso-crank {
+	fill: none;
+	stroke: var(--ink-dim);
+	stroke-width: 2;
+	stroke-linecap: round;
+}
+.iso-crank {
+	stroke-width: 3;
+}
+.iso-crank-knob,
+.iso-axle {
+	fill: var(--iso-t);
+	stroke: var(--ink-dim);
+	stroke-width: 1.4;
+}
+.iso-tick {
+	fill: var(--accent-text);
+}
+.iso-hub {
+	fill: var(--ink-faint);
+}
+.iso-pawl path {
+	fill: var(--iso-t);
+	stroke: var(--ink-dim);
+	stroke-width: 1;
+	stroke-linejoin: round;
+}
+.iso-pawl circle {
+	fill: var(--ink-dim);
+}
+.iso-lamp {
+	fill: var(--iso-t);
+	stroke: var(--iso-edge);
+}
+.iso-vents,
+.iso-truss,
+.iso-cable {
+	fill: none;
+	stroke: var(--iso-edge);
+}
+.iso-cable {
+	stroke-dasharray: 2 3;
+}
+.iso .iso-sandbox {
+	fill: none;
+	stroke: var(--ink-faint);
+	stroke-dasharray: 3 3;
+}
+.iso-screen {
+	fill: var(--bg);
+	stroke: var(--iso-edge);
+}
+.iso-screen-lines {
+	fill: none;
+	stroke: var(--ok);
+	stroke-linecap: round;
+}
+.iso .iso-window {
+	fill: var(--bg);
+}
+.iso-lens {
+	fill: var(--bg);
+	stroke: var(--ink-dim);
+	stroke-width: 1.4;
+}
+.iso .iso-cone {
+	fill: var(--accent-text);
+	stroke: none;
+	opacity: 0;
+}
+
+/* Items on the line. Still, each waits where --iso-p puts it; moving, the haul keyframes take over. */
+.iso-crate {
+	transform: translate(calc(var(--iso-dx) * var(--iso-p, 0)), calc(var(--iso-dy) * var(--iso-p, 0)));
+}
+.iso-crate-label {
+	fill: var(--ink-dim);
+	font-size: 7.5px;
+	font-weight: 500;
+}
+.iso-crate-dot {
+	fill: var(--accent-text);
+}
+.iso-pull {
+	opacity: 0;
+}
+.iso-pull-still {
+	opacity: 1;
+}
+.iso-pull rect {
+	fill: var(--bg-raised);
+	stroke: var(--line-strong);
+}
+.iso-pull circle {
+	fill: var(--ok);
+}
+.iso-pull text {
+	fill: var(--ink);
+	font-family: var(--font-text);
+	font-size: 11px;
+	font-weight: 520;
+}
+
+.iso-label text {
+	fill: var(--ink-dim);
+	font-size: 10.5px;
+}
+.iso-label .iso-label-n {
+	fill: var(--accent-text);
+}
+.iso-label .iso-label-sub {
+	fill: var(--ink-faint);
+	font-size: 9.5px;
+}
+.iso-leader {
+	fill: none;
+	stroke: var(--line-strong);
+}
+
+@media (max-width: 900px) {
+	.lp-hero-top {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.lp-iso-stage {
+		margin: 8px -8px 0;
+	}
+	.lp-signin {
+		max-width: none;
+	}
+	.lp-hero .lp-manifest {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.lp-hero .lp-manifest > div + div {
+		padding-left: 0;
+		border-left: 0;
+	}
+}
+
+@media (max-width: 600px) {
+	.iso-label {
+		display: none;
+	}
+	.lp-iso-stage {
+		margin: 8px calc(-1 * var(--gutter)) 0;
+	}
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.iso-spin {
+		animation: lp-spin var(--iso-turn) linear infinite;
+	}
+	.iso-pawl-arm {
+		animation: iso-click var(--iso-click) ease-out infinite;
+	}
+	.iso-rope-lay {
+		animation: iso-lay var(--iso-dash) linear infinite;
+	}
+	.iso-coils {
+		animation: iso-coil calc(var(--iso-dash) * 2.8) linear infinite;
+	}
+	.iso-crate {
+		animation: iso-haul var(--iso-loop) linear infinite;
+	}
+	.iso-lamp {
+		animation: iso-lamp var(--iso-gap) linear infinite;
+	}
+	.iso .iso-cone {
+		animation: iso-flash var(--iso-gap) linear infinite;
+	}
+	.iso-lens {
+		animation: iso-lens var(--iso-gap) linear infinite;
+	}
+	.iso-pull,
+	.iso-pull-still {
+		opacity: 0;
+		animation: iso-pull var(--iso-loop) linear infinite;
+	}
+	.iso-pull-in {
+		animation: iso-pull-in var(--iso-loop) var(--ease-out) infinite;
+		animation-delay: inherit;
+	}
+}
+@keyframes iso-haul {
+	0% {
+		transform: translate(0, 0);
+		opacity: 0;
+	}
+	5% {
+		opacity: 1;
+	}
+	93% {
+		opacity: 1;
+	}
+	100% {
+		transform: translate(var(--iso-dx), var(--iso-dy));
+		opacity: 0;
+	}
+}
+@keyframes iso-flash {
+	0%,
+	2% {
+		opacity: 0;
+	}
+	6% {
+		opacity: 0.22;
+	}
+	24%,
+	100% {
+		opacity: 0;
+	}
+}
+@keyframes iso-lens {
+	0%,
+	20% {
+		stroke: var(--accent-text);
+	}
+	36%,
+	100% {
+		stroke: var(--ink-dim);
+	}
+}
+@keyframes iso-lay {
+	to {
+		stroke-dashoffset: -8;
+	}
+}
+@keyframes iso-coil {
+	to {
+		stroke-dashoffset: 23.6;
+	}
+}
+@keyframes iso-lamp {
+	0%,
+	22% {
+		fill: var(--accent-text);
+		stroke: var(--accent-text);
+	}
+	40%,
+	100% {
+		fill: var(--iso-t);
+		stroke: var(--iso-edge);
+	}
+}
+@keyframes iso-click {
+	0%,
+	62% {
+		transform: rotate(0deg);
+	}
+	82% {
+		transform: rotate(-14deg);
+	}
+	100% {
+		transform: rotate(0deg);
+	}
+}
+@keyframes iso-pull {
+	0% {
+		opacity: 0;
+	}
+	3%,
+	20% {
+		opacity: 1;
+	}
+	26%,
+	100% {
+		opacity: 0;
+	}
+}
+@keyframes iso-pull-in {
+	0% {
+		transform: translateY(8px);
+	}
+	6%,
+	100% {
+		transform: translateY(0);
+	}
+}
+
+/* ---- v2: the factory pitch ------------------------------------------------------------------------- */
+
+.lp-mark-accent {
+	color: var(--accent-text);
+}
+.lp-bar-gh {
+	color: var(--ink-dim);
+}
+.lp-bar-gh:hover {
+	color: var(--ink);
+}
+
+/* Under the sign-in panel: three quiet facts. */
+.lp-hero-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 18px;
+	margin: 16px 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+}
+.lp-hero-facts li {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+}
+.lp-hero-facts li::before {
+	content: "";
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--accent-text);
+}
+.lp-hero-facts a {
+	color: var(--ink-dim);
+	text-decoration: underline;
+	text-decoration-color: var(--line-strong);
+	text-underline-offset: 3px;
+}
+
+/* "Takes work from" and "Runs": each mark beside its name. */
+.lp-works {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 18px 40px;
+	margin-top: 40px;
+	padding: 18px 0;
+	border-top: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
+}
+.lp-works-group {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px 22px;
+}
+.lp-works-label {
+	color: var(--ink-faint);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+.lp-works ul {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px 22px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.lp-works li {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--ink-dim);
+	font-size: var(--text-14);
+	font-weight: var(--weight-medium);
+}
+
+/* The proof strip. */
+.lp-proof {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 28px;
+	margin: 26px 0 0;
+	padding: 0;
+	list-style: none;
+}
+.lp-proof-item {
+	display: flex;
+	gap: 12px;
+}
+.lp-proof-icon {
+	display: inline-grid;
+	flex: none;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 8px;
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	color: var(--accent-text);
+}
+.lp-proof-item p {
+	margin: 2px 0 0;
+	color: var(--ink-faint);
+	font-size: var(--text-14);
+	line-height: 1.55;
+}
+.lp-proof-item b {
+	color: var(--ink);
+	font-weight: var(--weight-medium);
+}
+
+/* 01: the eight steps, four to a row, on a line. */
+.lp-pipe {
+	position: relative;
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 14px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	counter-reset: pipe;
+}
+.lp-pipe-step {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-height: 150px;
+	padding: 16px 16px 18px;
+	border-radius: var(--r-box);
+	background: var(--bg-raised);
+	box-shadow: inset 0 0 0 1px var(--line);
+}
+.lp-pipe-step::after {
+	content: "";
+	position: absolute;
+	top: 26px;
+	right: -14px;
+	width: 14px;
+	height: 1px;
+	background: var(--line-strong);
+}
+.lp-pipe-step:nth-child(4n)::after,
+.lp-pipe-step:last-child::after {
+	display: none;
+}
+.lp-pipe-n {
+	color: var(--accent-text);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+}
+.lp-pipe-step h3 {
+	margin: 0;
+	font-size: var(--text-16);
+	font-weight: var(--weight-strong);
+	letter-spacing: var(--tracking-tight);
+}
+.lp-pipe-step p {
+	margin: 0;
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+	line-height: 1.5;
+}
+.lp-pipe-end {
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.lp-pipe-marks {
+	display: flex;
+	gap: 8px;
+	margin-top: auto;
+	padding-top: 8px;
+}
+.lp-pipe-check {
+	display: inline-flex;
+	align-self: flex-start;
+	align-items: center;
+	gap: 6px;
+	margin-top: auto;
+	padding: 3px 8px;
+	border-radius: 6px;
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	color: var(--ink);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+}
+.lp-pipe-check svg {
+	color: var(--ok);
+}
+
+/* 02: GitHub's checks, drawn. */
+.lp-checks-fig {
+	margin: 0;
+}
+.lp-checks {
+	padding: 0 22px 18px;
+}
+.lp-checks-pr {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-weight: var(--weight-medium);
+}
+.lp-checks-pr svg {
+	color: var(--ok);
+}
+.lp-checks-rows {
+	display: grid;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.lp-checks-rows li {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 38px;
+	padding: 0 10px;
+	border-radius: 8px;
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+}
+.lp-checks-rows b {
+	color: var(--ink);
+	font-family: var(--font-mono);
+	font-size: var(--text-13);
+	font-weight: var(--weight-medium);
+}
+.lp-checks-main {
+	background: var(--bg-hover);
+	box-shadow: inset 0 0 0 1px var(--line);
+}
+.lp-checks-ok {
+	display: inline-grid;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--ok) 18%, transparent);
+	color: var(--ok);
+}
+.lp-checks-sum {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.lp-checks-req {
+	padding: 1px 7px;
+	border-radius: 999px;
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	color: var(--ink-dim);
+	font-size: var(--text-11);
+}
+.lp-checks-summary {
+	margin-top: 14px;
+	padding: 14px 16px;
+	border-radius: 10px;
+	background: var(--bg);
+	box-shadow: inset 0 0 0 1px var(--line);
+}
+.lp-checks-title {
+	margin: 0 0 8px;
+	color: var(--ink-faint);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+.lp-checks-summary ul {
+	display: grid;
+	gap: 7px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	color: var(--ink-dim);
+	font-size: var(--text-13);
+	line-height: 1.45;
+}
+.lp-checks-summary li {
+	display: flex;
+	gap: 8px;
+}
+.lp-checks-summary li svg {
+	flex: none;
+	margin-top: 3px;
+	color: var(--ok);
+}
+
+/* 03: three cards. */
+.lp-cards3 {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 14px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.lp-card3 {
+	padding: 22px;
+}
+.lp-card3-icon {
+	display: inline-grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	border-radius: 9px;
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	color: var(--accent-text);
+}
+.lp-card3 h3 {
+	margin: 16px 0 6px;
+	font-size: var(--text-16);
+	font-weight: var(--weight-strong);
+	letter-spacing: var(--tracking-tight);
+}
+.lp-card3 p {
+	margin: 0;
+	color: var(--ink-faint);
+	font-size: var(--text-14);
+	line-height: 1.55;
+}
+.lp-small {
+	margin: 16px 0 0;
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+	line-height: 1.5;
+}
+.lp-small a {
+	color: var(--ink-dim);
+	text-decoration: underline;
+	text-decoration-color: var(--line-strong);
+	text-underline-offset: 3px;
+}
+
+/* 04: who runs where. */
+.lp-grid-card {
+	overflow: hidden;
+}
+.lp-grid {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--text-14);
+}
+.lp-grid th,
+.lp-grid td {
+	padding: 14px 20px;
+	border-bottom: 1px solid var(--line);
+	text-align: left;
+	vertical-align: middle;
+}
+.lp-grid thead th {
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+	font-weight: var(--weight-medium);
+}
+.lp-grid thead th svg {
+	vertical-align: -2px;
+	margin-right: 6px;
+}
+.lp-grid td {
+	color: var(--ink-dim);
+}
+.lp-grid-agent {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--ink);
+	font-weight: var(--weight-medium);
+}
+.lp-grid-ok {
+	vertical-align: -2px;
+	margin-right: 6px;
+	color: var(--ok);
+}
+.lp-keys {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px 22px;
+	padding: 14px 20px;
+}
+.lp-keys-marks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px 20px;
+}
+.lp-keys-marks span {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--ink-dim);
+	font-size: var(--text-14);
+}
+
+/* 05: the setup card. */
+.lp-bullets {
+	display: grid;
+	gap: 10px;
+	margin: 26px 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--ink-faint);
+	font-size: var(--text-15);
+	line-height: 1.55;
+}
+.lp-bullets b {
+	color: var(--ink);
+	font-weight: var(--weight-medium);
+}
+.lp-setup-fig {
+	margin: 0;
+}
+.lp-setup {
+	padding: 0 22px 18px;
+}
+.lp-setup-score {
+	margin-left: auto;
+	color: var(--ink-dim);
+	font-family: var(--font-mono);
+	font-size: var(--text-12);
+}
+.lp-setup ul {
+	display: grid;
+	gap: 9px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: var(--text-13);
+}
+.lp-setup li {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--ink-dim);
+}
+.lp-setup-dot {
+	display: inline-grid;
+	flex: none;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+}
+.lp-setup-ok .lp-setup-dot {
+	background: color-mix(in srgb, var(--ok) 18%, transparent);
+	color: var(--ok);
+}
+.lp-setup-todo .lp-setup-dot {
+	box-shadow: inset 0 0 0 1.5px var(--needs-fill, var(--warn));
+}
+.lp-setup-todo {
+	color: var(--ink);
+}
+.lp-setup-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+	margin-top: 16px;
+	padding-top: 14px;
+	border-top: 1px solid var(--line);
+	font-size: var(--text-12);
+}
+
+/* 07: plans. */
+.lp-plans {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 14px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.lp-plan {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding: 24px;
+}
+.lp-plan-accent {
+	box-shadow:
+		0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+		0 24px 60px -30px rgb(0 0 0 / 0.6);
+}
+.lp-plan h3 {
+	margin: 0;
+	font-size: var(--text-15);
+	font-weight: var(--weight-strong);
+}
+.lp-plan-price {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 10px;
+	margin: 0;
+}
+.lp-plan-price b {
+	font-size: 2.25rem;
+	font-weight: var(--weight-strong);
+	letter-spacing: -0.04em;
+}
+.lp-plan-price span {
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+}
+.lp-plan ul {
+	display: grid;
+	flex: 1;
+	align-content: start;
+	gap: 9px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	color: var(--ink-dim);
+	font-size: var(--text-14);
+	line-height: 1.45;
+}
+.lp-plan li {
+	display: flex;
+	gap: 8px;
+}
+.lp-plan li svg {
+	flex: none;
+	margin-top: 3px;
+	color: var(--accent-text);
+}
+.lp-plan .lp-btn {
+	align-self: flex-start;
+}
+
+/* The plan gate's board, in ink rather than green. */
+.iso .iso-board-lines {
+	stroke: var(--ink-faint);
+}
+
+@media (max-width: 1100px) {
+	.lp-pipe {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.lp-pipe-step:nth-child(2n)::after {
+		display: none;
+	}
+}
+@media (max-width: 900px) {
+	.lp-proof,
+	.lp-cards3,
+	.lp-plans {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.lp-works {
+		flex-direction: column;
+	}
+}
+@media (max-width: 600px) {
+	.lp-pipe {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.lp-pipe-step {
+		min-height: 0;
+	}
+	.lp-pipe-step::after {
+		display: none;
+	}
+	.lp-grid th,
+	.lp-grid td {
+		padding: 12px;
+		font-size: var(--text-13);
+	}
+	.lp-bar-gh {
+		display: none;
+	}
+}
+.lp-head + .lp-pipe,
+.lp-head + .lp-cards3,
+.lp-head + .lp-plans,
+.lp-head + .lp-grid-card {
+	margin-top: 44px;
+}
+.lp-hero-top .lp-h1 {
+	font-size: clamp(2.3rem, 1.1rem + 2.9vw, 3.5rem);
+}
+
+/* ---- v2 motion: the hero arrives, the windlass builds itself, sections reveal on scroll ---------------
+   Everything here is CSS: the static page ships no script. The scroll reveals use scroll-driven
+   animations (animation-timeline: view()); a browser without them, or anyone asking for less motion,
+   gets every section drawn in place. */
+
+.lp-card3,
+.lp-plan,
+.lp-pipe-step {
+	transition:
+		translate 220ms var(--ease-out),
+		box-shadow 220ms var(--ease-out);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	/* The hero: copy in a stagger, the headline's second line a beat after the first. */
+	.lp-hero-copy > :nth-child(5) {
+		animation-delay: 240ms;
+	}
+	.lp-h1 .lp-dim {
+		display: inline-block;
+		animation: lp-arrive 800ms var(--ease-out) 160ms both;
+	}
+	.lp-hero-top .lp-h1 .lp-dim {
+		display: block;
+	}
+	.lp-works li,
+	.lp-works-label,
+	.lp-proof-item {
+		animation: lp-arrive 600ms var(--ease-out) both;
+		animation-delay: calc(900ms + var(--n, 0) * 50ms);
+	}
+	.lp-works li:nth-child(2),
+	.lp-proof-item:nth-child(2) {
+		--n: 1;
+	}
+	.lp-works li:nth-child(3),
+	.lp-proof-item:nth-child(3) {
+		--n: 2;
+	}
+	.lp-works li:nth-child(4) {
+		--n: 3;
+	}
+	.lp-works li:nth-child(5) {
+		--n: 4;
+	}
+	.lp-works-group + .lp-works-group li,
+	.lp-works-group + .lp-works-group .lp-works-label {
+		animation-delay: calc(1150ms + var(--n, 0) * 50ms);
+	}
+	.lp-proof-item {
+		animation-delay: calc(1300ms + var(--n, 0) * 80ms);
+	}
+
+	/* The windlass builds itself: the deck, each gate from the near end, the drum, then the line and its items. */
+	.iso-in {
+		animation: iso-build 700ms var(--ease-out) both;
+		animation-delay: calc(250ms + var(--i, 0) * 160ms);
+	}
+	.iso-in-fade {
+		animation: iso-fade 600ms var(--ease-out) both;
+		animation-delay: calc(250ms + var(--i, 0) * 160ms);
+	}
+
+	/* Hover: cards lift a little. */
+	.lp-card3:hover,
+	.lp-plan:hover,
+	.lp-pipe-step:hover {
+		translate: 0 -3px;
+	}
+	.lp-pipe-step:hover {
+		box-shadow: inset 0 0 0 1px var(--line-field);
+	}
+}
+@keyframes iso-build {
+	from {
+		opacity: 0;
+		transform: translateY(-18px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+@keyframes iso-fade {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@supports (animation-timeline: view()) {
+	@media (prefers-reduced-motion: no-preference) {
+		/* A section's head, and each block after it, rises in as it enters the view. */
+		.lp-section .lp-head,
+		.lp-checks-fig,
+		.lp-setup-fig,
+		.lp-steer,
+		.lp-grid-card,
+		.lp-small,
+		.lp-bullets li,
+		.lp-faq-item,
+		.lp-closing-card {
+			animation: lp-reveal linear both;
+			animation-timeline: view();
+			animation-range: entry 0% cover 24%;
+		}
+		.lp-bullets li:nth-child(2),
+		.lp-faq-item:nth-child(2) {
+			animation-range: entry 6% cover 28%;
+		}
+		.lp-bullets li:nth-child(3),
+		.lp-faq-item:nth-child(3) {
+			animation-range: entry 12% cover 32%;
+		}
+
+		/* Rows of cards come in one after another, timed on their row. */
+		.lp-pipe,
+		.lp-cards3,
+		.lp-plans {
+			view-timeline: --lp-row block;
+		}
+		.lp-pipe-step,
+		.lp-card3,
+		.lp-plan {
+			animation: lp-reveal linear both;
+			animation-timeline: --lp-row;
+			animation-range: entry calc(var(--n, 0) * 7%) cover calc(22% + var(--n, 0) * 7%);
+		}
+		.lp-pipe-step:nth-child(2),
+		.lp-card3:nth-child(2),
+		.lp-plan:nth-child(2) {
+			--n: 1;
+		}
+		.lp-pipe-step:nth-child(3),
+		.lp-card3:nth-child(3),
+		.lp-plan:nth-child(3) {
+			--n: 2;
+		}
+		.lp-pipe-step:nth-child(4) {
+			--n: 3;
+		}
+		.lp-pipe-step:nth-child(5) {
+			--n: 4;
+		}
+		.lp-pipe-step:nth-child(6) {
+			--n: 5;
+		}
+		.lp-pipe-step:nth-child(7) {
+			--n: 6;
+		}
+		.lp-pipe-step:nth-child(8) {
+			--n: 7;
+		}
+		/* Each step's number lights as its turn comes, like the gates in the hero. */
+		.lp-pipe-n {
+			animation: lp-light linear both;
+			animation-timeline: --lp-row;
+			animation-range: entry calc(10% + var(--n, 0) * 7%) cover calc(30% + var(--n, 0) * 7%);
+		}
+
+		/* The checks tick in, one row at a time, then what was observed. */
+		.lp-checks {
+			view-timeline: --lp-checks block;
+		}
+		.lp-checks-rows li,
+		.lp-checks-summary li {
+			animation: lp-tick linear both;
+			animation-timeline: --lp-checks;
+			animation-range: entry calc(30% + var(--n, 0) * 9%) cover calc(40% + var(--n, 0) * 9%);
+		}
+		.lp-checks-rows li:nth-child(1) {
+			--n: 3;
+		}
+		.lp-checks-rows li:nth-child(2) {
+			--n: 0;
+		}
+		.lp-checks-rows li:nth-child(3) {
+			--n: 1;
+		}
+		.lp-checks-rows li:nth-child(4) {
+			--n: 2;
+		}
+		.lp-checks-summary li:nth-child(1) {
+			--n: 4;
+		}
+		.lp-checks-summary li:nth-child(2) {
+			--n: 5;
+		}
+		.lp-checks-summary li:nth-child(3) {
+			--n: 6;
+		}
+
+		/* The setup checks pop in down the list. */
+		.lp-setup {
+			view-timeline: --lp-setup block;
+		}
+		.lp-setup li {
+			animation: lp-tick linear both;
+			animation-timeline: --lp-setup;
+			animation-range: entry calc(25% + var(--n, 0) * 5%) cover calc(35% + var(--n, 0) * 5%);
+		}
+		.lp-setup li:nth-child(2) {
+			--n: 1;
+		}
+		.lp-setup li:nth-child(3) {
+			--n: 2;
+		}
+		.lp-setup li:nth-child(4) {
+			--n: 3;
+		}
+		.lp-setup li:nth-child(5) {
+			--n: 4;
+		}
+		.lp-setup li:nth-child(6) {
+			--n: 5;
+		}
+		.lp-setup li:nth-child(7) {
+			--n: 6;
+		}
+		.lp-setup li:nth-child(8) {
+			--n: 7;
+		}
+
+		/* The agent table fills row by row. */
+		.lp-grid-card {
+			view-timeline: --lp-grid block;
+		}
+		.lp-grid tbody tr,
+		.lp-keys {
+			animation: lp-tick linear both;
+			animation-timeline: --lp-grid;
+			animation-range: entry calc(20% + var(--n, 0) * 8%) cover calc(32% + var(--n, 0) * 8%);
+		}
+		.lp-grid tbody tr:nth-child(2) {
+			--n: 1;
+		}
+		.lp-grid tbody tr:nth-child(3) {
+			--n: 2;
+		}
+		.lp-grid tbody tr:nth-child(4) {
+			--n: 3;
+		}
+		.lp-keys {
+			--n: 4;
+		}
+	}
+}
+@keyframes lp-reveal {
+	from {
+		opacity: 0;
+		transform: translateY(28px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+@keyframes lp-tick {
+	from {
+		opacity: 0;
+		transform: translateX(-10px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+@keyframes lp-light {
+	from {
+		color: var(--ink-faint);
+	}
+	to {
+		color: var(--accent-text);
+	}
+}
+.lp-lede-more {
+	display: block;
+	margin-top: 14px;
+	color: var(--ink-faint);
+}
+/* The sign-in panel while the server is asked what it offers: its two buttons as placeholders, stacked as they will be. */
+.lp-signin-loading {
+	display: grid;
+	gap: 8px;
 }

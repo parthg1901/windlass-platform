@@ -286,13 +286,71 @@
 	font-size: var(--text-12);
 	font-weight: var(--weight-medium);
 }
+/* A section's name: small mono capitals, so it reads as a heading and never as a row. */
 .ws-rail-label {
 	display: flex;
 	align-items: center;
 	gap: 7px;
-	height: 28px;
-	padding: 0 8px 0 12px;
+	height: 26px;
+	margin-top: 14px;
+	padding: 0 8px;
+	overflow: hidden;
 	color: var(--ink-faint);
+	font-family: var(--font-mono);
+	font-size: 10.5px;
+	font-weight: var(--weight-regular);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+/* The row's state in place of a tile. */
+.ws-state-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--line-strong);
+}
+.ws-state-needs {
+	width: 7px;
+	height: 7px;
+	background: var(--needs-fill);
+}
+.ws-state-running {
+	color: var(--accent);
+}
+/* Outside its owner's section a row names its owner first, quietly. */
+.ws-rail-owner-prefix {
+	flex: none;
+	max-width: 45%;
+	overflow: hidden;
+	margin-right: -9px;
+	color: var(--ink-faint);
+	font-weight: var(--weight-regular);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* "N quiet": the folded tail of an owner's repositories. */
+.ws-rail-more {
+	width: 100%;
+	border: 0;
+	background: none;
+	color: var(--ink-faint);
+	font: inherit;
+	font-size: var(--text-12);
+	text-align: left;
+	cursor: pointer;
+}
+.ws-rail-more[aria-expanded="false"] .ws-rail-chevron {
+	transform: rotate(-90deg);
+}
+.ws-rail-action {
+	border: 0;
+	background: none;
+	cursor: pointer;
+}
+.ws-rail-action-on {
+	color: var(--accent-text);
 }
 .ws-rail-owner-row {
 	display: flex;
@@ -461,14 +519,13 @@
 	}
 }
 
-/* The rail's foot: a small bordered block with the day's sandbox time as a bar, what is at work and the sandboxes kept. */
+/* The rail's foot: a slim band under a hairline, with the day's sandbox time as a bar, what is at work and the sandboxes kept. */
 .ws-rail-foot {
 	display: grid;
-	gap: 9px;
-	margin: 0 10px 10px;
-	padding: 12px;
-	border-radius: var(--r-control);
-	box-shadow: inset 0 0 0 1px var(--line);
+	gap: 7px;
+	margin: 0;
+	padding: 11px 18px 13px;
+	border-top: 1px solid var(--line);
 	color: var(--ink-faint);
 	font-size: var(--text-12);
 	text-decoration: none;
@@ -492,9 +549,9 @@
 .ws-foot-bar {
 	position: relative;
 	display: block;
-	height: 6px;
+	height: 3px;
 	overflow: hidden;
-	border-radius: 3px;
+	border-radius: 2px;
 	background: var(--bg-active);
 }
 .ws-foot-bar-fill {
@@ -1091,5 +1148,20 @@
 @media (prefers-reduced-motion: reduce) {
 	.ws-ring {
 		animation: none;
+	}
+}
+/* A repository on another host than GitHub names it with that host's mark, before its name. */
+.ws-rail-host {
+	flex: none;
+	margin-right: -4px;
+	color: var(--ink-faint);
+}
+/* The "N quiet" row's chevron turns as its rows fold (the fold itself is `.ws-rail-fold` above). */
+.ws-rail-more .ws-rail-chevron {
+	transition: transform 180ms var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+	.ws-rail-more .ws-rail-chevron {
+		transition: none;
 	}
 }

@@ -752,7 +752,7 @@ describe("the Factory's rail and the way back", () => {
 		// The Agents home's rail: its search, its owners and its foot; a work item is always on a repository, so no "No repository".
 		const rail = host.querySelector("nav.ws-rail") as HTMLElement;
 		expect(rail.querySelector(".ws-search input")).not.toBeNull();
-		expect(rail.querySelector(".ws-rail-owner-row")).not.toBeNull();
+		expect(rail.querySelector(".ws-rail-owner-name")).not.toBeNull();
 		expect(rail.querySelector(".ws-rail-foot")?.getAttribute("href")).toMatch(/^\/usage/);
 		expect([...rail.querySelectorAll(".ws-rail-name")].map(name => name.textContent)).not.toContain("No repository");
 	});

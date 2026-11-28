@@ -12,7 +12,18 @@
  */
 import type { ReactElement } from "react";
 import { absolute, SITE_NAME, SITE_URL } from "./config";
-import { AGENTS, FACTORY_STEPS, FAQ, LANDING_DESCRIPTION, LANDING_TITLE, ONE_LINER, SESSION_FEATURES } from "./content";
+import {
+	AGENT_GRID,
+	FACTORY_STEPS,
+	FAQ,
+	LANDING_DESCRIPTION,
+	LANDING_TITLE,
+	ONE_LINER,
+	PLANS,
+	PROOF,
+	REPO_URL,
+	SAFETY,
+} from "./content";
 import { Landing } from "./Landing";
 import { docsPublicPages } from "../docs/public";
 
@@ -52,7 +63,7 @@ export interface PublicPage {
 
 export const DEFAULT_IMAGE = {
 	path: "/og.png",
-	alt: "Windlass: put an agent to work, and watch every turn.",
+	alt: "Windlass, the open-source software factory: hand off the issue, get back a PR you can trust.",
 	width: 1200,
 	height: 630,
 };
@@ -63,38 +74,52 @@ function landingMarkdown(): string {
 		"",
 		ONE_LINER,
 		"",
-		"## Sessions",
+		...PROOF.map(item => `- **${item.title}** ${item.text}`),
 		"",
-		"A session is one agent on one piece of work. It runs turn by turn, and the browser shows each step as it happens.",
+		"## The factory",
 		"",
-		...SESSION_FEATURES.map(feature => `- **${feature.title}.** ${feature.text}`),
-		"",
-		"## Where it runs",
-		"",
-		"You choose the sandbox when you start an agent, and see its layers before it starts. Your sign-in never goes into the sandbox: each turn is lent a short-lived token.",
-		"",
-		// jargon-ok: llms.txt is reference text for machines, where the layers belong
-		"- **Hosted.** Each hosted session gets a Firecracker microVM of its own from E2B; commands run as a non-root user.",
-		// jargon-ok: llms.txt reference text
-		"- **Your own machine.** Pair a Mac, Linux or Windows (WSL) machine with Docker. A small runner on it connects out to the platform and runs each session in a container there (non-root, no capabilities, seccomp, resource limits). Nothing on the machine needs to be reachable from outside.",
-		"- **Strict** isolation sandboxes every command again: no network, writes only in the workspace, credentials hidden. A command that wants more asks first. **Open** runs commands directly in the container, with network.",
-		"",
-		"## Factory",
-		"",
-		"A work item is a task on one repository that the platform carries from start to pull request by itself. The next step is decided by what the platform observed (checks, CI, the review), never by what the agent says. The platform never merges: the person does, on GitHub.",
+		"Label an issue `windlass`, mention `@windlass`, or file it from Linear, Jira, Slack or the Factory page. Windlass plans it, builds it and checks it, and you get a pull request with the evidence attached.",
 		"",
 		...FACTORY_STEPS.map((step, index) => `${index + 1}. **${step.label}**: ${step.text}`),
 		"",
-		"## Agents",
+		"GitLab issues come in as quick items; the windlass/verified check and auto-merge are GitHub's.",
 		"",
-		...AGENTS.map(agent => `- **${agent.name}** (${agent.state}): ${agent.where}`),
+		"## Proof, not promises",
+		"",
+		"Windlass builds its verdict from your checks and your CI on the exact commit it pushed, plus an independent review. On GitHub the verdict is the `windlass/verified` check, which you can make required with branch protection. Every item shows what it cost in dollars (model, sandbox and retries), and Usage tracks the median cost per finished item by size of work.",
+		"",
+		"## Safe by default",
+		"",
+		...SAFETY.map(card => `- **${card.title}.** ${card.text}`),
+		"",
+		"## Agents and where they run",
+		"",
+		...AGENT_GRID.map(
+			agent =>
+				`- **${agent.name}**: hosted: ${agent.hosted.toLowerCase()}; on your machine: ${agent.machine.toLowerCase()}.`,
+		),
+		"",
+		// jargon-ok: llms.txt is reference text for machines, where the layers belong
+		"Hosted sandboxes are E2B microVMs on an allowlisted network. Your own Mac, Linux or Windows (WSL) machine with Docker runs a small runner that connects out to the platform; nothing on the machine needs to be reachable from outside. Planning and review run on the Windlass agent.",
+		"",
+		"## Repo setup",
+		"",
+		"A setup score of eight checks, instant and free; Finish setup drafts the contributor guides and skills as one reviewed pull request; the windlass/guides check flags guides that go out of date.",
+		"",
+		"## Pricing",
+		"",
+		...PLANS.map(
+			plan => `- **${plan.name}** (${plan.price}${plan.per ? `, ${plan.per}` : ""}): ${plan.points.join("; ")}.`,
+		),
+		"",
+		"Model usage is billed by your provider, on your own key.",
 		"",
 		"## Questions",
 		"",
 		...FAQ.flatMap(item => [`### ${item.question}`, "", item.answer, ""]),
 		"## Access",
 		"",
-		"Access is by invitation. There is no public sign-up and no pricing yet. Sign in at " + absolute("/signin") + ".",
+		`The hosted service signs in invited accounts at ${absolute("/signin")}. The platform is open source at ${REPO_URL}.`,
 	].join("\n");
 }
 
@@ -126,15 +151,15 @@ const landing: PublicPage = {
 			url: `${SITE_URL}/`,
 			description: ONE_LINER,
 			applicationCategory: "DeveloperApplication",
-			applicationSubCategory: "Coding agents",
+			applicationSubCategory: "Software factory",
 			operatingSystem: "Web browser",
 			featureList: [
-				"Runs the Windlass and Claude Code coding agents",
+				"Files work from GitHub, GitLab, Linear, Jira, Slack, the API or the Factory page",
+				"Runs the Windlass agent, Claude Code, Codex and OpenCode with your own API keys",
 				"Hosted sandboxes or your own machine through an outbound runner",
-				"Live timeline of every file read and command run",
-				"Steering, questions and approvals during a turn",
-				"Workspace diffs and pull requests through a GitHub App",
-				"Factory: work items carried from task to pull request, with CI read and a second review",
+				"Checks and CI on the exact pushed commit, and a second agent's review",
+				"A windlass/verified check on GitHub that branch protection can require",
+				"Repo setup score and contributor guides delivered as one pull request",
 			],
 		},
 		{

@@ -1,8 +1,10 @@
 /**
  * The rail beside a page's main side, one for the Agents home and the Factory: a search at its top (`/`
- * reaches it from anywhere on the page), "Everything", "No repository" where it means something, "Active
- * now", the repositories grouped by owner (each owner folding away, which this browser remembers), and
- * the hosted time at its foot. Only what a row counts and where it leads are each page's own: the
+ * reaches it from anywhere on the page), "Everything", "No repository" where it means something, then
+ * the repositories by activity (lib/workspace.ts `railSections`): Pinned, Active now, Recent, and the
+ * rest by owner with the quiet ones folded into one row (which this browser remembers). A row shows its
+ * state, not a tile: the turning drum while something runs, an amber dot when something asks. The
+ * hosted time is at its foot. Only what a row counts and where it leads are each page's own: the
  * page hands over its `Rail` and its routes. Its frame slides and fades as it folds (Ctrl+B, ⌘B on a
  * Mac, which this browser remembers for both pages); the arrow keys move between its rows.
  */
@@ -19,18 +21,22 @@ import {
 import { linkProps, navigate, type Route } from "../lib/router";
 import { plural } from "../lib/format";
 import {
-	activeRepositories,
-	loadFoldedOwners,
+	loadOpenQuiet,
+	loadPinned,
 	loadRailFolded,
 	railBadge,
-	saveFoldedOwners,
+	railSections,
+	saveOpenQuiet,
+	savePinned,
 	saveRailFolded,
 	searchRail,
+	togglePin,
 	type Rail,
 	type RailRepository,
 } from "../lib/workspace";
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, RingIcon, SearchIcon } from "./Icons";
-import { hostOfAddress, OwnerAvatar, RepoTile } from "./RepoTile";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, Mark, PlusIcon, RingIcon, SearchIcon } from "./Icons";
+import { ProviderIcon } from "./ProviderIcon";
+import { hostOfAddress } from "./RepoTile";
 
 /** Whether the rail is folded away, and the way to fold it; Ctrl+B (⌘B) folds it and back, where there is one (not on a phone). */
 export function useRailFold(phone: boolean): [boolean, (next: boolean) => void] {
@@ -303,7 +309,32 @@ export interface RepoRailProps {
 	onFold?: () => void;
 }
 
-/** The rail's body: its search, "Everything", "No repository", "Active now" and the owners' repositories. */
+/** A pin, for the row action that keeps a repository at the rail's top. */
+function PinIcon({ filled }: { filled: boolean }) {
+	return (
+		<svg
+			width={14}
+			height={14}
+			viewBox="0 0 16 16"
+			fill={filled ? "currentColor" : "none"}
+			stroke="currentColor"
+			strokeWidth={1.5}
+			strokeLinejoin="round"
+			aria-hidden="true"
+			focusable="false"
+		>
+			<path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6Z" />
+		</svg>
+	);
+}
+
+/** What a repository row shows in place of a tile: the drum turning while something runs, amber when something asks, a faint dot otherwise. */
+function RepoState({ repository }: { repository: Pick<RailRepository, "running" | "needs"> }) {
+	if (repository.running > 0) return <Mark size={14} turning className="ws-state-running" />;
+	return <span className={`ws-state-dot${repository.needs > 0 ? " ws-state-needs" : ""}`} aria-hidden="true" />;
+}
+
+/** The rail's body: its search, "Everything", "No repository", then the repositories by activity. */
 export function RepoRail({
 	rail,
 	chosen,
@@ -318,19 +349,25 @@ export function RepoRail({
 	onFold,
 }: RepoRailProps) {
 	const [query, setQuery] = useState("");
-	const [foldedOwners, setFoldedOwners] = useState<ReadonlySet<string>>(() => loadFoldedOwners());
+	const [pinned, setPinned] = useState<string[]>(() => loadPinned());
+	const [openQuiet, setOpenQuiet] = useState<ReadonlySet<string>>(() => loadOpenQuiet());
 	const list = useRef<HTMLDivElement>(null);
 	const groups = searchRail(rail.groups, query);
 	const searching = query.trim() !== "";
-	const active = searching ? [] : activeRepositories(rail.groups);
-	const toggleOwner = (owner: string) => {
-		const next = new Set(foldedOwners);
+	const current = chosen.kind === "repository" ? String(chosen.id) : null;
+	const sections = railSections(rail.groups, { pinned, now: Date.now(), keep: current });
+	const pin = (id: string) => {
+		const next = togglePin(pinned, id);
+		setPinned(next);
+		savePinned(next);
+	};
+	const toggleQuiet = (owner: string) => {
+		const next = new Set(openQuiet);
 		if (next.has(owner)) next.delete(owner);
 		else next.add(owner);
-		setFoldedOwners(next);
-		saveFoldedOwners(next);
+		setOpenQuiet(next);
+		saveOpenQuiet(next);
 	};
-	const current = chosen.kind === "repository" ? String(chosen.id) : null;
 	const first = groups[0]?.repositories[0] ?? null;
 	const onSearchKey = (event: ReactKeyboardEvent<HTMLInputElement>) => {
 		if (event.key === "Escape") {
@@ -345,23 +382,33 @@ export function RepoRail({
 			list.current?.querySelector<HTMLElement>("[data-rail-row]")?.focus();
 		}
 	};
+	/** `owned`: the row stands outside its owner's section, so the owner shows before its name. */
 	const row = (repository: RailRepository, owned = false) => {
 		const badge = railBadge(repository);
 		const name = `${repository.owner ? `${repository.owner}/` : ""}${repository.name}`;
+		const id = String(repository.id);
+		const isPinned = pinned.includes(id);
 		return (
 			<RailLink
-				key={String(repository.id)}
+				key={id}
 				route={to({ kind: "repository", id: repository.id })}
 				replace={replace}
-				current={current === String(repository.id)}
+				current={current === id}
 				label={repository.name}
 				title={name}
 				quiet={!badge.running && badge.needs === 0}
-				icon={<RepoTile name={repository.name} host={hostOfAddress(repository.id)} />}
-				before={owned && repository.owner ? <span className="visually-hidden">{repository.owner}/</span> : null}
+				icon={<RepoState repository={repository} />}
+				before={
+					<>
+						{hostOfAddress(repository.id) === "gitlab" ? (
+							<ProviderIcon id="gitlab" size={11} className="ws-rail-host" label="GitLab" />
+						) : null}
+						{owned && repository.owner ? <span className="ws-rail-owner-prefix">{repository.owner}/</span> : null}
+					</>
+				}
 				badges={
 					<Badges
-						running={repository.running > 0 ? repository.running : false}
+						running={false}
 						needs={badge.needs}
 						count={badge.count}
 						saved={badge.saved}
@@ -370,10 +417,29 @@ export function RepoRail({
 					/>
 				}
 			>
-				{actions ? <span className="ws-rail-actions">{actions(repository, name)}</span> : null}
+				<span className="ws-rail-actions">
+					<button
+						type="button"
+						className={`ws-rail-action${isPinned ? " ws-rail-action-on" : ""}`}
+						onClick={() => pin(id)}
+						aria-pressed={isPinned}
+						aria-label={isPinned ? `Unpin ${name}` : `Pin ${name} to the top`}
+						title={isPinned ? "Unpin" : "Pin to the top"}
+					>
+						<PinIcon filled={isPinned} />
+					</button>
+					{actions ? actions(repository, name) : null}
+				</span>
 			</RailLink>
 		);
 	};
+	const section = (label: string, repositories: RailRepository[], owned: boolean) =>
+		repositories.length === 0 ? null : (
+			<section className="ws-rail-group" aria-label={label}>
+				<h3 className="ws-rail-label">{label}</h3>
+				<ul className="ws-rail-rows">{repositories.map(repository => row(repository, owned))}</ul>
+			</section>
+		);
 	const totals = (kind: "everything" | "none", label: string, icon: ReactNode) => {
 		const sum = rail[kind];
 		return (
@@ -427,51 +493,60 @@ export function RepoRail({
 						{noRepository ? totals("none", "No repository", <PlusIcon size={13} />) : null}
 					</ul>
 				)}
-				{active.length > 0 ? (
-					<section className="ws-rail-active" aria-label="Active now">
-						<h3 className="ws-rail-label">
-							<RingIcon size={11} className="ws-ring" />
-							Active now
-						</h3>
-						<ul className="ws-rail-rows">{active.map(repository => row(repository, true))}</ul>
-					</section>
-				) : null}
-				{groups.map(group => {
-					// A search shows every match, folded owner or not; the chosen repository keeps its owner open.
-					const shut =
-						!searching &&
-						group.owner !== "" &&
-						foldedOwners.has(group.owner) &&
-						!group.repositories.some(repository => current === String(repository.id));
-					return (
-						<section
-							key={group.owner}
-							className={`ws-rail-group${shut ? " ws-rail-group-shut" : ""}`}
-							aria-label={group.owner || "Repositories"}
-						>
-							{group.owner ? (
-								<h3 className="ws-rail-owner">
-									<button
-										type="button"
-										className="ws-rail-owner-row"
-										data-rail-row=""
-										aria-expanded={!shut}
-										onClick={() => toggleOwner(group.owner)}
-										title={shut ? `Show ${group.owner}'s repositories` : `Fold ${group.owner}'s repositories`}
-									>
-										<ChevronDownIcon size={12} className="ws-rail-chevron" />
-										<OwnerAvatar owner={group.owner} />
-										<span className="ws-rail-owner-name">{group.owner}</span>
-										<span className="ws-rail-owner-count">{group.repositories.length}</span>
-									</button>
-								</h3>
-							) : null}
-							<div className="ws-rail-fold" inert={shut}>
-								<ul className="ws-rail-rows">{group.repositories.map(repository => row(repository))}</ul>
-							</div>
+				{searching ? (
+					groups.map(group => (
+						<section key={group.owner} className="ws-rail-group" aria-label={group.owner || "Repositories"}>
+							{group.owner ? <h3 className="ws-rail-label ws-rail-owner-name">{group.owner}</h3> : null}
+							<ul className="ws-rail-rows">{group.repositories.map(repository => row(repository))}</ul>
 						</section>
-					);
-				})}
+					))
+				) : (
+					<>
+						{section("Pinned", sections.pinned, true)}
+						{section("Active now", sections.active, true)}
+						{section("Recent", sections.recent, true)}
+						{sections.owners.map(group => {
+							const open = openQuiet.has(group.owner);
+							const label = group.owner || "Repositories";
+							return (
+								<section
+									key={group.owner}
+									className={`ws-rail-group${group.quiet.length > 0 && !open ? " ws-rail-group-shut" : ""}`}
+									aria-label={label}
+								>
+									<h3 className="ws-rail-label ws-rail-owner-name">{label}</h3>
+									<ul className="ws-rail-rows">{group.shown.map(repository => row(repository))}</ul>
+									{group.quiet.length > 0 ? (
+										<>
+											{/* The quiet ones stay mounted and fold away, inert while shut. */}
+											<div className="ws-rail-fold" inert={!open}>
+												<ul className="ws-rail-rows">{group.quiet.map(repository => row(repository))}</ul>
+											</div>
+											<ul className="ws-rail-rows">
+												<li className="ws-rail-item">
+													<button
+														type="button"
+														className="ws-rail-row ws-rail-more"
+														data-rail-row=""
+														aria-expanded={open}
+														onClick={() => toggleQuiet(group.owner)}
+													>
+														<span className="ws-rail-icon">
+															<ChevronDownIcon size={12} className="ws-rail-chevron" />
+														</span>
+														<span className="ws-rail-name">
+															{open ? "Fold the quiet ones" : `${group.quiet.length} quiet`}
+														</span>
+													</button>
+												</li>
+											</ul>
+										</>
+									) : null}
+								</section>
+							);
+						})}
+					</>
+				)}
 				{groups.length === 0 && searching ? (
 					<p className="ws-rail-empty">No repository matches “{query.trim()}”.</p>
 				) : null}

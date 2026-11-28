@@ -3,8 +3,9 @@
   The source of web/public/og.png, the public pages' Open Graph and Twitter image (1200 × 630).
   It is not served. To make the PNG again, open this file in Chromium at a 1200 × 630 viewport,
   from web/site-assets/ so that the fonts below resolve, and take a screenshot of the viewport.
-  Helm, as the landing: graphite, the brass-lime accent, Geist; the headline on the left and a
-  session's last steps in a frame that runs off the right edge.
+  As the landing: graphite, the brass-lime accent, Geist; the headline and the work sources on the
+  left, and GitHub's checks on a Windlass pull request in a card on the right.
+  The marks are the services' own (Simple Icons, as web/src/components/ProviderIcon.tsx has them).
 -->
 <html lang="en">
 	<head>
@@ -46,59 +47,61 @@
 				background-position: -1px -1px;
 				-webkit-mask-image: radial-gradient(ellipse 70% 80% at 30% 40%, #000 15%, transparent 75%);
 			}
-			.glow {
-				position: absolute;
-				right: -120px;
-				bottom: -160px;
-				width: 760px;
-				height: 520px;
-				background: none;
-				filter: blur(20px);
-			}
+			/* The wordmark: the i's dot is the drum, as in web/src/components/Wordmark.tsx. */
 			.brand {
 				position: absolute;
 				left: 72px;
-				top: 64px;
-				display: flex;
-				align-items: center;
-				gap: 14px;
-				font-size: 30px;
-				font-weight: 600;
-				letter-spacing: -0.02em;
+				top: 60px;
+				font-size: 34px;
+				font-weight: 640;
+				letter-spacing: -0.045em;
+				line-height: 1;
 			}
-			.brand svg {
+			.brand-i {
+				position: relative;
+				display: inline-block;
+			}
+			.brand-i svg {
+				position: absolute;
+				left: calc(50% - 0.2em);
+				top: -0.01em;
+				width: 0.4em;
+				height: 0.4em;
 				color: #cfdb6e;
 			}
 			.pill {
 				position: absolute;
 				left: 72px;
-				top: 150px;
+				top: 132px;
 				display: inline-flex;
 				align-items: center;
-				gap: 12px;
-				height: 44px;
-				padding: 0 20px 0 16px;
-				border-radius: 22px;
+				gap: 10px;
+				height: 38px;
+				padding: 0 16px;
+				border-radius: 19px;
 				background: #121316;
 				box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
 				color: #a1a4ab;
-				font-size: 20px;
+				font-size: 19px;
 			}
 			.pill b {
 				color: #ecedee;
 				font-weight: 520;
 			}
-			.pill svg {
-				color: #cfdb6e;
+			.pill i {
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				background: #cfdb6e;
 			}
 			h1 {
 				position: absolute;
-				left: 68px;
-				top: 222px;
-				width: 720px;
-				font-size: 72px;
+				left: 72px;
+				top: 196px;
+				width: 600px;
+				font-size: 64px;
 				font-weight: 600;
-				line-height: 1;
+				line-height: 1.02;
 				letter-spacing: -0.045em;
 			}
 			h1 span {
@@ -108,204 +111,155 @@
 			.sub {
 				position: absolute;
 				left: 72px;
-				top: 410px;
-				width: 640px;
+				top: 424px;
+				width: 560px;
 				color: #a1a4ab;
-				font-size: 25px;
+				font-size: 23px;
 				line-height: 1.45;
-				letter-spacing: -0.01em;
 			}
-			.foot {
+			.logos {
 				position: absolute;
 				left: 72px;
-				bottom: 62px;
+				bottom: 54px;
 				display: flex;
 				gap: 26px;
-				font-family: "Geist Mono", monospace;
-				font-size: 18px;
-				color: #80848c;
+				color: #a1a4ab;
+				font-size: 19px;
+				font-weight: 520;
 			}
-			.foot b {
-				color: #cfdb6e;
-				font-weight: 400;
+			.logos span {
+				display: inline-flex;
+				align-items: center;
+				gap: 9px;
 			}
-			/* The frame: a session's last steps, running off the right edge. */
-			.frame {
+			.card {
 				position: absolute;
-				left: 800px;
-				top: 120px;
-				width: 520px;
-				height: 560px;
+				left: 690px;
+				top: 128px;
+				width: 470px;
 				border-radius: 18px;
 				background: #121316;
 				box-shadow:
 					0 0 0 1px rgb(255 255 255 / 0.12),
-					0 40px 80px -30px #000;
+					0 40px 90px -30px rgb(0 0 0 / 0.8);
 				overflow: hidden;
-			}
-			.done .ok {
-				color: #7cc9a4;
-				font-weight: 400;
-			}
-			.pr svg {
-				color: #7cc9a4;
-			}
-			.frame::before {
-				display: none;
-				content: "";
-				position: absolute;
-				top: 0;
-				left: 10%;
-				right: 10%;
-				height: 1px;
-				background: linear-gradient(90deg, transparent, #cfdb6e, transparent);
 			}
 			.bar {
 				display: flex;
 				align-items: center;
 				gap: 10px;
-				height: 52px;
-				padding: 0 22px;
+				padding: 18px 26px;
 				border-bottom: 1px solid rgb(255 255 255 / 0.07);
-				font-size: 17px;
+				font-size: 19px;
 				font-weight: 520;
 			}
-			.done {
-				display: inline-flex;
-				align-items: center;
-				gap: 7px;
-				height: 30px;
-				margin-left: 8px;
-				padding: 0 12px;
-				border-radius: 15px;
-				box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
-				color: #a1a4ab;
-				font-family: "Geist Mono", monospace;
-				font-size: 15px;
-				font-weight: 400;
+			.bar svg {
+				color: #7cc9a4;
+			}
+			.bar em {
+				color: #80848c;
+				font-style: normal;
+				font-weight: 420;
 			}
 			.rows {
-				position: relative;
-				padding: 22px 22px 0 60px;
-			}
-			.rows::before {
-				content: "";
-				position: absolute;
-				left: 33px;
-				top: 30px;
-				bottom: -40px;
-				width: 1px;
-				background: rgb(255 255 255 / 0.12);
+				display: grid;
+				gap: 4px;
+				padding: 16px 18px 6px;
 			}
 			.row {
-				position: relative;
 				display: flex;
 				align-items: center;
-				gap: 14px;
-				height: 44px;
-				font-family: "Geist Mono", monospace;
-				font-size: 17px;
-				white-space: nowrap;
-			}
-			.row i {
-				position: absolute;
-				left: -38px;
-				width: 20px;
-				height: 20px;
-				display: grid;
-				place-items: center;
-				background: #121316;
-				color: #7cc9a4;
-				font-style: normal;
-			}
-			.row .v {
-				width: 56px;
-				color: #a1a4ab;
-				font-size: 15px;
-			}
-			.row .f {
+				gap: 13px;
+				height: 50px;
+				padding: 0 12px;
+				border-radius: 11px;
 				color: #80848c;
+				font-size: 17px;
+			}
+			.row b {
+				color: #ecedee;
+				font-family: "Geist Mono", monospace;
+				font-size: 18px;
+				font-weight: 520;
+			}
+			.row.main {
+				background: rgb(255 255 255 / 0.045);
+				box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
+			}
+			.ok {
+				display: inline-grid;
+				place-items: center;
+				width: 24px;
+				height: 24px;
+				border-radius: 50%;
+				background: rgb(124 201 164 / 0.18);
+				color: #7cc9a4;
+			}
+			.req {
+				margin-left: auto;
+				padding: 2px 10px;
+				border-radius: 999px;
+				box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14);
+				color: #a1a4ab;
 				font-size: 14px;
 			}
-			.add {
-				color: #7cc9a4;
-			}
-			.del {
-				color: #ee7d77;
-			}
-			.steer {
-				margin: 8px 0 10px -38px;
-				display: flex;
-				gap: 14px;
-			}
-			.steer .k {
-				flex: none;
-				width: 20px;
-				height: 20px;
-				margin-top: 14px;
-				border-radius: 50%;
-				background: #cfdb6e;
-			}
-			.steer .m {
-				padding: 12px 16px;
+			.seen {
+				margin: 12px 18px 22px;
+				padding: 16px 18px;
 				border-radius: 12px;
-				background: #17181c;
-				box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
-				font-size: 17px;
-				white-space: nowrap;
+				background: #0b0c0e;
+				box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.07);
 			}
-			.steer .m small {
-				display: block;
-				margin-top: 4px;
+			.seen p {
+				margin-bottom: 10px;
 				color: #80848c;
 				font-family: "Geist Mono", monospace;
 				font-size: 13px;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
 			}
-			.pr {
-				display: inline-flex;
+			.seen li {
+				display: flex;
 				align-items: center;
-				gap: 8px;
-				height: 34px;
-				margin-top: 12px;
-				padding: 0 14px;
-				border-radius: 17px;
-				box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
-				color: #ecedee;
-				font-size: 16px;
-				font-weight: 520;
+				gap: 10px;
+				list-style: none;
+				color: #a1a4ab;
+				font-size: 17px;
+				line-height: 1.75;
+			}
+			.seen li svg {
+				color: #7cc9a4;
 			}
 		</style>
 	</head>
 	<body>
 		<div class="grid"></div>
-		<div class="glow"></div>
-		<p class="brand">
-			<svg width="34" height="34" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11.5" cy="11.5" r="7.5" /><path d="M11.5 4v4.2M5 15.25l3.64-2.1M18 15.25l-3.64-2.1" /><circle cx="11.5" cy="11.5" r="1.5" fill="currentColor" stroke="none" /><path d="M19 11.5V23" /><rect x="17" y="22" width="4" height="4" rx="1" fill="currentColor" stroke="none" /></svg>
-			windlass
+		<p class="brand" aria-label="Windlass">w<span class="brand-i">ı<svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="14" r="9" stroke="currentColor" stroke-width="5.2" /><circle cx="14" cy="14" r="2.6" fill="currentColor" /></svg></span>ndlass</p>
+		<p class="pill"><i></i><b>Open-source</b> software factory</p>
+		<h1>Hand off the issue. <span>Get back a PR you can trust.</span></h1>
+		<p class="sub">Only after your CI passes and a second agent reviews it.</p>
+		<p class="logos">
+			<span><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path fill="#ecedee" d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" /></svg>GitHub</span>
+			<span><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path fill="#fc6d26" d="m23.6004 9.5927-.0337-.0862L20.3.9814a.851.851 0 0 0-.3362-.405.8748.8748 0 0 0-.9997.0539.8748.8748 0 0 0-.29.4399l-2.2055 6.748H7.5375l-2.2057-6.748a.8573.8573 0 0 0-.29-.4412.8748.8748 0 0 0-.9997-.0537.8585.8585 0 0 0-.3362.4049L.4332 9.5015l-.0325.0862a6.0657 6.0657 0 0 0 2.0119 7.0105l.0113.0087.03.0213 4.976 3.7264 2.462 1.8633 1.4995 1.1321a1.0085 1.0085 0 0 0 1.2197 0l1.4995-1.1321 2.4619-1.8633 5.006-3.7489.0125-.01a6.0682 6.0682 0 0 0 2.0094-7.003z" /></svg>GitLab</span>
+			<span><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path fill="#5e6ad2" d="M2.886 4.18A11.982 11.982 0 0 1 11.99 0C18.624 0 24 5.376 24 12.009c0 3.64-1.62 6.903-4.18 9.105L2.887 4.18ZM1.817 5.626l16.556 16.556c-.524.33-1.075.62-1.65.866L.951 7.277c.247-.575.537-1.126.866-1.65ZM.322 9.163l14.515 14.515c-.71.172-1.443.282-2.195.322L0 11.358a12 12 0 0 1 .322-2.195Zm-.17 4.862 9.823 9.824a12.02 12.02 0 0 1-9.824-9.824Z" /></svg>Linear</span>
+			<span><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path fill="#2684ff" d="M11.571 11.513H0a5.218 5.218 0 0 0 5.232 5.215h2.13v2.057A5.215 5.215 0 0 0 12.575 24V12.518a1.005 1.005 0 0 0-1.005-1.005zm5.723-5.756H5.736a5.215 5.215 0 0 0 5.215 5.214h2.129v2.058a5.218 5.218 0 0 0 5.215 5.214V6.758a1.001 1.001 0 0 0-1.001-1.001zM23.013 0H11.455a5.215 5.215 0 0 0 5.215 5.215h2.129v2.057A5.215 5.215 0 0 0 24 12.483V1.005A1.001 1.001 0 0 0 23.013 0Z" /></svg>Jira</span>
+			<span><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path fill="#E01E5A" d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313z" /><path fill="#36C5F0" d="M8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312z" /><path fill="#2EB67D" d="M18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312z" /><path fill="#ECB22E" d="M15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z" /></svg>Slack</span>
 		</p>
-		<p class="pill">
-			<b>Coding agents</b>
-			in sandboxes you choose
-		</p>
-		<h1>Put an agent to work. <span>Watch every turn.</span></h1>
-		<p class="sub">Hosted or on your own machine. Steer it mid-turn, answer what it asks, take the work as a pull request.</p>
-		<p class="foot"><span>agents</span><b>Windlass · Claude Code</b></p>
 
-		<div class="frame">
-			<div class="bar">
-				Metres and feet
-				<span class="done"><b class="ok">✓</b> done</span>
-			</div>
+		<div class="card">
+			<div class="bar"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4.4" cy="3.8" r="1.5" /><circle cx="4.4" cy="12.2" r="1.5" /><circle cx="11.6" cy="12.2" r="1.5" /><path d="M4.4 5.3v5.4M11.6 10.7V6.6a2.2 2.2 0 00-2.2-2.2H8.2M9.7 2.9L8.1 4.4l1.6 1.5" /></svg> Rate-limit the public API <em>#214</em></div>
 			<div class="rows">
-				<p class="row"><i>✓</i><span class="v">edit</span>lib/format.ts <span class="f"><span class="add">+11</span> <span class="del">−3</span></span></p>
-				<p class="row"><i>✓</i><span class="v">shell</span>pnpm vitest run</p>
-				<div class="steer">
-					<span class="k"></span>
-					<p class="m">Use Intl.NumberFormat for units. <small>you · sent while working · read at step 7</small></p>
-				</div>
-				<p class="row"><i>✓</i><span class="v">edit</span>lib/format.ts <span class="f"><span class="add">+6</span> <span class="del">−4</span></span></p>
-				<p class="row"><i>✓</i><span class="v">shell</span>pnpm vitest run <span class="f">9 passed</span></p>
-				<p class="pr"><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="4.4" cy="3.8" r="1.5" /><circle cx="4.4" cy="12.2" r="1.5" /><circle cx="11.6" cy="12.2" r="1.5" /><path d="M4.4 5.3v5.4M11.6 10.7V6.6a2.2 2.2 0 00-2.2-2.2H8.2M9.7 2.9L8.1 4.4l1.6 1.5" /></svg>Pull request opened</p>
+				<p class="row main"><span class="ok"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg></span><b>windlass/verified</b> Verified <span class="req">Required</span></p>
+				<p class="row"><span class="ok"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg></span><b>CI / test</b> Passed</p>
+				<p class="row"><span class="ok"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg></span><b>CI / lint</b> Passed</p>
+			</div>
+			<div class="seen">
+				<p>What was observed</p>
+				<ul>
+					<li><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg> Checks passed in the sandbox</li>
+					<li><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg> CI green on the exact commit</li>
+					<li><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg> Approved by a second agent</li>
+				</ul>
 			</div>
 		</div>
 	</body>

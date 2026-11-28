@@ -1,75 +1,44 @@
 /**
  * The landing page's words, kept apart from its markup so that the page, its FAQPage JSON-LD and
- * llms.txt say the same thing. Every claim here is one the platform's code and README back: no
- * dates for agents that are not built, no prices, no numbers that were not measured.
+ * llms.txt say the same thing. Every claim here is one the platform's code and docs back, as the hosted
+ * service runs it (the reviewer on, hosted sandboxes on an allowlisted network): no dates for what is not
+ * built, no numbers that were not measured. What only a pull request has (dollar cost per item, paying
+ * with a Claude plan) stays out until it lands.
  */
 
-export const LANDING_TITLE = "Windlass — coding agents in sandboxes you choose";
+export const LANDING_TITLE = "Windlass — the open-source software factory";
 
 export const LANDING_DESCRIPTION =
-	"Run coding agents (Windlass, Claude Code) in sandboxes you choose, hosted or on your own machine. Watch every turn live and take the work as a pull request.";
+	"Hand off a GitHub or Linear issue to a coding agent. Get back a pull request only after your CI passes and a second agent reviews it.";
 
 /** One sentence an answer engine can quote as is. */
 export const ONE_LINER =
-	"Windlass is a platform that runs coding agents (Windlass and Claude Code) in isolated sandboxes, hosted or on your own machine, shows every step live in the browser, and turns finished work into GitHub pull requests.";
+	"Windlass is an open-source software factory: it takes an issue from GitHub, GitLab, Linear, Jira or Slack, has a coding agent (Windlass, Claude Code, Codex or OpenCode) build it in a sandbox, and hands back a pull request only after your checks and CI pass on the exact commit and a second agent reviews it.";
 
-export interface Agent {
-	name: string;
-	state: "available" | "planned";
-	where: string;
-}
+export const REPO_URL = "https://github.com/WindlassAI/windlass-platform";
 
-export const AGENTS: Agent[] = [
-	{
-		name: "Windlass",
-		state: "available",
-		where: "Hosted sandboxes and your own machines. The platform's own agent, a coding agent for the terminal.",
-	},
-	{
-		name: "Claude Code",
-		state: "available",
-		where: "On a machine of your own, signed in there with your own Claude account.",
-	},
-	{
-		name: "OpenCode",
-		state: "available",
-		where: "On a machine of your own, with any API-key provider OpenCode supports or its free models.",
-	},
-	{ name: "Codex", state: "planned", where: "Planned. Not available yet." },
-];
-
-export interface Feature {
-	key: string;
+export interface Proof {
+	key: "ci" | "keys" | "open";
 	title: string;
 	text: string;
 }
 
-export const SESSION_FEATURES: Feature[] = [
+/** The strip under the hero. */
+export const PROOF: Proof[] = [
 	{
-		key: "start",
-		title: "Start from a prompt",
-		text: "Pick the agent, the model, the mode and the repository, then say what you want done.",
+		key: "ci",
+		title: "Your CI decides, not the agent.",
+		text: "On GitHub every item ends in a windlass/verified check you can make required.",
 	},
 	{
-		key: "watch",
-		title: "Watch it live",
-		text: "Every file it reads, every command it runs and what it cost, as it happens.",
+		key: "keys",
+		title: "Your keys stay out of the sandbox.",
+		text: "Model keys are relayed per turn, and Windlass pushes the branch itself.",
 	},
 	{
-		key: "steer",
-		title: "Steer mid-turn",
-		text: "A message sent while it works is read at its next step. Stop one call without ending the turn.",
-	},
-	{
-		key: "ask",
-		title: "Answer its questions",
-		text: "When a command wants the network or a write outside the workspace, it asks: allow once, for the session, or decline with a note.",
-	},
-	{ key: "diff", title: "Read the diff", text: "The workspace's changes after every turn, file by file." },
-	{
-		key: "publish",
-		title: "Publish a pull request",
-		text: "Through the Windlass GitHub App, on the repositories you connect.",
+		key: "open",
+		title: "Open source, runs anywhere.",
+		text: "Hosted, on your own machine, or self-hosted. Apache-2.0.",
 	},
 ];
 
@@ -78,15 +47,106 @@ export interface Step {
 	text: string;
 }
 
-/** The Factory's sequence, as server/src/factory/blueprint.ts fixes it. */
+/** The Factory's sequence, as the server's factory flow runs it. */
 export const FACTORY_STEPS: Step[] = [
-	{ label: "file", text: "From the Factory page, the API, or a GitHub issue: a “windlass” label or an @mention" },
-	{ label: "implement", text: "An agent works the task in a sandbox of its own" },
-	{ label: "check", text: "Your repository's checks run; a failure goes back to the agent" },
-	{ label: "pull request", text: "The platform pushes the branch and opens the pull request" },
-	{ label: "ci", text: "CI is read; failing checks and their logs go back to the agent" },
-	{ label: "review", text: "A second agent reviews the pushed commit, with screenshots where enabled" },
-	{ label: "ready for you", text: "A verdict built from what was observed, never from the agent's words" },
+	{ label: "File", text: "A GitHub or GitLab label or mention, Linear, Jira, Slack, the API or the Factory page." },
+	{ label: "Plan", text: "Bigger work is split into parts you approve. Small plans can approve themselves." },
+	{ label: "Build", text: "Each part runs in a sandbox of its own, up to three at once." },
+	{ label: "Check", text: "Your repository's checks run. Failures go back to the agent." },
+	{ label: "CI", text: "Your CI runs on the pushed commit. Failing logs go back to the agent." },
+	{ label: "Review", text: "A second agent reviews the exact commit, in its own sandbox." },
+	{ label: "Verified", text: "windlass/verified passes only on what was observed, never on what the agent says." },
+	{ label: "Merge", text: "You merge, or turn on auto-merge for a repository once you trust it." },
+];
+
+export interface SafetyCard {
+	key: "keys" | "network" | "resume";
+	title: string;
+	text: string;
+}
+
+export const SAFETY: SafetyCard[] = [
+	{
+		key: "keys",
+		title: "Credentials stay outside",
+		text: "Your model key is relayed per turn and never written into the sandbox. Windlass pushes the branch itself with a token for that one repository, so the agent is never handed one.",
+	},
+	{
+		key: "network",
+		title: "The network is allowlisted",
+		text: "Hosted commands reach only the hosts you allow. A blocked request shows up on the item, with one click to allow it for that repository.",
+	},
+	{
+		key: "resume",
+		title: "Runs survive restarts",
+		text: "A turn running when the server restarts, or when your machine drops off, picks up again from the agent's own saved session.",
+	},
+];
+
+export type AgentId = "windlass" | "claude" | "codex" | "opencode";
+
+export interface AgentRow {
+	id: AgentId;
+	name: string;
+	hosted: string;
+	machine: string;
+}
+
+/** Where each agent runs, and what it can take on there. Planning and review run on Windlass. */
+export const AGENT_GRID: AgentRow[] = [
+	{
+		id: "windlass",
+		name: "Windlass agent",
+		hosted: "Everything, plans included",
+		machine: "Everything, plans included",
+	},
+	{ id: "claude", name: "Claude Code", hosted: "Quick items and plan parts", machine: "Quick items and plan parts" },
+	{ id: "codex", name: "Codex", hosted: "Quick items", machine: "Quick items" },
+	{ id: "opencode", name: "OpenCode", hosted: "Quick items and plan parts", machine: "Quick items and plan parts" },
+];
+
+export interface Plan {
+	name: string;
+	price: string;
+	per: string;
+	points: string[];
+	accent?: boolean;
+}
+
+/** The plans, as server/src/billing/plans.ts sets them. */
+export const PLANS: Plan[] = [
+	{
+		name: "Free",
+		price: "$0",
+		per: "",
+		points: [
+			"120 hosted minutes a month",
+			"Unlimited runs on up to 3 of your machines",
+			"Every agent, the Factory and Repo setup",
+		],
+	},
+	{
+		name: "Pro",
+		price: "$15",
+		per: "a month, or $144 a year",
+		points: [
+			"1,800 hosted minutes a month",
+			"$0.006 a minute after that, under a spend cap you set (at most $20)",
+			"Up to 10 machines",
+			"Everything in Free",
+		],
+		accent: true,
+	},
+	{
+		name: "Self-host",
+		price: "Free",
+		per: "",
+		points: [
+			"The whole platform, Apache-2.0",
+			"On your own server, with your own sandboxes",
+			"A compose kit and an operator's guide",
+		],
+	},
 ];
 
 export interface Faq {
@@ -96,38 +156,42 @@ export interface Faq {
 
 export const FAQ: Faq[] = [
 	{
-		question: "What is Windlass?",
+		question: "How is this different from Devin, Copilot's coding agent or OpenHands?",
 		answer:
-			"Windlass is a platform that runs coding agents for you. Each agent session works in a sandbox of its own, hosted or on a machine of yours, and the browser shows every step as it happens: the files read, the commands run, the questions asked and the changes made. Finished work becomes a pull request on GitHub. Windlass is also the name of the platform's own agent, a coding agent for the terminal.",
+			"Three things. Your checks, your CI and an independent review decide whether work is done, and on GitHub that verdict is a check you can make required. You choose the agent (Claude Code, Codex, OpenCode or Windlass) instead of being locked to one. And it is open source: run it hosted, on your own machine, or on your own servers.",
 	},
 	{
-		question: "Which coding agents can it run?",
+		question: "Does Windlass store my code or keys?",
 		answer:
-			"Three today: Windlass, on hosted sandboxes and on your own machines; Claude Code, on a machine of your own where it is signed in with your Claude account; and OpenCode, on a machine of your own with any API-key provider it supports or its free models. Codex is planned and not available yet.",
+			"Your API keys are stored encrypted and relayed per turn; they are never written into the sandbox. Code lives in your repository, and in the sandbox while an agent works on it. Repository secrets you choose to share are passed in as environment variables. Self-host if you want everything on your own infrastructure.",
+	},
+	{
+		question: "Can it merge on its own?",
+		answer:
+			"Only if you turn auto-merge on for a GitHub repository, and only for a single item whose checks and CI passed on the exact commit and whose review approved it. Otherwise you merge.",
+	},
+	{
+		question: "Which agents and models can I use?",
+		answer:
+			"Claude Code, Codex, OpenCode and the Windlass agent, with your own keys for Anthropic, OpenAI, Google Gemini or OpenRouter. Planning and review run on the Windlass agent; the others build quick items and the parts of a plan (Codex quick items only).",
 	},
 	{
 		question: "Where does the agent's code run?",
 		answer:
-			"Choose Hosted or pair your own Mac, Linux or Windows (WSL) computer with Docker. Your computer connects to Windlass.",
+			"In a hosted sandbox, or on a Mac, Linux or Windows (WSL) machine of yours with Docker. Your machine connects out to Windlass, so nothing on your network has to open up.",
 	},
 	{
-		question: "How are agents isolated?",
+		question: "What does it cost to run?",
 		answer:
-			"Each agent has its own workspace. In Strict, commands are locked down and have no internet access. In Open, commands can reach the internet and read credentials in the workspace.",
+			"Hosted time is on your plan; time on your own machines is not counted. Model tokens are billed by your provider, on your own key. Each item has a budget in dollars, and its page shows what it cost: model, sandbox and retries.",
 	},
 	{
-		question: "What is the Factory?",
-		answer:
-			'The Factory carries a task to a pull request by itself. You file a work item on the Factory page, through the API, or by labelling a GitHub issue “windlass” or @mentioning the Windlass app on it. An agent implements it, your checks and CI are read and failures go back to the agent, a second agent can review the result, and the item lands in your "Ready for you" list with a verdict. The platform never merges: you do, on GitHub.',
+		question: "Is it open source?",
+		answer: "Yes. The platform is Apache-2.0, and the Windlass agent is MIT.",
 	},
 	{
-		question: "Does it work with GitHub?",
+		question: "How do I get access?",
 		answer:
-			"Yes, through the Windlass GitHub App. Connect the repositories you choose; sessions publish their work as pull requests, work items can be filed from issues, and the Factory reads CI on the pushed commit.",
-	},
-	{
-		question: "How do I get access, and what does it cost?",
-		answer:
-			"Access is by invitation while the platform is young: an invited account signs in, and everyone else is refused. There is no public sign-up and no pricing yet.",
+			"The hosted service is open to invited accounts while it is young: an invited account signs in with GitHub or Google. Anyone can self-host the platform today.",
 	},
 ];

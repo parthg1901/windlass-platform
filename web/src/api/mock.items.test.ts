@@ -814,7 +814,7 @@ describe("the screenshots on an item's page", () => {
 		expect(shots.map(shot => [shot.width, shot.height, shot.shows, shot.state, shot.by])).toEqual([
 			[1280, 800, "after", "kept", "builder"],
 			[390, 844, "after", "kept", "builder"],
-			[1280, 6000, "after", "kept", "builder"],
+			[1280, 3202, "after", "kept", "builder"],
 		]);
 		for (const shot of shots) expect(shot.id).toMatch(/^a_[0-9a-f]{16}$/);
 		// Each one is named by a screenshot block, after the agent's words, as the server files them.
