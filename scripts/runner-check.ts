@@ -1164,7 +1164,7 @@ require("node:module").syncBuiltinESMExports();`,
 			pairing.current.machineId = "m_" + randomBytes(8).toString("hex");
 			await writeFile(join(otherState, "pair.json"), JSON.stringify(pairing), { mode: 0o600 });
 			const otherEnv = { WLP_RUNNER_STATE_DIR: otherState };
-			assert.match((await owner(["status"], "", otherEnv)).output, /Claude Code.*not signed in/);
+			assert.match((await owner(["status"], "", otherEnv)).output, /Claude Code.*: pays with your plans and keys/);
 			assert.equal((await owner(["logout", "claude"], "", otherEnv)).code, 0);
 			const staleVolume = "wlp-harness-claude-" + pairing.current.machineId;
 			const pending = spawn(process.execPath, [bundle, "login", "claude"], { env: env(otherState), stdio: "pipe" });
@@ -1214,13 +1214,13 @@ require("node:module").syncBuiltinESMExports();`,
 				}
 				assert.equal(logout.output.trim().split("\n").length, pairIds.length);
 				assert.equal(status.code, 0);
-				assert.equal(status.output.match(/: not signed in$/gm)?.length, pairIds.length);
-				assert.doesNotMatch(status.output, /: signed in/);
+				assert.equal(status.output.match(/: pays with your plans and keys$/gm)?.length, pairIds.length);
+				assert.doesNotMatch(status.output, /login kept on this machine/);
 			} finally {
 				for (const id of pairIds) await docker(["volume", "rm", "wlp-harness-claude-" + id]);
 			}
 			ok("Logout after a re-pair clears both login volumes and reports each pairing signed out.");
-			assert.match((await owner(["status"])).output, /Claude Code.*: signed in/);
+			assert.match((await owner(["status"])).output, /Claude Code.*: login kept on this machine/);
 			ok(
 				"Login validates one line, uses stdin, checks volume ownership and reports only the pinned harness and sign-in state.",
 			);
@@ -1247,7 +1247,7 @@ require("node:module").syncBuiltinESMExports();`,
 				],
 				{ check: true },
 			);
-			assert.match((await owner(["status"])).output, /Claude Code.*not signed in/);
+			assert.match((await owner(["status"])).output, /Claude Code.*: pays with your plans and keys/);
 
 			// Attach a real terminal with echo initially on. The local shim stands in only
 			// for Anthropic's browser flow. Wait for the private prompt before writing.
@@ -1354,7 +1354,7 @@ require("node:module").syncBuiltinESMExports();`,
 			);
 			await writeFile(calls, "");
 			const status = await owner(["status"]);
-			assert.match(status.output, /Claude Code.*signed in/);
+			assert.match(status.output, /Claude Code.*: login kept on this machine/);
 			assert.ok(
 				!(await readFile(calls, "utf8")).split("\n").some(v => ["run", "start", "exec"].includes(v)),
 				"status started a container",

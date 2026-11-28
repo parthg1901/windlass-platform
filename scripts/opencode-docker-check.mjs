@@ -306,6 +306,11 @@ async function settingsKeyTurns() {
 	const id = await owner.create("keys", profile, false, "opencode");
 	const anth = "anthropic/claude-opus-4-6";
 	await channelTurn(owner, "keys", id, "default", undefined, undefined, { providers: ["anthropic"] });
+	// One turn can send more than one request (OpenCode also asks for a title), so compare counts rather than fix one.
+	const keyRequests = async () =>
+		(await cmd(["logs", upstream])).split("settings POST /model-relay/v1/messages").length - 1;
+	const keyed = await keyRequests();
+	assert.ok(keyed >= 1, "the Settings key did not pay without a machine login");
 	await storeProvider(owner, { provider: "anthropic", key: token + "-key" });
 	await storeProvider(owner, { provider: "openai", key: token + "-key" });
 	await owner.loginChanged(true);
@@ -316,8 +321,8 @@ async function settingsKeyTurns() {
 	await channelTurn(owner, "keys", id, anth, undefined, undefined, { providers: ["anthropic", "google"] });
 	await channelTurn(owner, "keys", id, "openai/gpt-5.4", undefined, undefined, { providers: ["anthropic", "openai"] });
 	await channelTurn(owner, "keys", id, anth);
+	assert.equal(await keyRequests(), keyed, "a Settings key paid where the machine has its own login");
 	const log = await cmd(["logs", upstream]);
-	assert.equal(log.split("settings POST /model-relay/v1/messages").length, 2);
 	assert.match(log, /authorized api.openai.com \/v1\/responses/);
 	ok("A Settings key pays without a machine login; the machine's own logins win once it has them.");
 	const raw = "opencode-" + id.slice(-12),

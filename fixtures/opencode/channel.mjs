@@ -9,7 +9,7 @@ import { turnCredential } from '../../server/src/actors/agent-session.ts';
 import { OPENCODE, CODEX } from '../../server/src/sandbox/harnesses.ts';
 import { turnRefusal } from '../../server/src/provider-refusal.ts';
 
-export async function channelTurn(owner, session, id, model, expectedFailure, codex, { providers = [] } = {}) {
+export async function channelTurn(owner, session, id, model, expectedFailure, codex, { providers = [], source = null } = {}) {
 	if (providers.length) {
 		const { config } = await import('../../server/src/config.ts');
 		config.modelRelay.on = true;
@@ -49,6 +49,10 @@ export async function channelTurn(owner, session, id, model, expectedFailure, co
 			let reply = '', selected;
 			const ctx = {vars:{runner:link}, client:() => ({user:{get:() => ({
 				internalModelKeys:async () => providers.map(provider => ({provider, generation:'fixture'})),
+				// Pay with for a plan agent (Codex): `source: "key"` answers that the first Settings key pays.
+				internalTurnPayer:async () => source === 'key' && providers.length
+					? {decision:{pay:'key'}, ref:{provider:providers[0], generation:'fixture'}, plan:null, rule:{payWith:'key', whenLimited:'wait'}, capped:false}
+					: null,
 			})}})};
 			const credential = await turnCredential(ctx, {uid:owner.identity.uid, harness:harness.id, place:{kind:'machine', machineId:owner.identity.machineId}},
 				{...offered, keyRelay:owner.harnessKeyRelays}, model);
