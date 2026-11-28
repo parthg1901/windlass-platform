@@ -16,6 +16,7 @@ import { githubConfig } from "../config.js";
 import { githubApp, GithubError } from "../github/app.js";
 import { isAddressed, githubIdKey, type Delivery } from "../github/events.js";
 import type { ActorClient } from "./internal.js";
+import { resolveFiler } from "./issue-intake.js";
 
 // https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks
 // Redeliveries have "the same" delivery GUID. This is the inbox primary key.
@@ -472,22 +473,14 @@ async function issueDelivery(d: Delivery, c: Ctx): Promise<"no item" | void> {
 	if (d.event === "issue_comment" || d.action === "labeled") {
 		// Who may file is decided by the sender's linked account and GitHub's permission (github-intake.ts), never by `author_association`.
 		if (d.event === "issue_comment" && d.data.isPullRequest) return "no item";
-		let link;
-		try {
-			link = await c
-				.client()
-				.githubAccount.get([String(sender.id)], params)
-				.internalWho();
-		} catch (error) {
-			if (!missingActor(error)) throw error;
-		}
-		if (!link?.installations.includes(d.installationId)) {
+		const filer = await resolveFiler(c, "github", String(d.installationId), String(sender.id));
+		if (!filer) {
 			console.log(`github.intake.unlinked installation=${d.installationId} delivery=${d.guid}`);
 			return "no item";
 		}
 		await c
 			.client()
-			.user.get([link.uid], params)
+			.user.get([filer.uid], params)
 			.internalGithubIntake({
 				installationId: d.installationId,
 				repositoryId: d.repositoryId,

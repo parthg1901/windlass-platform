@@ -22,7 +22,9 @@ import { signedPayload } from "../signatures.js";
 import { openSecret, sealSecret } from "../repo-secrets.js";
 import { serverSealer } from "../signin/seal.js";
 import type { ActorClient, JiraItemWrite } from "./internal.js";
-import type { SiteJiraFiling } from "./issue-intake.js";
+import { resolveFiler, type SiteJiraFiling } from "./issue-intake.js";
+import { JIRA_TENANT, linkedAccountsUrl, surfaceAccountsOf } from "./surface-accounts.js";
+import { linkProvenAccount } from "./user-identity.js";
 import type { JiraGeneration, Registration } from "./jira-site.js";
 
 export const JIRA_TABLES = [
@@ -211,6 +213,8 @@ export const jiraSettingsActions = {
 		)
 			throw invalid();
 		await clear(c);
+		// Connecting signs in as oneself at Atlassian: it proves this Jira account is this user's.
+		await linkProvenAccount(c, "jira", JIRA_TENANT, user, "Atlassian");
 		return save(c, { user, sites, site: null, connectedAt: Date.now() }, token);
 	}),
 	jiraSelectSite: action(async (c, id: string) => {
@@ -220,6 +224,7 @@ export const jiraSettingsActions = {
 		if (!site || !meta.sites.some(s => s.id === id)) throw problem("Choose an authorized Jira site.", "jira_site");
 		const user = await app.identity(token.accessToken, id);
 		if (meta.site?.id !== id || user.id !== meta.user.id) await clear(c);
+		if (user.id !== meta.user.id) await linkProvenAccount(c, "jira", JIRA_TENANT, user, "Atlassian");
 		return save(c, { ...meta, user, site, sites }, token);
 	}),
 	jiraProjects: action(async c => (await projects(c)).list),
@@ -301,7 +306,7 @@ export function fileJiraDelivery(
 	c: Ctx,
 	d: JiraDelivery,
 	digest: string,
-	file: (f: SiteJiraFiling) => Promise<TrackerFiled>,
+	file: (f: SiteJiraFiling, uid: string) => Promise<TrackerFiled>,
 ): Promise<JiraDispatch> {
 	return serial(c, async () => {
 		const meta = (await stored(c))?.meta;
@@ -313,50 +318,83 @@ export function fileJiraDelivery(
 		const { app, token } = await access(c),
 			issue = await app.issue(token.accessToken, d.cloudId, d.issueId);
 		if (!issue || issue.id !== d.issueId || issue.projectId !== d.projectId || issue.closed) return "ignored";
-		const directoryActor = directory(c, d.cloudId);
-		const plan: JiraGeneration = await directoryActor.internalGeneration(c.key[0], issue.id, d.sentAt);
-		if (plan.kind === "exists") return "taken";
 		const assigned = d.assignedTo === meta.user.id && issue.assignee?.id === meta.user.id;
 		const labelled = d.label && issue.labels.some(isTriggerLabel);
+		// The item is the sender's, in their own account: never the project owner's on their behalf.
+		const filer = await resolveFiler(c, "jira", JIRA_TENANT, d.actorId);
+		if (!filer) {
+			if ((assigned || labelled) && d.actorId)
+				await askToLink(c, app, token.accessToken, d.cloudId, issue.id, d.actorId);
+			console.log(`jira.intake.unlinked site=${d.cloudId} delivery=${d.deliveryId}`);
+			return "ignored";
+		}
+		const directoryActor = directory(c, d.cloudId);
+		const plan: JiraGeneration = await directoryActor.internalGeneration(filer.uid, issue.id, d.sentAt);
+		if (plan.kind === "exists") return "taken";
 		const sender = [issue.creator, issue.assignee, issue.reporter, meta.user].find(p => p && p.id === d.actorId);
-		const decision = await file({
-			issue: { ...issue, url: `${meta.site.url}/browse/${issue.identifier}` },
-			plan,
-			project: { id: issue.projectId, siteId: d.cloudId },
-			repository: row.mapping.repository,
-			trigger: {
-				via: !assigned && d.label ? "label" : "assignment",
-				at: d.sentAt,
-				sender: sender ?? { id: d.actorId ?? "unknown", name: "a Jira user" },
-				...(!assigned && !labelled && { lapsed: true }),
+		const decision = await file(
+			{
+				issue: { ...issue, url: `${meta.site.url}/browse/${issue.identifier}` },
+				plan,
+				project: { id: issue.projectId, siteId: d.cloudId },
+				repository: row.mapping.repository,
+				trigger: {
+					via: !assigned && d.label ? "label" : "assignment",
+					at: d.sentAt,
+					sender: sender ?? { id: d.actorId ?? "unknown", name: "a Jira user" },
+					...(!assigned && !labelled && { lapsed: true }),
+				},
+				filer: filer.filer,
 			},
-		});
+			filer.uid,
+		);
 		if (decision.kind === "filed" || decision.kind === "exists")
 			await directoryActor.internalFinishIssue(issue.id, decision.itemId);
 		if (decision.kind === "refused" && decision.dailyCap) throw new Error("jira_daily_cap");
 		return decision.kind === "ignored" ? "ignored" : "taken";
 	});
 }
+/** Asks an unlinked person, once per issue, to link their Jira account. Best effort: the delivery is decided either way. */
+async function askToLink(c: Ctx, app: JiraApp, token: string, site: string, issue: string, person: string) {
+	try {
+		if (!(await surfaceAccountsOf(c, "jira", JIRA_TENANT).internalPromptOnce(person, `${site}/${issue}`))) return;
+		await app.comment(
+			token,
+			site,
+			issue,
+			"Windlass files work in the Windlass account of the person who asks for it, and that person's Jira account isn't linked yet, so nothing was filed. Connect Jira in Windlass Settings to link your account, then add the label or assignment again.",
+			linkedAccountsUrl(config.origins[0] ?? ""),
+		);
+	} catch {
+		c.log.warn({ msg: "Could not ask a Jira user to link their account" });
+	}
+}
 const retry = new WeakMap<object, number>();
-export function writeJiraItem(c: Ctx, { siteId, projectId, issueId, itemId, action }: JiraItemWrite) {
+export function writeJiraItem(c: Ctx, { siteId, projectId, issueId, itemId, action, filedBy }: JiraItemWrite) {
 	return serial(c, async () => {
 		if ((retry.get(c.vars) ?? 0) > Date.now()) throw new Error("jira_rate_limited");
 		try {
 			if ((await stored(c))?.meta.site?.id !== siteId) return false;
 			const row = (await registrations(c, siteId)).find(r => r.mapping.projectId === projectId);
 			if (!row) return false;
-			const [indexed] = await c.db.execute<{ summary: string; key: string }>(
-				"SELECT summary,key FROM items WHERE id=?",
-				itemId,
-			);
-			if (!indexed) throw new Error("item_not_indexed"); // The outbox can wake before filing commits.
-			const item: ItemSummary = JSON.parse(indexed.summary);
-			if (
-				item.origin?.jira?.id !== issueId ||
-				item.repository.id !== row.mapping.repository.id ||
-				!indexed.key?.startsWith(`jira:${siteId}:${issueId}:`)
-			)
-				return false;
+			if (filedBy && filedBy.uid !== c.key[0]) {
+				// Another account's item: the site's record of the filing stands for this account's index.
+				if (filedBy.repositoryId !== row.mapping.repository.id) return false;
+				if (!(await directory(c, siteId).internalHoldsFiling(issueId, filedBy.uid, itemId))) return false;
+			} else {
+				const [indexed] = await c.db.execute<{ summary: string; key: string }>(
+					"SELECT summary,key FROM items WHERE id=?",
+					itemId,
+				);
+				if (!indexed) throw new Error("item_not_indexed"); // The outbox can wake before filing commits.
+				const item: ItemSummary = JSON.parse(indexed.summary);
+				if (
+					item.origin?.jira?.id !== issueId ||
+					item.repository.id !== row.mapping.repository.id ||
+					!indexed.key?.startsWith(`jira:${siteId}:${issueId}:`)
+				)
+					return false;
+			}
 			const { app, token, meta } = await access(c);
 			const issue = await app.issue(token.accessToken, siteId, issueId);
 			if (issue?.id !== issueId || issue.projectId !== projectId) return false;

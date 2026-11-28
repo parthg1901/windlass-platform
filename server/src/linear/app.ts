@@ -185,14 +185,17 @@ export class LinearApp {
 		private readonly secrets: { clientSecret: () => string | null } = { clientSecret: () => linearClientSecret() },
 	) {}
 
-	/** Where the owner authorizes the app, as the app's own user and with PKCE. */
-	authorizeUrl(state: string, codeChallenge: string): string {
+	/**
+	 * Where the owner authorizes the app, as the app's own user and with PKCE. `person`: where someone signs in as themselves,
+	 * with read access only, to prove which Linear user they are (a linked account); that token is revoked at once.
+	 */
+	authorizeUrl(state: string, codeChallenge: string, as: "app" | "person" = "app"): string {
 		const query = new URLSearchParams({
 			client_id: this.settings.clientId,
 			redirect_uri: this.settings.redirectUrl,
 			response_type: "code",
-			scope: LINEAR_SCOPES.join(","),
-			actor: "app",
+			scope: as === "app" ? LINEAR_SCOPES.join(",") : "read",
+			...(as === "app" && { actor: "app" }),
 			state,
 			code_challenge: codeChallenge,
 			code_challenge_method: "S256",
@@ -369,6 +372,39 @@ export class LinearApp {
 			appUser: { id: viewer.id, name: text(viewer.name).slice(0, 200) },
 			installer: null,
 		};
+	}
+
+	/** The person a token of someone signing in as themselves belongs to, and their workspace. The app user's is refused. */
+	async person(token: string): Promise<{ person: { id: string; name: string }; workspace: LinearWorkspace }> {
+		const data = await this.query(
+			token,
+			"read who signed in",
+			"query { viewer { id name app } organization { id name urlKey } }",
+		);
+		const viewer = record(data.viewer),
+			organization = record(data.organization);
+		if (viewer.app !== false || !isLinearId(viewer.id) || !isLinearId(organization.id))
+			throw new LinearError(400, "the token is not a person's", "read who signed in", "not_person");
+		return {
+			person: { id: viewer.id.toLowerCase(), name: text(viewer.name).slice(0, 200) },
+			workspace: {
+				id: organization.id.toLowerCase(),
+				name: text(organization.name).slice(0, 200),
+				urlKey: text(organization.urlKey).slice(0, 100),
+			},
+		};
+	}
+
+	/** Comments on an issue as the app user. `id` makes a retried comment the same comment. */
+	async comment(token: string, issueId: string, id: string, body: string): Promise<void> {
+		const data = await this.query(
+			token,
+			"comment on the issue",
+			"mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
+			{ input: { id, issueId, body } },
+		);
+		if (record(data.commentCreate).success !== true)
+			throw new LinearError(400, "comment declined", "comment on the issue");
 	}
 
 	/** The teams this token can see: what the owner may map to a repository. */

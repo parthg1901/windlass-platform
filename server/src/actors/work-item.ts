@@ -3222,20 +3222,30 @@ async function perform(c: Ctx, row: EffectRow): Promise<boolean | "deferred"> {
 	}
 	if (effect.kind === "jira_comment" || effect.kind === "linear_write") {
 		if ((await c.db.execute("SELECT 1 FROM issue_actions WHERE subject=?", row.id)).length) return true;
-		const owner = userActor(c, meta.uid);
+		// The mapping's owner writes to the issue with their connection, also for an item a teammate filed.
+		const params = { params: serviceParams() };
 		let posted: boolean;
 		if (effect.kind === "jira_comment") {
 			const { ref } = bindingTo(meta, "jira")!;
-			posted = await owner.internalJiraWrite({
+			const projectId = ref.scope ?? "";
+			const mapper: string | null = await c.client().jiraSite.get([ref.tenant], params).internalProjectOwner(projectId);
+			if (!mapper) return true;
+			posted = await userActor(c, mapper).internalJiraWrite({
 				siteId: ref.tenant,
-				projectId: ref.scope ?? "",
+				projectId,
 				issueId: ref.id,
 				itemId: item.id,
 				action: effect,
+				filedBy: { uid: meta.uid, repositoryId: meta.repository.id },
 			});
 		} else {
 			const { ref } = bindingTo(meta, "linear")!;
-			posted = await owner.internalLinearWrite({
+			const mapper: string | null = await c
+				.client()
+				.linearWorkspace.get([ref.tenant], params)
+				.internalOwner(ref.scope ?? "");
+			if (!mapper) return true;
+			posted = await userActor(c, mapper).internalLinearWrite({
 				workspaceId: ref.tenant,
 				teamId: ref.scope ?? "",
 				issueId: ref.id,

@@ -53,7 +53,12 @@ export function legacyBindings(meta: StoredBindings): SourceBinding[] {
 			role: "origin",
 			generation: github.generation,
 			mappingGeneration: null,
-			origin: { author: issue.author, sender, trusted: issue.trusted },
+			origin: {
+				author: issue.author,
+				sender,
+				trusted: issue.trusted,
+				...(github.origin.filer && { filer: github.origin.filer }),
+			},
 			trigger: { via: null, at: github.triggeredAt, senderId: String(github.senderId) },
 			...("modeReason" in github && { modeReason: github.modeReason }),
 			extra: {
@@ -79,7 +84,7 @@ export function legacyBindings(meta: StoredBindings): SourceBinding[] {
 			role: "origin",
 			generation: gitlab.generation,
 			mappingGeneration: null,
-			origin: { author: "", sender: "", trusted: false },
+			origin: { author: "", sender: "", trusted: false, ...(gitlab.filer && { filer: gitlab.filer }) },
 			trigger: null,
 			extra: { projectId: gitlab.project.id },
 		});
@@ -88,7 +93,12 @@ export function legacyBindings(meta: StoredBindings): SourceBinding[] {
 		role: "origin" as const,
 		generation: t.generation,
 		mappingGeneration: null,
-		origin: { author: t.issue.author, sender: t.origin.sender, trusted: t.issue.trusted },
+		origin: {
+			author: t.issue.author,
+			sender: t.origin.sender,
+			trusted: t.issue.trusted,
+			...(t.origin.filer && { filer: t.origin.filer }),
+		},
 		trigger: { via: t.via, at: t.triggeredAt, senderId: t.senderId },
 		...("modeReason" in t && { modeReason: t.modeReason }),
 	});
@@ -118,7 +128,7 @@ export function legacyBindings(meta: StoredBindings): SourceBinding[] {
 			role: "origin",
 			generation: "message",
 			mappingGeneration: slack.generation,
-			origin: { author: "", sender: "", trusted: false },
+			origin: { author: "", sender: "", trusted: false, ...(slack.filer && { filer: slack.filer }) },
 			trigger: null,
 		});
 	return list;
@@ -160,7 +170,10 @@ const githubOrigin = (binding: BindingOf<"github">) => ({
 		trusted: binding.origin.trusted,
 	},
 	sender: binding.origin.sender,
+	...filerOf(binding),
 });
+
+const filerOf = (binding: SourceBinding) => (binding.origin.filer ? { filer: binding.origin.filer } : {});
 
 const tracker = (binding: SourceBinding) => ({
 	id: binding.ref.id,
@@ -188,11 +201,16 @@ const LEGACY: {
 		origin: binding => ({
 			linear: { ...tracker(binding), trusted: binding.origin.trusted },
 			sender: binding.origin.sender,
+			...filerOf(binding),
 		}),
 		identity: binding => ({ linear: binding.ref.id, generation: binding.generation }),
 	},
 	jira: {
-		origin: binding => ({ jira: { ...tracker(binding), trusted: false }, sender: binding.origin.sender }),
+		origin: binding => ({
+			jira: { ...tracker(binding), trusted: false },
+			sender: binding.origin.sender,
+			...filerOf(binding),
+		}),
 		identity: binding => ({ jira: binding.ref.id, siteId: binding.ref.tenant, generation: binding.generation }),
 	},
 	slack: {

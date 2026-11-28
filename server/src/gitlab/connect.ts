@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { config, gitlabClientSecret, gitlabConfig } from "../config.js";
 import { serverSealer } from "../signin/seal.js";
 import { GITLAB_SCOPES, GitlabApp, GitlabError, type GitlabToken } from "./app.js";
@@ -28,6 +29,9 @@ interface Ticket {
 	issuer: string;
 }
 export const issuerOf = (app: GitlabApp) => JSON.stringify([app.settings.baseUrl, app.settings.clientId]);
+/** The GitLab instance as a directory key (`surfaceAccounts`): its users' ids are the instance's. */
+export const gitlabTenant = (app: GitlabApp) =>
+	createHash("sha256").update(app.settings.baseUrl).digest("hex").slice(0, 32);
 const subject = (uid: string) => `gitlab-connect\n${uid}`;
 export function openGitlabTicket(uid: string, blob: string): Ticket {
 	return JSON.parse(serverSealer().open("transit", subject(uid), blob));

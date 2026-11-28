@@ -30,6 +30,7 @@ import type {
 	GithubRepositoryList,
 	GithubStatus,
 	SlackSettingsActions,
+	LinkedAccountsActions,
 	LinearStatus,
 	LinearTeamList,
 	HostAllowed,
@@ -178,6 +179,7 @@ export interface SessionFeed {
 export interface UserApi
 	extends GitlabActions,
 		SlackSettingsActions,
+		LinkedAccountsActions,
 		Pick<
 			UserActions,
 			| "signOutEverywhere"

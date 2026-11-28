@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { actor, UserError } from "rivetkit";
 import { db, type RawAccess } from "rivetkit/db";
 import { internalConnection, requireServiceFor } from "../auth.js";
@@ -20,6 +20,8 @@ import { escapeText, revisionModal, type SlackMessage, type SlackPost } from "..
 import type { SlackInteraction } from "../slack/interactions.js";
 import type { SlackDelivery } from "../slack/webhook.js";
 import { type ActorClient, userActor } from "./internal.js";
+import { resolveFiler } from "./issue-intake.js";
+import { surfaceAccountsOf } from "./surface-accounts.js";
 
 type Install = { owner: string; name: string; bot: string; sealed: string };
 type Mapping = { id: string; name: string; repository: string; generation: string; details: number };
@@ -27,7 +29,6 @@ type Mapping = { id: string; name: string; repository: string; generation: strin
 type Thread = { uid: string; item: string; generation: string };
 type Ctx = { db: RawAccess; key: string[]; vars: { queue: Promise<unknown> }; client(): ActorClient };
 const unavailable = () => new UserError("This Slack connection is no longer available.", { code: "slack_unavailable" });
-const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 
 function serial<T>(c: Ctx, work: () => Promise<T>) {
 	const run = c.vars.queue.then(work);
@@ -43,9 +44,10 @@ function token(c: Ctx, row: Install) {
 	return openSecret(serverSealer(), row.owner, `slack:${c.key[0]}`, "bot", row.sealed);
 }
 
-const route = `SELECT m.generation, m.repository, (SELECT uid FROM member WHERE user_id=?) AS uid
-	FROM mapping m, install WHERE m.id=? AND install.bot<>?`;
-type Route = { generation: string; repository: string; uid: string | null };
+const route = "SELECT m.generation, m.repository FROM mapping m, install WHERE m.id=? AND install.bot<>?";
+type Route = { generation: string; repository: string };
+/** The Windlass user a Slack member linked (surface-accounts.ts), or null. */
+const memberOf = async (c: Ctx, userId: string) => (await resolveFiler(c, "slack", c.key[0]!, userId))?.uid ?? null;
 const itemUrl = (item: string) => `${config.origins[0]}/items/${item}`;
 
 // A mention in an item's thread never files new work. Its owner may answer the open question by a choice's label.
@@ -63,9 +65,10 @@ async function reply(c: Ctx, bearer: string, d: SlackDelivery, thread: Thread, u
 }
 
 async function deliver(c: Ctx, d: SlackDelivery, generation: string, uid: string | null) {
-	const [current] = await c.db.execute<Route>(route, d.userId, d.channelId, d.userId);
-	if (!current || current.generation !== generation || current.uid !== uid) return;
-	const bearer = token(c, await install(c));
+	const [current] = await c.db.execute<Route>(route, d.channelId, d.userId);
+	if (!current || current.generation !== generation || (await memberOf(c, d.userId)) !== uid) return;
+	const row = await install(c);
+	const bearer = token(c, row);
 	// Slash commands also reach channels the bot has left since the mapping was saved.
 	if (d.deliveryId.startsWith("command:") && !(await isJoinedChannel(bearer, d.channelId))) return;
 	const [thread] = d.threadTs
@@ -77,18 +80,19 @@ async function deliver(c: Ctx, d: SlackDelivery, generation: string, uid: string
 		: [];
 	if (thread) return reply(c, bearer, d, thread, thread.generation === generation ? uid : null);
 	if (!uid) {
-		const proof = randomUUID();
-		await c.db.execute("INSERT OR REPLACE INTO proof VALUES(?,?,?)", hash(proof), d.userId, Date.now() + 300_000);
+		// Sent privately: only this member can open it, which is what proves the Slack account is theirs.
+		const proof = await surfaceAccountsOf(c, "slack", c.key[0]!).internalOffer(d.userId, "", row.name);
 		await postPrivate(
 			bearer,
 			d.channelId,
 			d.userId,
-			`Link your Windlass account, then try again: ${config.origins[0]}/settings#slack-link=${d.teamId}.${proof}`,
+			`Link your Windlass account, then try again: ${config.origins[0]}/settings#link=slack.${c.key[0]}.${proof}`,
 		);
 		return;
 	}
 	const repository: SlackMapping["repository"] = JSON.parse(current.repository);
-	const result = await userActor(c, uid).internalSlackIntake({ delivery: d, repository, generation });
+	const filer = { surface: "slack", externalUserId: d.userId, verified: true };
+	const result = await userActor(c, uid).internalSlackIntake({ delivery: d, repository, generation, filer });
 	if (result.kind === "refused") await postPrivate(bearer, d.channelId, d.userId, result.reason);
 }
 
@@ -113,10 +117,9 @@ async function authorize(
 			owner: null,
 			refusal: `This item no longer posts to this channel. Open it in Windlass: ${itemUrl(a.value.i)}`,
 		};
-	const [sender] = await c.db.execute<{ uid: string }>("SELECT uid FROM member WHERE user_id=?", a.userId);
-	if (sender?.uid === thread.uid) return { bearer, owner: thread.uid, refusal: null };
-	const [owner] = await c.db.execute<{ user_id: string }>("SELECT user_id FROM member WHERE uid=?", thread.uid);
-	const who = owner ? `<@${owner.user_id}>` : "the person who filed this item";
+	if ((await memberOf(c, a.userId)) === thread.uid) return { bearer, owner: thread.uid, refusal: null };
+	const owner = await surfaceAccountsOf(c, "slack", c.key[0]!).internalLinkOf(thread.uid);
+	const who = owner ? `<@${owner.externalUserId}>` : "the person who filed this item";
 	return { bearer, owner: null, refusal: `Only ${who} can ${APPROVALS.has(a.value.c) ? "approve" : "answer"} this.` };
 }
 
@@ -153,10 +156,6 @@ export const slackWorkspace = actor({
 			);
 			await db.execute(
 				"CREATE TABLE IF NOT EXISTS thread (channel TEXT, ts TEXT, uid TEXT, item TEXT, generation TEXT, PRIMARY KEY(channel, ts))",
-			);
-			await db.execute("CREATE TABLE IF NOT EXISTS member (uid TEXT PRIMARY KEY, user_id TEXT UNIQUE)");
-			await db.execute(
-				"CREATE TABLE IF NOT EXISTS proof (digest TEXT PRIMARY KEY, user_id TEXT UNIQUE, expires INTEGER)",
 			);
 			await db.execute(
 				"CREATE TABLE IF NOT EXISTS inbox (id TEXT PRIMARY KEY, received INTEGER, payload TEXT, generation TEXT, uid TEXT, attempts INTEGER DEFAULT 0)",
@@ -229,48 +228,28 @@ export const slackWorkspace = actor({
 			await serial(c, async () => {
 				const row = await install(c, uid);
 				await c.db.transaction(async tx => {
-					for (const table of ["install", "mapping", "member", "proof", "thread"])
-						await tx.execute(`DELETE FROM ${table}`);
+					for (const table of ["install", "mapping", "thread"]) await tx.execute(`DELETE FROM ${table}`);
 					await tx.execute("UPDATE inbox SET payload=NULL,uid=NULL");
 				});
+				await surfaceAccountsOf(c, "slack", c.key[0]!).internalClear();
 				await revoke(token(c, row)).catch(() => {}); // Local disconnect also works with a revoked token.
 			});
-		},
-		async internalLink(c, uid: string, proof: string) {
-			requireServiceFor(c, "call");
-			await c.db.transaction(async tx => {
-				const [row] = await tx.execute<{ user_id: string }>(
-					"DELETE FROM proof WHERE digest=? AND expires>? RETURNING user_id",
-					hash(proof),
-					Date.now(),
-				);
-				if (!row) throw new UserError("This Slack link has expired or was already used.", { code: "slack_proof" });
-				await tx.execute("INSERT INTO member VALUES(?,?)", uid, row.user_id);
-			});
-		},
-		async internalLinked(c, uid: string) {
-			requireServiceFor(c, "call");
-			const [row] = await c.db.execute<{ name: string }>("SELECT name FROM install,member WHERE member.uid=?", uid);
-			return row?.name ?? null;
-		},
-		async internalUnlink(c, uid: string) {
-			requireServiceFor(c, "call");
-			await serial(c, () => c.db.execute("DELETE FROM member WHERE uid=?", uid));
 		},
 		async internalReceive(c, d: SlackDelivery) {
 			requireServiceFor(c, "call");
 			// Snapshot authority in the same write as the dedupe key. A retry number identifies an attempt, not a request.
 			await c.db.execute("DELETE FROM inbox WHERE received<?", Date.now() - 7 * 86_400_000);
+			const uid = await memberOf(c, d.userId);
 			await c.db.transaction(async tx => {
-				const [current] = await tx.execute<Route>(route, d.userId, d.channelId, d.userId);
-				const payload = current ? JSON.stringify(current.uid ? d : { ...d, text: "" }) : null;
+				const [current] = await tx.execute<Route>(route, d.channelId, d.userId);
+				const payload = current ? JSON.stringify(uid ? d : { ...d, text: "" }) : null;
 				await tx.execute(
 					"INSERT OR IGNORE INTO inbox(id,received,payload,generation,uid) VALUES(?,?,?,?,?)",
 					d.deliveryId,
 					Date.now(),
 					payload,
 					current?.generation ?? null,
-					current?.uid ?? null,
+					current ? uid : null,
 				);
 			});
 			if ((await c.db.execute("SELECT 1 FROM inbox WHERE id=? AND payload IS NOT NULL", d.deliveryId)).length)

@@ -6,7 +6,7 @@ import { internalConnection, requireServiceFor, serviceParams } from "../auth.js
 import { config, gitlabConfig, ownEngineEndpoint } from "../config.js";
 import { isActorGone } from "../actor-errors.js";
 import { AddressBudget, clientAddress, rateLimited } from "../http-limits.js";
-import { GITLAB_RECONNECT } from "../gitlab/connect.js";
+import { GITLAB_RECONNECT, gitlabApp, gitlabTenant } from "../gitlab/connect.js";
 import {
 	GitlabWebhookError,
 	parseGitlabWebhook,
@@ -14,6 +14,8 @@ import {
 	type GitlabDelivery,
 } from "../gitlab/webhook.js";
 import type { Registry } from "../registry.js";
+import type { HasClient } from "./internal.js";
+import { resolveFiler } from "./issue-intake.js";
 
 const refusals = new AddressBudget(config.httpLimits.webhookRefusals);
 const refuse = (request: Request, status: number) => {
@@ -121,9 +123,13 @@ async function dispatch(c: Ctx, binding: string, d: GitlabDelivery) {
 		key = [c.key[0]!],
 		opts = { params: serviceParams() };
 	if (!(await client.userGitlab.get(key, opts).internalGitlabHookCurrent(d.projectId, binding))) return;
-	const owner = client.user.get(key, opts);
-	if (d.event === "issue" || d.event === "note") await owner.internalGitlabIntake(d);
-	else await owner.internalGitlabWake(d);
+	if (d.event === "issue" || d.event === "note") {
+		// As on GitHub: the sender's linked account files it, with its own GitLab access; an unlinked sender files nothing.
+		const app = gitlabApp();
+		const filer = app && (await resolveFiler(c as unknown as HasClient, "gitlab", gitlabTenant(app), d.senderId));
+		if (!filer) return console.log(`gitlab.intake.unlinked project=${d.projectId} delivery=${d.guid}`);
+		await client.user.get([filer.uid], opts).internalGitlabIntake(d);
+	} else await client.user.get(key, opts).internalGitlabWake(d);
 }
 async function drain(c: Ctx) {
 	if (c.vars.draining) return;

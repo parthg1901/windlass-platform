@@ -254,7 +254,7 @@ export class Change {
 
 export function hostedChoice(agent?: HarnessId, profile?: FeatureJob["hostedProfile"]) {
 	const isolation = profile ? ` (${isolationName(profile)})` : "";
-	const payer = agent && agent !== "windlass" ? " with my Settings key" : "";
+	const payer = agent && agent !== "windlass" ? " with my key" : "";
 	return { id: "use_hosted" as const, label: "Run on Hosted" + isolation + payer };
 }
 

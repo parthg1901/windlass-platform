@@ -240,6 +240,8 @@ export interface JiraItemWrite {
 	issueId: string;
 	itemId: string;
 	action: import("../factory/intake.js").JiraCommentAction;
+	/** The item's owner, when that is not the project's (the person who filed it); its repository then. */
+	filedBy?: { uid: string; repositoryId: import("../contract.js").GithubId };
 }
 
 /** Actions of `user` that only actors may call. */
@@ -263,6 +265,9 @@ export interface UserInternal {
 	internalJiraWrite(input: JiraItemWrite): Promise<boolean>;
 	internalSlackIntake(
 		filing: import("../factory/intake.js").SlackFiling,
+	): Promise<import("../factory/intake.js").TrackerFiled>;
+	internalTrackerIntake(
+		filing: import("../factory/intake.js").LinearFiling | import("./issue-intake.js").SiteJiraFiling,
 	): Promise<import("../factory/intake.js").TrackerFiled>;
 	internalSlackAct(input: import("./user-items.js").SlackAnswer): Promise<void>;
 	internalSlackReply(input: {

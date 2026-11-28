@@ -191,7 +191,7 @@ export function href(route: Route): string {
 const LAST_APP_PAGE = "wlp.lastAppPage";
 
 const navigationHash = () =>
-	/^#(?:(?:github|linear|jira|slack)(?:-error)?|slack-link)=/.test(location.hash) ? "" : location.hash;
+	/^#(?:github|linear|jira|slack|link)(?:-error)?=/.test(location.hash) ? "" : location.hash;
 
 export function rememberAppPage(): void {
 	const page = parseRoute(location.pathname).name;

@@ -166,7 +166,9 @@ async function intakeChecks(
 	const send = (event: string, body: unknown, options?: Parameters<typeof fixture.deliverHook>[3]) =>
 		fixture.deliverHook(hook.id, event, body, options);
 	const { serviceParams } = await import("../server/src/auth.js");
+	const tenant = createHash("sha256").update(fixture.url).digest("hex").slice(0, 32);
 	// A service token is short-lived: each probe takes a new one, however long the section has run.
+	const directory = () => client.surfaceAccounts.get(["gitlab", tenant], { params: serviceParams() });
 	const inbox = () =>
 		client.gitlabInbox.get([uid, String(p.id)], { params: serviceParams() }) as unknown as {
 			checkSettled(guid: string): Promise<boolean>;
@@ -202,6 +204,9 @@ async function intakeChecks(
 		target.labels = []; // The label in this delivery has since been removed.
 		await dispatch("Issue Hook", label);
 		assert.equal((await user.listItems()).length, 0);
+		// As on GitHub, the sender's linked account files: connecting GitLab linked the owner's GitLab user, nobody else.
+		assert.equal(await directory().internalWho(String(fixture.user.id)), uid);
+		assert.equal(await directory().internalWho(String(outsider.id)), null);
 		console.log("PASS refuse: wrong credentials, project, sender, stale label and forged note author file nothing");
 	}
 	if (sections.includes("intake") || sections.includes("untrusted")) {
@@ -345,6 +350,7 @@ async function intakeChecks(
 		const stale = fixture.issueEvent(issue("Delivery after disconnect"));
 		assert.equal((await fixture.deliver(hook.url, "Issue Hook", stale, { secret: hook.token })).status, 401);
 		assert.deepEqual((await user.listItems()).map(i => i.id).sort(), prior.map(i => i.id).sort());
+		assert.equal(await directory().internalWho(String(fixture.user.id)), null, "disconnecting GitLab unlinks its user");
 	}
 }
 

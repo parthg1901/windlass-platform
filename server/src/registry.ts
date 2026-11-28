@@ -17,6 +17,7 @@ import { gitlabInbox } from "./actors/gitlab-inbox.js";
 import { userGitlab } from "./actors/user-gitlab.js";
 import { jiraSite } from "./actors/jira-site.js";
 import { slackWorkspace } from "./actors/slack-workspace.js";
+import { surfaceAccounts } from "./actors/surface-accounts.js";
 import { linearWorkspace } from "./actors/linear-workspace.js";
 import { login } from "./actors/login.js";
 import { user } from "./actors/user.js";
@@ -43,6 +44,7 @@ export const registry = setup({
 		gitlabInbox,
 		jiraSite,
 		slackWorkspace,
+		surfaceAccounts,
 	},
 	// The native HTTP listener bounds the body before copying it into a JavaScript Request.
 	serverless: { maxStartPayloadBytes: 3 * 1024 * 1024 },

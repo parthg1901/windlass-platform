@@ -70,6 +70,20 @@ export const jiraSite = actor({
 			);
 			if (!rows.length) throw taken();
 		},
+		/** Who maps a project now: the account whose connection writes to its issues. */
+		async internalProjectOwner(c, id: string): Promise<string | null> {
+			requireServiceFor(c, "call");
+			const [row] = await c.db.execute<{ uid: string }>("SELECT uid FROM project WHERE id=?", id);
+			return row?.uid ?? null;
+		},
+		/** Whether `item` is the filing of `issue` this site holds for `uid`, now or as its previous generation. */
+		async internalHoldsFiling(c, issue: string, uid: string, item: string): Promise<boolean> {
+			requireServiceFor(c, "call");
+			return (
+				(await c.db.execute("SELECT 1 FROM issue_filing WHERE issue=? AND uid=? AND item=?", issue, uid, item)).length >
+				0
+			);
+		},
 		async internalRemove(c, uid: string, id: string) {
 			requireServiceFor(c, "call");
 			await c.db.execute("DELETE FROM project WHERE id=? AND uid=?", id, uid);

@@ -9,6 +9,7 @@ import { GitlabSettings, useGitlabSettings } from "../components/GitlabSettings"
 import { SlackSettings } from "../components/SlackSettings";
 import { LinearSettings } from "../components/LinearSettings";
 import { JiraSettings } from "../components/JiraSettings";
+import { LinkedAccounts } from "../components/LinkedAccounts";
 import { LoginMethods } from "../components/LoginMethods";
 import { PersonalServers } from "../components/PersonalServers";
 import { PlanSection } from "../components/Plan";
@@ -30,7 +31,7 @@ export function Settings() {
 	const info = platform.info;
 	// A disabled integration has no Settings component to consume its callback.
 	useEffect(() => {
-		if (info && !info.items && /^#(?:slack(?:-link|-error)?|linear(?:-error)?)=/.test(location.hash)) {
+		if (info && !info.items && /^#(?:slack|linear|link)(?:-error)?=/.test(location.hash)) {
 			history.replaceState(history.state, "", location.pathname + location.search);
 		}
 	}, [info]);
@@ -121,6 +122,7 @@ export function Settings() {
 						{info?.items ? <LinearSettings /> : null}
 						{info?.items ? <JiraSettings /> : null}
 						{info?.items ? <SlackSettings key={auth.profile.uid} /> : null}
+						{info?.items ? <LinkedAccounts key={`linked-${auth.profile.uid}`} /> : null}
 						{info?.items ? <ApiTokens /> : null}
 					</SettingsGroup>
 				) : null}

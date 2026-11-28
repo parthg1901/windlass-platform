@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 
 const scopes = ["read:jira-user", "read:jira-work", "write:jira-work", "manage:jira-webhook"];
 const author = { accountId: "acct:ada", displayName: "Ada" };
+type Person = typeof author;
 function issue(id: string, labels: string[], assigned: boolean) {
 	return {
 		id,
@@ -35,11 +36,16 @@ export class JiraStandin {
 	readonly comments: {
 		issue: string;
 		body: { content: { content: { text: string; marks?: { attrs: { href: string } }[] }[] }[] };
-		author: typeof author;
+		author: Person;
 	}[] = [];
 	readonly issues = new Map<string, ReturnType<typeof issue>>();
-	readonly codes = new Set<string>();
-	private readonly access = randomUUID();
+	readonly ada = author;
+	readonly bob: Person = { accountId: "acct:bob", displayName: "Bob" };
+	readonly sam: Person = { accountId: "acct:sam", displayName: "Sam" };
+	/** Who signs in at the next consent. */
+	consentAs: Person = author;
+	readonly codes = new Map<string, Person>();
+	private readonly access = new Map<string, Person>();
 	readAfterPost = false;
 	private sequence = 0;
 	private readonly server = createServer((req, res) => this.route(req, res).catch(() => res.writeHead(400).end()));
@@ -60,7 +66,7 @@ export class JiraStandin {
 		assert.equal(searchParams.get("redirect_uri"), this.callback);
 		assert.deepEqual(searchParams.get("scope")?.split(" ").sort(), [...scopes, "offline_access"].sort());
 		const code = randomUUID();
-		this.codes.add(code);
+		this.codes.set(code, this.consentAs);
 		return this.callback + "?" + new URLSearchParams({ code, state: searchParams.get("state")! });
 	}
 	issue(site: string, id: string, labels: string[], assigned = false) {
@@ -68,13 +74,13 @@ export class JiraStandin {
 		this.issues.set(site + "/" + id, row);
 		return row;
 	}
-	event(issue: ReturnType<typeof this.issue>, hook: number) {
+	event(issue: ReturnType<typeof this.issue>, hook: number, user: Person = author) {
 		return {
 			webhookEvent: "jira:issue_created",
 			timestamp: Date.now(),
 			matchedWebhookIds: [hook],
 			issue: structuredClone(issue),
-			user: author,
+			user,
 		};
 	}
 	async post(url: string, body: object, id = randomUUID(), valid = true) {
@@ -98,13 +104,18 @@ export class JiraStandin {
 		const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
 		const reply = (data: unknown) => res.end(JSON.stringify(data));
 		if (pathname === "/oauth/token") {
-			assert.ok(body.client_id === "windlass" && body.client_secret === this.secret && this.codes.delete(body.code));
-			return reply({ access_token: this.access, refresh_token: randomUUID(), expires_in: 3600 });
+			const person = this.codes.get(body.code);
+			assert.ok(body.client_id === "windlass" && body.client_secret === this.secret && person);
+			this.codes.delete(body.code);
+			const token = randomUUID();
+			this.access.set(token, person);
+			return reply({ access_token: token, refresh_token: randomUUID(), expires_in: 3600 });
 		}
-		assert.ok(req.headers.authorization === "Bearer " + this.access);
+		const caller = this.access.get(req.headers.authorization?.replace(/^Bearer /, "") ?? "");
+		assert.ok(caller);
 		if (pathname === "/oauth/token/accessible-resources") return reply(this.sites);
 		const [, site, path] = /^\/ex\/jira\/(acme|harbor)\/rest\/api\/3\/(.+)$/.exec(pathname)!;
-		if (path === "myself") return reply(author);
+		if (path === "myself") return reply(caller);
 		if (path === "project/search")
 			return reply({ isLast: true, values: [{ id: "10", key: "ENG", name: "Engineering" }] });
 		if (path === "webhook" && req.method === "POST") {
@@ -124,7 +135,7 @@ export class JiraStandin {
 		if (!this.issues.has(key)) return res.writeHead(404).end();
 		if (!comment) return reply(this.issues.get(key));
 		if (req.method === "POST") {
-			this.comments.push({ issue: key, body: body.body, author });
+			this.comments.push({ issue: key, body: body.body, author: caller });
 			// The first successful write loses its reply. The outbox must reconcile its marker.
 			if (this.comments.length === 1) return res.destroy();
 			return reply({ id: String(this.comments.length) });

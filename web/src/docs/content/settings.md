@@ -96,19 +96,31 @@ Choose **Disconnect…** and confirm to forget the connection and selected proje
 
 ### Linear
 
-Where Linear is available, connect your workspace and map each team to a GitHub repository. **Disconnect…** removes its mappings and stops new filings. Existing items stay. Label an issue `windlass` or assign it to the Windlass app. Use `windlass-quick` or `windlass:quick` for Quick mode. See [From a Linear issue](/docs/factory#from-a-linear-issue).
+Where Linear is available, connect your workspace and map each team to a GitHub repository. **Disconnect…** removes its mappings and stops new filings. Existing items stay. Label an issue `windlass` or assign it to the Windlass app. Use `windlass-quick` or `windlass:quick` for Quick mode. Connecting doesn't link your own Linear account: link it under [Linked accounts](#linked-accounts) to file from Linear. See [From a Linear issue](/docs/factory#from-a-linear-issue).
 
 ### Jira Cloud
 
-Connect Jira, approve access in Atlassian, then choose a site. Under **Jira Cloud**, map a project to a writable GitHub repository. Remove a mapping or choose **Disconnect Jira** to stop filing. Existing items stay. See [From a Jira issue](/docs/factory#from-a-jira-issue).
+Connect Jira, approve access in Atlassian, then choose a site. Under **Jira Cloud**, map a project to a writable GitHub repository. Remove a mapping or choose **Disconnect Jira** to stop filing. Existing items stay. Connecting also links the Jira account you approved with, under [Linked accounts](#linked-accounts). See [From a Jira issue](/docs/factory#from-a-jira-issue).
 
 ### Slack
 
-Choose **Connect Slack…**, approve the workspace, and invite Windlass to a public or private channel. In Settings, choose **#channel** and a repository you can push to, then **Map channel**. Disconnecting removes the bot token, member links and mappings. Existing items stay. See [From Slack](/docs/factory#from-slack).
+Choose **Connect Slack…**, approve the workspace, and invite Windlass to a public or private channel. In Settings, choose **#channel** and a repository you can push to, then **Map channel**. Disconnecting removes the bot token, the workspace's [linked accounts](#linked-accounts) and mappings. Existing items stay. See [From Slack](/docs/factory#from-slack).
 
 **Post plan and question details** is set per channel. Every member of the channel can read what Windlass posts there. With it on, Windlass posts the plan's goal, parts, checks and budget, and a question's text. With it off, Windlass posts links and choice buttons only. A new mapping turns it on for a public repository and off for a private one.
 
 Slack appears only when the deployment operator has [configured the Slack app](https://github.com/WindlassAI/windlass-platform/blob/main/docs/configuration.md#slack).
+
+### Linked accounts
+
+Work filed from Slack, Linear or Jira belongs to the person who asked for it: whoever mentioned Windlass, added the label or made the assignment. It is filed in the Windlass account linked to that person, and runs with that account's connections, limits and repository access. It never runs in the account of whoever connected the workspace on their behalf. Nothing is filed for a person who hasn't linked an account. On GitHub and GitLab, connecting your account is the link.
+
+Link each account once:
+
+- **Slack.** Mention Windlass in a mapped channel. Windlass sends you a private, one-time link. Open it while signed in to Windlass and choose **Link this account**, then send the request again.
+- **Linear.** Choose **Link Linear account…** and sign in to Linear as yourself. Windlass reads only who you are, then forgets the sign-in. Back in Settings, choose **Link this account**. When someone who hasn't linked labels or assigns an issue, Windlass comments once on that issue asking them to link.
+- **Jira.** Connecting Jira links the Jira account you approve with. When someone who hasn't linked labels or assigns an issue, Windlass comments once on that issue asking them to link.
+
+A link ticket works once, and only for the Windlass account it was made for. A newer link of the same Slack, Linear or Jira account replaces the older one. **Unlink** removes a link. That person is then treated as not linked again.
 
 ### API tokens
 

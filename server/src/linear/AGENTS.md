@@ -16,7 +16,7 @@ Both checks form the `linear` group in `scripts/ci-groups.json`; Linear itself i
 ## Module map
 
 - `./app.ts` is the OAuth and GraphQL client: token exchange and revoke, identity, teams, issue reads and item writebacks (`writeIssue`), `LinearError` and `redactLinear`.
-- `./connect.ts` serves `/linear/callback`: consumes the OAuth state, exchanges the code with PKCE, refuses a person's token and seals the connection ticket.
+- `./connect.ts` serves `/linear/callback`: consumes the OAuth state, exchanges the code with PKCE, refuses a person's token and seals the connection ticket. A state whose nonce starts `link.` is a person signing in as themselves to link their Linear user: their token is read once (`person`), revoked, and sealed into a `#link=` ticket for `linkAccount`.
 - `./webhook.ts` serves `/linear/webhook`: size limit, HMAC over the raw bytes, signed-timestamp freshness, then `classify` and `dispatch`.
 - [User integration](../actors/user-linear.ts) stores the owner's connection and team mappings, and exports `dispatchLinearDelivery` and the connect store that `server/src/index.ts` wires to the routes.
 
@@ -35,6 +35,7 @@ Both checks form the `linear` group in `scripts/ci-groups.json`; Linear itself i
 - Verify the MAC over the original bytes before decoding, then reject timestamps more than `MAX_TIMESTAMP_SKEW_MS` from now.
 - A dispatch that throws or times out answers non-2xx, and Linear's redelivery under the same `Linear-Delivery` ID is the only retry. Keep dispatch idempotent per delivery ID.
 - Pass lookup IDs through admission. The owner's intake re-reads the issue and checks the current mapping and qualification before filing.
+- The item is the delivery actor's: `decide` resolves `actorId` to their linked uid (`resolveFiler`) and files in that account through `internalTrackerIntake`, with `filer` on the origin. An unlinked actor files nothing and gets one comment per issue asking them to link.
 - The mapping and filing cases in `scripts/linear-check.ts` depend on state created by earlier cases. Use the standalone filters above locally and leave the sequence to CI.
 - Pass known tokens to `redactLinear` before logging or returning any Linear error text.
 

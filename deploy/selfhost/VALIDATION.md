@@ -164,3 +164,30 @@ The original staging server tag was rebuilt during the browser test. Rebuilding 
 The standalone web-stage check, run as `(cd web && npx tsx ../scripts/web-stage-check.ts)`, found all 19 bundled files. `pnpm typecheck` passed for runner, server and web. The connection check passed all 61 cases with the private staging engine, including real token expiry. On the first `WLP_DEMO=1 WLP_SANDBOX=fake pnpm test` run, 574 web tests passed and server end-to-end reported 145 passed, one failed and one skipped. The demo login actor had entered the engine's `destroying` state before the test could observe its `attempt_done` response.
 
 An unchanged full rerun passed. The two Node check scripts reported 4 and 3 passes, and all 5 runner fairness cases passed. Vitest reported 574 passes in 34 files. Server end-to-end reported 146 passed, 0 failed and 1 skipped. The skip covers cloning a repository with the fake sandbox provider.
+
+# Engine readiness drill, 28 November 2026
+
+Test host: AWS, Linux amd64, two vCPUs, 3.8 GB RAM, Docker 29.10.1, Compose 5.8.1. Each run restored the same 244 MB archive of a long-running stack (its active-envoy index had grown over many node versions and failed registrations) into a fresh loopback-only drill project with fake sandboxes, freshly generated credentials and no tunnel, or started on an empty volume. A sampler read the engine's health status and its metrics every 5 s. Times are seconds since the engine container started. "Cancelled" is the healthcheck's count of cancelled and timed-out storage commands. "Listed" counts completed list-active-envoys commands.
+
+| Run | Engine | Health | Cancelled | Listed | Server |
+|---|---|---|---|---|---|
+| Restored, 10 min command deadline | `engine.json` with `command_timeout_ms` | starting until 37 s, healthy at 42 s | 0 at 5 s, 16 at 10 s, 25 at 26 s, then steady | 0 until 21 s, 10 at 26 s | started at 41 s, healthy at 47 s, 0 restarts |
+| Restored, default 5 s deadline | Rivet defaults | starting for 20 min, then unhealthy at about 1,230 s | 90 at 121 s, 323 at 600 s, 616 at 1,200 s | never | never started |
+| Empty volume, built from this repository | `3.1.1` tag | healthy at 36 s ("idle") | 0 | 0 | healthy at 42 s, 0 restarts |
+
+On the restored data the clean-up finished between 21 s and 26 s. During it the count rose every 5 to 6 s. With the default deadline the clean-up never finished: over 20.5 minutes the count rose 162 times, at most 17 s and on average 7.6 s apart, and no list-active-envoys command ever completed. The 120 s window for an engine whose clean-up has not been seen to finish is seven times that longest pause. The empty volume never ran an actor or index command, so it used the 30 s idle window. Before the healthcheck had an idle window, the same empty volume took 134 s.
+
+The server registered on its first try every time, and `/platform/connection` issued a token. Its own registration added four cancellations after the engine was already healthy, without a restart.
+
+Release and backup paths on the restored data, with the same 10 minute deadline:
+
+| Step | Result |
+|---|---|
+| Server-only release (`up -d --no-build --no-deps --wait server` with a new node version) | 6 to 7 s, engine container unchanged, including an engine created before it had a healthcheck |
+| Engine replacement (stop the server, `up --no-deps --wait engine`, then the server) | engine healthy after 38 to 48 s, stack healthy after 44 to 54 s |
+| `backup.sh`, engine with the healthcheck | copy 18 s, readiness and server start 45 s, server healthy, 0 restarts |
+| `backup.sh`, engine created before the healthcheck (probe run with `docker exec`) | copy 21 s, readiness and server start 41 s, server healthy, 0 restarts |
+
+`dc config --hash engine` matched the engine container's `com.docker.compose.config-hash` label until the service definition changed. An earlier `backup.sh` that restarted the server with `compose start` left it stopped against an engine created before the healthcheck: Compose refused the dependency ("no healthcheck configured"). The script now restarts the same containers with `docker start`.
+
+The drill projects, restored volumes, copied archive and credential file were removed afterwards, and the archive copies and credential files were shredded.

@@ -197,6 +197,19 @@ export class JiraApp {
 		if (action.pr) content.push(paragraph("Pull request", action.pr));
 		await this.rest(token, site, path, "POST", { body: { type: "doc", version: 1, content } });
 	}
+	/** A plain comment: one paragraph, then a link. */
+	async comment(token: string, site: string, issue: string, text: string, href: string) {
+		const url = URL.parse(href);
+		if (!url || !["http:", "https:"].includes(url.protocol)) throw new Error("Invalid Jira comment link");
+		const content = [
+			{ type: "paragraph", content: [{ type: "text", text }] },
+			{
+				type: "paragraph",
+				content: [{ type: "text", text: "Linked accounts", marks: [{ type: "link", attrs: { href: url.href } }] }],
+			},
+		];
+		await this.rest(token, site, `issue/${issue}/comment`, "POST", { body: { type: "doc", version: 1, content } });
+	}
 	async registerWebhook(token: string, site: string, url: string, jqlFilter: string) {
 		const row = await this.rest(token, site, "webhook", "POST", {
 			url,

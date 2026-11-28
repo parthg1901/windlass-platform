@@ -37,7 +37,8 @@ Actors and their keys:
 - `./user-gitlab.ts` userGitlab[uid]: the sealed GitLab grant, pending OAuth states and the selected project with its hook secret.
 - `./gitlab-inbox.ts` gitlabInbox[uid, projectId]: stores authenticated GitLab deliveries and nudges the items they name.
 - `./jira-site.ts` jiraSite[siteId]: project claims, delivery receipts and the one active filing per Jira issue.
-- `./slack-workspace.ts` slackWorkspace[teamId]: the bot token, channel mappings, member links and item threads.
+- `./slack-workspace.ts` slackWorkspace[teamId]: the bot token, channel mappings and item threads.
+- `./surface-accounts.ts` surfaceAccounts[surface, tenant]: which Windlass user each Slack, Linear, Jira or GitLab person linked, and Slack's one-time link codes.
 
 Helpers inside the `user` actor:
 
@@ -52,8 +53,9 @@ Helpers inside the `user` actor:
 - `./user-github.ts` replaces the GitHub connection and retries webhook sync on `GITHUB_SYNC` delays.
 - `./user-linear.ts` stores the Linear connection and team mappings and decides each verified delivery.
 - `./user-jira.ts` stores the Jira grant, site and project mappings, renews webhooks and writes item comments back.
-- `./user-slack.ts` holds the Slack settings actions and the owner's member links.
-- `./issue-intake.ts` is what the intakes share: owner queue, daily cap and filing (`fileTrackerIssue` for Linear and Jira, `fileGitlabIssue`, `fileSlackRequest`). `./github-intake.ts` is GitHub's side.
+- `./user-slack.ts` holds the Slack settings actions.
+- `./user-identity.ts` holds the linked-account settings actions and the index of where this user is linked.
+- `./issue-intake.ts` is what the intakes share: `resolveFiler`, the user's queue, daily cap and filing (`fileTrackerIssue` for Linear and Jira, `fileGitlabIssue`, `fileSlackRequest`). `./github-intake.ts` is GitHub's side.
 - `./gitlab-item.ts` resolves a work item's GitLab host, token and pipelines for `work-item` and `agentSession`.
 - `./github-item.ts` applies issue edits and closes to filed items.
 - `./provider-accounts.ts` tracks model-provider usage and refusals per account location; a plan's go to its own row, keyed as the plan. Windlass's own account (its ChatGPT models, where no key pays) is the ChatGPT plan's (`accountLocation`).
@@ -98,6 +100,8 @@ Helpers inside `agentSession` (`./agent-session/`):
 - Call `takeSandbox` before the first await of any sandbox operation and release it after. Idle suspension in `./agent-session/meter.ts` skips while `busy`.
 - `./work-item.ts` commits the revision, events and keyed effects together before any I/O. On wake it retries pending effects under the same keys.
 - Throw `UserError` from `rivetkit` with a stable `code` for messages a client may show. Map domain errors such as `GithubProblem` to it at the action edge, as `./user.ts` does.
+
+- An item filed from another surface belongs to the person who triggered it. Every intake asks `resolveFiler` (`./issue-intake.ts`) for that person's linked uid and files there; an unlinked person files nothing. The mapping owner's actor only reads the issue and writes back to it (`./work-item.ts` routes Linear and Jira writes to the current mapper).
 
 ## Pitfalls
 

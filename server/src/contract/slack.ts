@@ -1,4 +1,4 @@
-/** Slack workspace connections, channel mappings and member links. */
+/** Slack workspace connections and channel mappings. Member links are linked accounts (identity.ts). */
 
 import type { GithubId } from "./github.js";
 
@@ -12,14 +12,10 @@ export interface SlackMapping {
 	/** Post plan and question content, which every channel member can read. Off: links and choice buttons only. */
 	details: boolean;
 }
-export interface SlackIdentity {
-	teamId: string;
-	workspaceName: string;
-}
 export type SlackStatus =
 	| { state: "off" }
-	| { state: "disconnected"; links: SlackIdentity[] }
-	| { state: "connected"; workspaceName: string; mappings: SlackMapping[]; links: SlackIdentity[] };
+	| { state: "disconnected" }
+	| { state: "connected"; workspaceName: string; mappings: SlackMapping[] };
 
 export interface SlackSettingsActions {
 	slack(): Promise<SlackStatus>;
@@ -30,6 +26,4 @@ export interface SlackSettingsActions {
 	removeSlackMapping(channelId: string): Promise<SlackStatus>;
 	setSlackDetails(input: { channelId: string; details: boolean }): Promise<SlackStatus>;
 	disconnectSlack(): Promise<SlackStatus>;
-	linkSlack(ticket: string): Promise<SlackStatus>;
-	unlinkSlack(teamId: string): Promise<SlackStatus>;
 }

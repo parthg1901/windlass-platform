@@ -3,7 +3,7 @@ import { UserError } from "rivetkit";
 import type { RawAccess } from "rivetkit/db";
 import { requireUser, serviceParams } from "../auth.js";
 import { config, slackConfig } from "../config.js";
-import type { GithubId, SlackChannel, SlackIdentity, SlackStatus } from "../contract.js";
+import type { GithubId, SlackChannel, SlackStatus } from "../contract.js";
 import { githubApp } from "../github/app.js";
 import { resolveRepository, type StoredConnection } from "../github/repos.js";
 import { sealSecret } from "../repo-secrets.js";
@@ -16,7 +16,6 @@ import { type ActorClient, isActorGone } from "./internal.js";
 export const SLACK_TABLES = [
 	"CREATE TABLE IF NOT EXISTS slack_connect (id INTEGER PRIMARY KEY CHECK(id=1), nonce TEXT, expires INTEGER)",
 	"CREATE TABLE IF NOT EXISTS slack_owner (id INTEGER PRIMARY KEY CHECK(id=1), team TEXT)",
-	"CREATE TABLE IF NOT EXISTS slack_links (team TEXT PRIMARY KEY)",
 ];
 type Ctx = Parameters<typeof requireUser>[0] & {
 	key: string[];
@@ -54,21 +53,15 @@ async function ifPresent<T>(read: Promise<T>): Promise<T | null> {
 }
 async function status(c: Ctx): Promise<SlackStatus> {
 	if (!slackConfig()) return { state: "off" };
-	const links: SlackIdentity[] = [];
-	for (const { team } of await c.db.execute<{ team: string }>("SELECT team FROM slack_links")) {
-		const workspaceName = await ifPresent<string>(workspace(c, team).internalLinked(c.key[0]));
-		if (workspaceName) links.push({ teamId: team, workspaceName });
-		else await c.db.execute("DELETE FROM slack_links WHERE team=?", team);
-	}
 	const [row] = await c.db.execute<{ team: string }>("SELECT team FROM slack_owner");
 	if (row) {
 		const view = await ifPresent<Pick<Extract<SlackStatus, { state: "connected" }>, "workspaceName" | "mappings">>(
 			workspace(c, row.team).internalView(c.key[0]),
 		);
-		if (view) return { state: "connected", ...view, links };
+		if (view) return { state: "connected", ...view };
 		await c.db.execute("DELETE FROM slack_owner");
 	}
-	return { state: "disconnected", links };
+	return { state: "disconnected" };
 }
 
 export const slackSettingsActions = {
@@ -136,19 +129,6 @@ export const slackSettingsActions = {
 		await (await owner(c)).internalDisconnect(c.key[0]);
 		await c.db.execute("DELETE FROM slack_owner");
 		await c.db.execute("DELETE FROM slack_connect");
-		return status(c);
-	}),
-	linkSlack: action(async (c, ticket: string) => {
-		const parts = /^(T[A-Z0-9]+)\.([a-f0-9-]{36})$/.exec(ticket);
-		if (!parts) throw new UserError("Invalid Slack link.", { code: "slack_proof" });
-		const [, team, proof] = parts;
-		await c.db.execute("INSERT OR IGNORE INTO slack_links VALUES(?)", team);
-		await workspace(c, team).internalLink(c.key[0], proof);
-		return status(c);
-	}),
-	unlinkSlack: action(async (c, team: string) => {
-		await workspace(c, team).internalUnlink(c.key[0]);
-		await c.db.execute("DELETE FROM slack_links WHERE team=?", team);
 		return status(c);
 	}),
 };

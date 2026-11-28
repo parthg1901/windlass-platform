@@ -126,9 +126,17 @@ async function run() {
 		await ack(send(slack.mention()));
 		const prompt = await until("link prompt", async () => slack.privateReplies[0]);
 		assert.equal(prompt.user, slack.member);
-		const proof = prompt.text.split("#slack-link=")[1];
-		assert.ok(proof);
-		await member.linkSlack(proof);
+		const ticket = prompt.text.split("#link=")[1];
+		assert.ok(ticket?.startsWith(`slack.${slack.team.id}.`));
+		await assert.rejects(member.linkAccount(`slack.${slack.team.id}.00000000-0000-0000-0000-000000000000`), {
+			code: "link_ticket",
+		});
+		assert.deepEqual(await member.linkAccount(ticket), [
+			{ surface: "slack", tenant: slack.team.id, tenantName: slack.team.name, name: "" },
+		]);
+		// A code works once: nobody else can take the member's link with it afterwards.
+		await assert.rejects(owner.linkAccount(ticket), { code: "link_ticket" });
+		assert.deepEqual(await owner.linkedAccounts(), []);
 		await ack(send(slack.mention()));
 		await until("member write check", async () => slack.privateReplies.some(r => r.text.includes("write access")));
 		assert.equal((await member.listItems()).length, 0);
@@ -380,17 +388,26 @@ async function run() {
 		assert.equal((await items()).length, 5);
 		assert.equal((await owner.listItems()).length, 0);
 		assert.equal(slack.messages.filter(m => m.text.startsWith("Work item filed")).length, 5);
+		// Revoking the link makes the member unlinked again: a request files nothing and asks them to link.
+		assert.deepEqual(await member.unlinkAccount({ surface: "slack", tenant: slack.team.id }), []);
+		const asked = slack.privateReplies.length;
+		await ack(send(slack.mention("After unlinking")));
+		const again = await until("link prompt after unlinking", async () => slack.privateReplies[asked]);
+		assert.ok(again.user === slack.member && again.text.includes("#link=slack."));
+		assert.equal((await items()).length, 5);
+		await member.linkAccount(again.text.split("#link=")[1]!);
 		const remapped = (await owner.saveSlackMapping({ channelId: slack.channel.id, repositoryId: hidden.id })) as {
 			mappings: { details: boolean }[];
 		};
 		assert.equal(remapped.mappings[0]!.details, false, "a private repository posts links only");
 		assert.equal((await owner.disconnectSlack()).state, "disconnected");
 		assert.equal(slack.tokens.size, 0);
-		assert.deepEqual(await member.slack(), { state: "disconnected", links: [] });
+		assert.deepEqual(await member.slack(), { state: "disconnected" });
+		assert.deepEqual(await member.linkedAccounts(), [], "disconnecting the workspace removes its member links");
 		await ack(send(slack.mention()));
-		assert.deepEqual(await connect(), { state: "connected", workspaceName: slack.team.name, mappings: [], links: [] });
+		assert.deepEqual(await connect(), { state: "connected", workspaceName: slack.team.name, mappings: [] });
 		console.log(
-			"PASS signed requests, named channel discovery, member access, asynchronous filing, retries, thread replies, plan approval and answers from Slack, a one-implementer plan held for its questions, and disconnect",
+			"PASS signed requests, named channel discovery, member links and revocation, member access, asynchronous filing, retries, thread replies, plan approval and answers from Slack, a one-implementer plan held for its questions, and disconnect",
 		);
 	} finally {
 		child.kill("SIGTERM");

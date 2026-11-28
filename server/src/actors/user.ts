@@ -136,6 +136,7 @@ import * as jira from "./user-jira.js";
 import type { JiraItemWrite } from "./internal.js";
 import type { JiraDelivery } from "../jira/webhook.js";
 import { SLACK_TABLES, slackSettingsActions } from "./user-slack.js";
+import { IDENTITY_TABLES, linkedAccountActions } from "./user-identity.js";
 import {
 	LINEAR_TABLES,
 	type LinearItemWrite,
@@ -350,6 +351,7 @@ import {
 	modelKeyCaller,
 	secretsCaller,
 	sessionActor,
+	userActor,
 } from "./internal.js";
 import { boundedText, type UserVars, type UserCtx } from "./user/state.js";
 import { chatgptPlan, modelInput, modelsOf, signinActions, writeActorProfile, type ModelsCtx } from "./user/signin.js";
@@ -1980,6 +1982,7 @@ export const user = actor({
 			`);
 			for (const table of jira.JIRA_TABLES) await db.execute(table);
 			for (const table of SLACK_TABLES) await db.execute(table);
+			for (const table of IDENTITY_TABLES) await db.execute(table);
 			for (const table of LINEAR_TABLES) await db.execute(table);
 			await db.execute("DROP TABLE IF EXISTS github_grant");
 			await db.execute(GITHUB_SYNC_TABLE);
@@ -2447,11 +2450,19 @@ export const user = actor({
 		},
 		internalJiraDelivery: (c, delivery: JiraDelivery, digest: string) => {
 			requireServiceFor(c, "call");
-			return jira.fileJiraDelivery(c, delivery, digest, filing =>
-				itemActions.internalTrackerIntake(c, filing, itemSession(c)),
+			return jira.fileJiraDelivery(c, delivery, digest, (filing, uid) =>
+				uid === c.key[0]
+					? itemActions.internalTrackerIntake(c, filing, itemSession(c))
+					: userActor(c, uid).internalTrackerIntake(filing),
 			);
 		},
+		/** A Linear or Jira issue filed by this user from a mapping another user owns: its owner read the issue and resolved the filer. */
+		internalTrackerIntake: (
+			c,
+			filing: import("../factory/intake.js").LinearFiling | import("./issue-intake.js").SiteJiraFiling,
+		) => itemActions.internalTrackerIntake(c, filing, itemSession(c)),
 		...slackSettingsActions,
+		...linkedAccountActions,
 		internalSlackIntake: (c, filing: import("../factory/intake.js").SlackFiling) =>
 			itemActions.internalSlackIntake(c, filing, itemSession(c)),
 		internalSlackAct: itemActions.internalSlackAct,
@@ -2499,7 +2510,11 @@ export const user = actor({
 		},
 		internalLinearDelivery: (c, delivery: import("../linear/webhook.js").LinearDelivery) => {
 			requireServiceFor(c, "call");
-			return fileLinearDelivery(c, delivery, filing => itemActions.internalTrackerIntake(c, filing, itemSession(c)));
+			return fileLinearDelivery(c, delivery, (filing, uid) =>
+				uid === c.key[0]
+					? itemActions.internalTrackerIntake(c, filing, itemSession(c))
+					: userActor(c, uid).internalTrackerIntake(filing),
+			);
 		},
 		createItem: (c, input: CreateItemInput): Promise<ItemSummary> => itemActions.createItem(c, input, itemSession(c)),
 		actOnItem: itemActions.actOnItem,

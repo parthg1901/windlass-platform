@@ -27,6 +27,16 @@ The initializer creates a private, git-ignored, mode-600 file and refuses to ove
 
 The two projects have separate networks, image tags, volumes and credentials. Each engine uses one leader and one writer to its volume. The volume contains both `log/` and `objects/`. The local filesystem object store supplies the cluster metadata and cold data. At first start the server waits for the admin API, creates the default namespace and pool if absent, then starts the registry. Readiness checks both the node's health and the server's ability to issue browser tokens.
 
+### Engine readiness
+
+Rivet 3.1.1 answers `/health` within seconds of starting. After every start, though, the first command that touches its active-envoy index (an actor alarm, or the server's node registration) first runs a one-time clean-up of that index. A server that registers during the clean-up misses the SDK's fixed 30 s registration window and exits, and every failed registration makes the index, and the next clean-up, larger. Commands that wait on the clean-up are cancelled by their callers or hit the storage command deadline, and the engine counts both on its metrics port (6430, inside the container only).
+
+The engine's healthcheck, [`engine-ready.sh`](engine-ready.sh), reports healthy once `/health` answers and those counts have stopped moving: for 15 s after a list-active-envoys command has completed, which proves the clean-up finished; for 30 s while no actor or index command has run at all, as on a new install; and otherwise for `SELFHOST_ENGINE_SETTLE_SECONDS` (default 120). An engine whose clean-up never finished paused its count for at most 17 s in 20 minutes ([drill](VALIDATION.md#engine-readiness-drill-28-november-2026)). From then on it only asks `/health`, for the life of the engine process. The server waits for a healthy engine. The healthcheck's start period is 20 minutes, so give `--wait-timeout` up to 1,500 s whenever the engine starts on existing data.
+
+[`engine.json`](engine.json) raises `storage.command_timeout_ms` to 10 minutes. With the default 5 s deadline, each step of a large index's clean-up is cut off and the clean-up starts over, indefinitely, so the engine never reports healthy and the server never starts. The cost is that a stuck storage command can hold its caller for up to 10 minutes.
+
+The engine image is tagged `SELFHOST_ENGINE_TAG` (default `3.1.1`), apart from the server's `SELFHOST_RELEASE`, so a server release leaves the running engine and its index alone. `dc up --build` rebuilds the engine under the same tag, and Compose replaces the engine only when the image or its service definition changed.
+
 ### Routing and a future live stack
 
 For a locally managed named tunnel, copy [the ingress example](tunnel.example.yml) to the tunnel service's config, set its UUID and mode-600 root-owned credential file, then substitute your two hostnames and the loopback ports for the selected stack. For a remotely managed tunnel, enter the equivalent ordered ingress rules in its remote configuration. The example uses staging ports. Live uses 26440 for web and 26420 for the engine. Keep the final `http_status:404` rule and preserve WebSocket upgrades. Keep token-bearing discovery responses uncached and exclude gateway URLs, query strings and WebSocket protocols from access logs. For `/signin`, record the path alone at every proxy. Omit full request URI, query, Referer and request-body fields from edge log exports. The example sets cloudflared to fatal-only logging because even upstream request errors can include the full destination URL. Apply that level to remotely managed connectors too. If this tunnel is the only path to the web listener and overwrites the client address, set `WLP_CLIENT_IP_HEADER=cf-connecting-ip` for per-client login limits. The engine's private Compose address serves node registration, bootstrap and token minting.
@@ -90,8 +100,9 @@ The engine has 4,096 CPU shares and a 2,304 MiB memory limit. The server has 3,0
 
 | Purpose | Variables |
 |---|---|
-| Project, ports, data and release | `COMPOSE_PROJECT_NAME`, `SELFHOST_HTTP_PORT`, `SELFHOST_GATEWAY_PORT`, `SELFHOST_VOLUME`, `SELFHOST_RELEASE`, `SELFHOST_SERVER_TARGET`, `SELFHOST_SERVER_ENV_FILE`, `SELFHOST_ENV_DIR` (initializer only) |
+| Project, ports, data and release | `COMPOSE_PROJECT_NAME`, `SELFHOST_HTTP_PORT`, `SELFHOST_GATEWAY_PORT`, `SELFHOST_VOLUME`, `SELFHOST_RELEASE`, `SELFHOST_ENGINE_TAG`, `SELFHOST_SERVER_TARGET`, `SELFHOST_SERVER_ENV_FILE`, `SELFHOST_ENV_DIR` (initializer only) |
 | Public origins and canonical issuer | `WLP_PUBLIC_URL`, `WLP_PUBLIC_ENDPOINT`, `SELFHOST_ENGINE_ORIGIN`, `SELFHOST_ISSUER_GENERATION` |
+| Engine readiness | `SELFHOST_ENGINE_SETTLE_SECONDS`, `SELFHOST_ENGINE_READY_TIMEOUT` (backup only) |
 | Credentials and node version | `WLP_SECRET`, `RIVET_ADMIN_TOKEN`, `RIVET_NODE_VERSION` |
 | Application modes | `WLP_DEMO`, `WLP_SANDBOX`, `WLP_SIGNIN_RUNNER`, `WLP_REQUIRE_SIGNED_RUNNER` |
 | Set by Compose for the server | `RIVET_ENDPOINT`, `RIVET_TOKEN`, `RIVET_NAMESPACE`, `RIVET_POOL`, `WLP_TOKEN_ENDPOINT`, `WLP_WEB_ORIGINS`, `WLP_MACHINES`, `WLP_HTTP_PORT` |
@@ -204,11 +215,11 @@ export SELFHOST_BACKUP_AGE_IDENTITY=/secure/recovery/windlass.agekey
 fresh=$(deploy/selfhost/restore.sh "$stack" "$archive")
 ```
 
-Both services must be running before a backup. The script stops the server first so actors can finish shutdown, stops the engine, checks both exit statuses and archives the whole mounted volume. The engine CLI exposes storage operations but no whole-engine online snapshot command. Stopping all writers gives the log and object store a common point in time. The script restarts the services immediately after the local tar copy, then compresses, encrypts and publishes the archive. An interrupted copy triggers a restart attempt. The lock, the age cache and the uncompressed tar go in the stack env file's directory, so allow space there for the tar and archive. Downtime depends on graceful shutdown, data size and disk throughput. Check `dc ps` after recovery.
+Both services must be running before a backup. The script stops the server first so actors can finish shutdown, stops the engine, checks both exit statuses and archives the whole mounted volume. The engine CLI exposes storage operations but no whole-engine online snapshot command. Stopping all writers gives the log and object store a common point in time. Right after the local tar copy the script starts the engine, waits until it reports ready (see [Engine readiness](#engine-readiness), up to `SELFHOST_ENGINE_READY_TIMEOUT`, default 1,500 s), starts the server, and then compresses, encrypts and publishes the archive. If the engine does not become ready, the server stays stopped, the archive is still published and the script exits with an error. An interrupted copy triggers the same restart. The lock, the age cache and the uncompressed tar go in the stack env file's directory, so allow space there for the tar and archive. Downtime depends on graceful shutdown, data size and disk throughput. Check `dc ps` after recovery.
 
 Objects are stored at `<bucket>/<compose-project>/<archive-basename>`. After a successful upload, retention keeps the newest N timestamped snapshots for that project (default seven). Other object names and other projects' prefixes are preserved. On a versioned S3 bucket configure a bucket lifecycle for old versions and abandoned multipart uploads. For a local-only drill set `SELFHOST_BACKUP_DIR` to a private directory. It takes precedence over S3. Only a local directory accepts an explicit plaintext backup: unset the recipient and set `SELFHOST_BACKUP_PLAINTEXT=1`. Both backends can restore legacy `.tar.gz` objects. Retention counts those alongside `.tar.gz.age` snapshots. Existing plaintext objects and older bucket versions need a separate retirement decision after a verified encrypted restore.
 
-Restore loads a named archive into a newly generated volume, prints its name and leaves the running stack alone. For a replacement host, build or load the matching engine image first. Restore the original stack secrets, project and canonical origin. To switch volumes during a maintenance window, stop the services, save the previous volume name, edit `SELFHOST_VOLUME` in the private stack env file to the printed name, and run `dc up -d --no-build --wait`. Verify a known user's session and timeline before retiring the previous volume. A smoke-test proof can be checked with the command below. These archives cover engine state. Runner workspaces, credentials on the runner, sandbox files, and optional bucket contents have independent backup requirements.
+Restore loads a named archive into a newly generated volume, prints its name and leaves the running stack alone. For a replacement host, build or load the matching engine image first. Restore the original stack secrets, project and canonical origin. To switch volumes during a maintenance window, stop the services, save the previous volume name, edit `SELFHOST_VOLUME` in the private stack env file to the printed name, and run `dc up -d --no-build --wait --wait-timeout 1500`. Verify a known user's session and timeline before retiring the previous volume. A smoke-test proof can be checked with the command below. These archives cover engine state. Runner workspaces, credentials on the runner, sandbox files, and optional bucket contents have independent backup requirements.
 
 ## Test the stack
 
@@ -244,6 +255,15 @@ dc logs -f server
 Docker rotates the services' JSON logs at 32 MiB with up to three files per service. Inspect the node's health and gateway token availability after restarts. Restrict access to raw logs.
 
 The platform and the runner name the log driver of every container they start, whatever the daemon's default. Session, relay, egress and helper containers use `--log-driver none`: nothing reads those logs, and an agent can write to its session container's main process output, so a default unbounded log would let it fill the host's disk. The runner's own container, started by setup's printed command or the Machines page, uses `--log-driver json-file --log-opt max-size=16m --log-opt max-file=3`, and `docker logs windlass-runner` still works. Containers created before that change keep the log settings they were created with until they are replaced.
+
+### Releasing to a running stack
+
+`release.sh <stack env file>` releases the checked-out commit. It builds the server image, then backs up first only when the newest backup is older than `SELFHOST_RELEASE_BACKUP_MAX_AGE_HOURS` (default 6; a backup restarts the engine). Then it replaces only the server. The engine is replaced only when its image or its Compose definition differs from the running container. In that case the server is stopped first, and it starts once the engine reports ready (see Engine readiness). On failure the previous env file is put back and the previous release started again. `SELFHOST_RELEASE_DRY_RUN=1` prints the plan and changes nothing. The script's header lists the other settings: history and log directories, minimum free disk, backup command and wait times.
+
+```sh
+SELFHOST_RELEASE_DRY_RUN=1 deploy/selfhost/release.sh "$ENV"
+deploy/selfhost/release.sh "$ENV"
+```
 
 ### Docker daemon settings
 
@@ -288,7 +308,7 @@ To move an existing stack, back it up, copy both files with `cp -p` into the new
 
 1. Record the current Git revision, engine and server image tags, private configuration and volume name. Take a backup at a quiet point.
 2. Build the new revision under a new `SELFHOST_RELEASE` tag and increase `RIVET_NODE_VERSION`. Run `dc build` and test it in staging.
-3. In a maintenance window run `dc stop server engine`, then `dc up -d --no-build --wait`. Check the web page, token issuance and a known actor read.
+3. For a release that changes only the server, run `dc up -d --no-build --no-deps --wait server`. The engine keeps running. When the engine image or its service definition changed (`dc config --hash engine` differs from the engine container's `com.docker.compose.config-hash` label), use a maintenance window: `dc stop server`, then `dc up -d --no-build --no-deps --wait --wait-timeout 1500 engine`, then `dc up -d --no-build --no-deps --wait server`. Check the web page, token issuance and a known actor read.
 4. To roll back, select the previous sources (including the bootstrap script), prior images and configuration. If the new engine or actor code migrated data, restore the pre-upgrade backup to a fresh volume and point `SELFHOST_VOLUME` there before restarting. Writes since that backup remain on the upgraded volume. Keep both volumes until verification is complete.
 
 ## Rivet 3.1.1 implementation references
