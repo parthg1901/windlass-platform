@@ -36,7 +36,7 @@
  */
 
 import { REVIEW_TOOL } from "./factory/reviewer-task.js";
-import { anyOf, machineHarnesses } from "./sandbox/harnesses.js";
+import { SUBTASK_HARNESSES, anyOf } from "./sandbox/harnesses.js";
 import {
 	MAX_PUBLISH_BODY_CHARS,
 	MAX_PUBLISH_TITLE_CHARS,
@@ -52,9 +52,6 @@ import { unavailableSecretName, validRequestedSecretName, type CommandSandbox, t
 import { isRecord } from "./util.js";
 
 export { PUBLISH_SERVER } from "./personal-server-definition.js";
-
-/** The machine agents a Plan-first subtask may run (harnesses.ts, `subtasks`), as the planner is told of them. */
-const SUBTASK_AGENTS = Object.values(machineHarnesses).filter(h => h.subtasks);
 
 export const PUBLISH_TOOL = "publish";
 /**
@@ -413,7 +410,7 @@ export function platformTools(offer: PlatformToolOffer, questionTimeoutMs: numbe
 		return [
 			tool(
 				"file_plan",
-				`Propose a feature plan for the owner. Include spec {goal, requirements[], outOfScope[], acceptance[]}, questions [{id,text,options?,why?,recommended?}] (each question's text one short sentence of at most 140 characters ending in a question mark, each option and optional recommended answer at most 80 characters, recommended must match an option when listed, and why, optional, at most 400 characters of background the owner can open), and two to six subtasks [{key,title,brief,acceptance[],dependsOn[],owns[],budget:{tokens}}]. Give each subtask a short title beginning with a verb and naming a concrete result, for example “Add the CSV writer”. Independent subtasks run in parallel. Split work by file, list accurate paths in owns, and use dependsOn only for real prerequisites. A subtask's budget is one figure: cost-weighted tokens, where cached input counts at a tenth, between the least and most a subtask may have (the prompt's Budget lines give the figures). The feature's budget is its subtasks' together, and its own allowance for planning, summary and review on top; when a subtask uses its budget, it asks the owner for more instead of stopping work. Each subtask inherits the resolved place and agent for its repository. To change the place, propose place {prefer: an owner machine name or hosted, reason: up to 200 characters, allow?: alternative names} and needs {tags?, screenshots?, egress?: open or restricted, profile?, cpus?, memoryGiB?, hostedSize?}. A larger hosted size requires the owner’s approval. Request it explicitly in hostedSize when needed. Use the read-only owner descriptions, tags and sandbox capacity. Omit agent to inherit the resolved choice, or propose agent {harness: ${anyOf(["windlass", ...SUBTASK_AGENTS.map(h => h.id)])}, model?, effort?}, with a model and effort its place lists in agentModels (windlassModels for Windlass). ${SUBTASK_AGENTS.map(h => h.name).join(" and ")} run on a signed-in machine or on a hosted key profile with a matching Settings provider. On hosted choose their default model. They work without asking: the owner confirms each one before it runs, so propose one only where the subtask needs it. Overflow defaults to false and waits for the preferred place. Only approved alternatives may be used when overflow is true. To suggest single mode, give singleSuggested and an empty subtask list.` +
+				`Propose a feature plan for the owner. Include spec {goal, requirements[], outOfScope[], acceptance[]}, questions [{id,text,options?,why?,recommended?}] (each question's text one short sentence of at most 140 characters ending in a question mark, each option and optional recommended answer at most 80 characters, recommended must match an option when listed, and why, optional, at most 400 characters of background the owner can open), and two to six subtasks [{key,title,brief,acceptance[],dependsOn[],owns[],budget:{tokens}}]. Give each subtask a short title beginning with a verb and naming a concrete result, for example “Add the CSV writer”. Independent subtasks run in parallel. Split work by file, list accurate paths in owns, and use dependsOn only for real prerequisites. A subtask's budget is one figure: cost-weighted tokens, where cached input counts at a tenth, between the least and most a subtask may have (the prompt's Budget lines give the figures). The feature's budget is its subtasks' together, and its own allowance for planning, summary and review on top; when a subtask uses its budget, it asks the owner for more instead of stopping work. Each subtask inherits the resolved place and agent for its repository. To change the place, propose place {prefer: an owner machine name or hosted, reason: up to 200 characters, allow?: alternative names} and needs {tags?, screenshots?, egress?: open or restricted, profile?, cpus?, memoryGiB?, hostedSize?}. A larger hosted size requires the owner’s approval. Request it explicitly in hostedSize when needed. Use the read-only owner descriptions, tags and sandbox capacity. Omit agent to inherit the resolved choice, or propose agent {harness: ${anyOf(["windlass", ...SUBTASK_HARNESSES.map(h => h.id)])}, model?, effort?}, with a model and effort its place lists in agentModels (windlassModels for Windlass). ${SUBTASK_HARNESSES.map(h => h.name).join(" and ")} run on a signed-in machine or on a hosted key profile with a matching Settings provider. On hosted choose their default model. They work without asking: the owner confirms each one before it runs, so propose one only where the subtask needs it. Overflow defaults to false and waits for the preferred place. Only approved alternatives may be used when overflow is true. To suggest single mode, give singleSuggested and an empty subtask list.` +
 					(offer.crossRepo
 						? " For a feature over two repositories (the prompt names them), also give repos[], each subtask's repo alias, mergeOrder [{repo, prerequisite[], intermediate, evidence, fallback}], releaseGate request and finalIntegration {runFrom, command, inputs[], profile: actions, timeoutSeconds, requiredCases[], artifactOutputs[]}."
 						: ""),
@@ -478,7 +475,7 @@ export function platformTools(offer: PlatformToolOffer, questionTimeoutMs: numbe
 										additionalProperties: false,
 										required: ["harness"],
 										properties: {
-											harness: { enum: ["windlass", ...SUBTASK_AGENTS.map(h => h.id)] },
+											harness: { enum: ["windlass", ...SUBTASK_HARNESSES.map(h => h.id)] },
 											model: { type: "string", maxLength: 200 },
 											effort: { type: "string", maxLength: 64 },
 										},

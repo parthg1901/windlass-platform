@@ -31,7 +31,7 @@ import {
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { hasReason } from "../api/client";
 import { isLimitRefusal, MACHINE_REFUSALS } from "../api/errors";
-import { HARNESS_NAMES } from "../lib/acp";
+import { HARNESS_NAMES, MACHINE_HARNESS_ORDER } from "../lib/acp";
 import { clockTime, count, localTime, sandboxTime } from "../lib/format";
 import {
 	MODEL_SOURCES,
@@ -1261,13 +1261,11 @@ export function StartComposer({
 				agentButtons.push({ id, reason: `On ${hosts.map(machineLabel).join(", ")}: choose that machine first` });
 		}
 	} else {
-		for (const id of ["claude", "codex", "opencode"] as const) agentButtons.push({ id, reason: hostedProblem(id) });
+		for (const id of MACHINE_HARNESS_ORDER) agentButtons.push({ id, reason: hostedProblem(id) });
 	}
 	// Hosted agents that nothing pays for: each says so and leads to its cell on the Connections page.
 	const unconnected =
-		chosenMachine || keys === null
-			? []
-			: (["claude", "codex", "opencode"] as const).filter(id => !hostedPayer(id, undefined, keys));
+		chosenMachine || keys === null ? [] : MACHINE_HARNESS_ORDER.filter(id => !hostedPayer(id, undefined, keys));
 	const connectRoute = (id: HarnessId) => ({ name: "connections" as const, section: cellId(id, "hosted") });
 
 	const shownList = other && machineProblem ? null : modelList;

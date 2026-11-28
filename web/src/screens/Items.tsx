@@ -38,7 +38,7 @@ import { PlaceChoice, itemHarnesses, itemProfilesHere, machineUnusable } from ".
 import { RunLine } from "../components/RunSettings";
 import { runModelName, runOf } from "../lib/run";
 import { hostedAgentProblem, subtaskHarnessProblem } from "../../../server/src/sandbox/harnesses.js";
-import { HARNESS_NAMES } from "../lib/acp";
+import { HARNESS_NAMES, MACHINE_HARNESS_ORDER } from "../lib/acp";
 import { ChevronIcon, WarnIcon } from "../components/Icons";
 import { count, plural } from "../lib/format";
 import { feedCounts, type FeedFilters } from "../lib/repositories";
@@ -441,7 +441,7 @@ export function NewItemDialog({
 				id,
 				reason: itemProfilesHere(chosenMachine, id).length ? null : `Not available on ${machineLabel(chosenMachine)}`,
 			}))
-		: (["claude", "codex", "opencode"] as const).map(id => ({
+		: MACHINE_HARNESS_ORDER.map(id => ({
 				id,
 				reason: hostedAgentProblem(id, keys, !!hostedProfile),
 			}));
