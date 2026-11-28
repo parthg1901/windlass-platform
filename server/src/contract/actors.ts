@@ -83,6 +83,11 @@ import type { BillingPeriod, BillingView, UsageNumbers, UsageView } from "./usag
 export interface UserActions extends SlackSettingsActions, LinkedAccountsActions {
 	signOutEverywhere(options?: { revokeApiTokens: boolean }): Promise<void>;
 	me(): Promise<UserProfile>;
+	/**
+	 * Makes sure userGitlab[uid] exists, since browsers may only look actors up, and says whether the
+	 * deployment has GitLab. The web app asks before it opens that actor; asking again is cheap.
+	 */
+	openGitlab(): Promise<boolean>;
 	linkedLogins(): Promise<LinkedLogin[]>;
 	unlinkLogin(provider: LoginProvider): Promise<void>;
 	chatgpt(): Promise<ChatgptStatus>;

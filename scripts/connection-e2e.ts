@@ -16,7 +16,9 @@
  *     `auth.invalid_token`, with one that ran out with 401 `auth.token_expired` and the header
  *     `x-rivet-error`; a WebSocket is accepted and closed with 1008 and that reason. What is let
  *     through goes to the local engine;
- *   - a WebSocket that is open is not looked at again, as on the engine: it outlives its token.
+ *   - a WebSocket that is open is not looked at again, as on the engine: it outlives its token;
+ *   - a token may create actors only when its grants say so: the browser's (CONNECTION_GRANTS) do not,
+ *     and a `getOrCreate` with one is refused with 403 `auth.forbidden`.
  *
  * The server is started as a deployment's: with the (made-up) admin token and the front as
  * WLP_PUBLIC_ENDPOINT. The client is given the platform's address and nothing else. Sandboxes are the
@@ -27,6 +29,7 @@
  * after that is sent with a new token and no refusal; a feed whose connection drops comes back with a
  * new token; and, with a browser clock that runs behind (the token's `exp` says an hour more than it
  * has), a refused prompt and a refused reconnect are both renewed and go through, unseen by the caller.
+ * With GitLab configured, the web app also opens the user's GitLab settings with only that token.
  *
  * Prints one PASS/FAIL line per check and exits 1 if any failed. No token is printed.
  */
@@ -75,6 +78,17 @@ function assert(condition: unknown, message: string): asserts condition {
 interface Issued {
 	number: number;
 	expiresAt: number;
+	/** Whether its grants let it create actors. */
+	creates: boolean;
+}
+
+/** A request that creates an actor when none has the key: a gateway query or the REST API's. */
+function creates(method: string | undefined, path: string): boolean {
+	const url = new URL(path, "http://front");
+	return (
+		url.searchParams.get("rvt-method") === "getOrCreate" ||
+		(url.pathname === "/actors" && (method === "PUT" || method === "POST"))
+	);
 }
 
 class Front {
@@ -83,6 +97,8 @@ class Front {
 	/** What was let through, by the number of the token it carried. */
 	readonly served: Array<{ token: number; kind: "http" | "ws" }> = [];
 	readonly refused: Array<{ code: string; kind: "http" | "ws"; token: number | null }> = [];
+	/** Requests to create an actor refused for a token whose grants do not allow it. */
+	readonly forbidden: string[] = [];
 	/** Added to the `exp` a token claims: what RivetKit's client reads, and a browser clock that runs behind. */
 	claimAheadMs = 0;
 	private readonly open = new Set<Socket>();
@@ -117,13 +133,18 @@ class Front {
 		return this.open.size;
 	}
 
-	private issue(): { token: string; issued_ts: number; expires_ts: number } {
+	private issue(grants: unknown): { token: string; issued_ts: number; expires_ts: number } {
 		const now = Date.now();
 		const number = this.tokens.size + 1;
 		const expiresAt = now + TOKEN_MS;
 		const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
 		const token = `${part({ alg: "none", typ: "JWT" })}.${part({ exp: Math.floor((expiresAt + this.claimAheadMs) / 1000), jti: `${number}-${randomBytes(6).toString("hex")}` })}.FAKE`;
-		this.tokens.set(token, { number, expiresAt });
+		const creates =
+			Array.isArray(grants) &&
+			grants.some(
+				grant => grant?.resource === "actor" && Array.isArray(grant.operations) && grant.operations.includes("create"),
+			);
+		this.tokens.set(token, { number, expiresAt, creates });
 		return { token, issued_ts: now, expires_ts: expiresAt };
 	}
 
@@ -154,10 +175,17 @@ class Front {
 		return { token, path };
 	}
 
-	/** Null when the token is good; otherwise the engine's code for the refusal. */
-	private judge(token: string | undefined, kind: "http" | "ws"): string | null {
+	/** Null when the token is good for the request; otherwise the engine's code for the refusal. */
+	private judge(token: string | undefined, kind: "http" | "ws", creating = false): string | null {
 		const known = token === undefined ? undefined : this.tokens.get(token);
-		const code = known === undefined ? "invalid_token" : Date.now() >= known.expiresAt ? "token_expired" : null;
+		const code =
+			known === undefined
+				? "invalid_token"
+				: Date.now() >= known.expiresAt
+					? "token_expired"
+					: creating && !known.creates
+						? "forbidden"
+						: null;
 		if (code === null) this.served.push({ token: known!.number, kind });
 		else this.refused.push({ code, kind, token: known?.number ?? null });
 		return code;
@@ -170,22 +198,41 @@ class Front {
 		};
 		const bearer = /^bearer (.+)$/i.exec(request.headers.authorization ?? "")?.[1];
 		if (request.method === "POST" && request.url === "/auth/tokens") {
-			request.resume();
-			if (bearer !== ADMIN)
-				return send(
-					401,
-					{ group: "auth", code: "invalid_token", message: "Authentication token is invalid." },
-					{ "x-rivet-error": "auth.invalid_token" },
-				);
-			return send(200, this.issue());
+			const chunks: Buffer[] = [];
+			request.on("data", chunk => chunks.push(chunk));
+			request.on("end", () => {
+				if (bearer !== ADMIN)
+					return send(
+						401,
+						{ group: "auth", code: "invalid_token", message: "Authentication token is invalid." },
+						{ "x-rivet-error": "auth.invalid_token" },
+					);
+				let grants: unknown = null;
+				try {
+					grants = JSON.parse(Buffer.concat(chunks).toString("utf8")).grants;
+				} catch {
+					/* No grants: a token that may not create. */
+				}
+				send(200, this.issue(grants));
+			});
+			return;
 		}
 		const { token, path } = this.presented(request);
 		// The engine's own facts are open to anyone, as on the engine (api-public `metadata.rs`): RivetKit's
 		// client asks for them first, and without a token.
 		if (path.split("?")[0] !== "/metadata") {
-			const code = this.judge(token, "http");
+			const creating = creates(request.method, path);
+			const code = this.judge(token, "http", creating);
 			if (code !== null) {
 				request.resume();
+				if (code === "forbidden") {
+					this.forbidden.push(`${request.method} ${new URL(path, "http://front").pathname}`);
+					return send(
+						403,
+						{ group: "auth", code, message: "This token may not create actors." },
+						{ "x-rivet-error": `auth.${code}` },
+					);
+				}
 				const message =
 					code === "token_expired" ? "Authentication token has expired." : "Authentication token is invalid.";
 				return send(401, { group: "auth", code, message }, { "x-rivet-error": `auth.${code}` });
@@ -213,7 +260,9 @@ class Front {
 	private upgrade(request: IncomingMessage, socket: Socket, head: Buffer): void {
 		const protocols = (request.headers["sec-websocket-protocol"] ?? "").split(",").map(protocol => protocol.trim());
 		const { token, path } = this.presented(request, protocols);
-		const code = this.judge(token, "ws");
+		const creating = creates(request.method, path);
+		const code = this.judge(token, "ws", creating);
+		if (code === "forbidden") this.forbidden.push(`WS ${new URL(path, "http://front").pathname}`);
 		if (code !== null) {
 			// A browser cannot read a refused upgrade, so the engine accepts the socket and closes it with the reason.
 			const accept = createHash("sha1")
@@ -281,6 +330,10 @@ class Server {
 				WLP_FAKE_DELAY_MS: "15",
 				RIVET_ADMIN_TOKEN: ADMIN,
 				WLP_PUBLIC_ENDPOINT: publicEndpoint,
+				// GitLab is configured; its settings are read without reaching the instance, which is never asked.
+				WLP_GITLAB_BASE_URL: "http://127.0.0.1:9",
+				WLP_GITLAB_CLIENT_ID: "connection-e2e",
+				WLP_GITLAB_CLIENT_SECRET: "connection-e2e-client-secret",
 			},
 			stdio: ["ignore", "pipe", "pipe"],
 		});
@@ -334,6 +387,7 @@ interface WebClient {
 		createSession(input: { profile: string }): Promise<SessionSummary>;
 		listSessions(): Promise<SessionSummary[]>;
 		deleteSession(id: string): Promise<void>;
+		gitlab(): Promise<{ state: string }>;
 		watch(feed: { onSessions(sessions: SessionSummary[]): void; onConnection?(state: string): void }): () => void;
 	};
 	session(
@@ -451,6 +505,38 @@ async function main(): Promise<void> {
 			assert(web.endpoint === front.url, `the client names ${web.endpoint} as its endpoint`);
 			return `turn ${first.turn} ran; ${feed.items.length} items on the feed; ${front.served.length} requests let through, none refused; ${front.openSockets} feeds open`;
 		});
+
+		await check(
+			"with GitLab configured, the web app opens the user's GitLab settings with a token that cannot create actors",
+			async () => {
+				const refusedBefore = front.refused.length;
+				const connection = (await (await fetch(`${API}/platform/connection`)).json()) as PlatformConnection;
+				assert(connection.token, "the server handed out no token");
+				// What the web app did before: create the GitLab actor from the browser. The token does not allow it.
+				const query = new URLSearchParams({
+					"rvt-namespace": "default",
+					"rvt-method": "getOrCreate",
+					"rvt-runner": "default",
+					"rvt-key": `${auth.profile.uid}-probe`,
+					"rvt-token": connection.token.token,
+				});
+				const created = await fetch(`${front.url}/gateway/userGitlab/action/gitlab?${query}`, { method: "POST" });
+				assert(
+					created.status === 403 && created.headers.get("x-rivet-error") === "auth.forbidden",
+					`creating an actor with the browser's token answered ${created.status}`,
+				);
+				front.forbidden.length = 0;
+				const status = await web.user(auth).gitlab();
+				assert(status.state === "disconnected", `GitLab settings say ${JSON.stringify(status)}`);
+				assert(front.forbidden.length === 0, `the web app tried to create: ${front.forbidden.join(", ")}`);
+				const refusals = front.refused.splice(refusedBefore);
+				assert(
+					refusals.length === 1 && refusals[0]!.code === "forbidden",
+					`the engine refused ${JSON.stringify(refusals)}`,
+				);
+				return "a getOrCreate with the browser's token is refused 403 auth.forbidden; the web app reads GitLab settings (disconnected) with no creation";
+			},
+		);
 
 		await check(
 			"a feed that is open stays open and delivers after its token ran out, and the next prompt goes with a new token",

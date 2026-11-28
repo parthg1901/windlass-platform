@@ -6,8 +6,9 @@ loglevel: fatal
 ingress:
   - hostname: app.example.com
     service: http://127.0.0.1:16440
+  # A new actor the web app opens (ACTOR in web/src/api/rivet.ts) needs adding to both groups.
   - hostname: engine.example.com
-    path: '^/(metadata|gateway/((user|agentSession)/action/[A-Za-z][A-Za-z0-9]*|(user|agentSession)/connect|machine/websocket/control|agentSession/websocket/runner))$'
+    path: '^/(metadata|gateway/((user|userGitlab|agentSession)/action/[A-Za-z][A-Za-z0-9]*|(user|userGitlab|agentSession)/connect|machine/websocket/control|agentSession/websocket/runner))$'
     service: http://127.0.0.1:16420
   # Windlass's model relay for E2B sandboxes (WLP_MODEL_RELAY_URL): the server checks the method, path and lease.
   - hostname: relay.example.com
