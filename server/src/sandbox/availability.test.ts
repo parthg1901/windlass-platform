@@ -20,7 +20,7 @@ import {
 	type SandboxProfileId,
 } from "../contract.js";
 import { ISOLATION_NAMES, PROFILE_ISOLATION, isolationName } from "../contract/isolation.js";
-import { checkRunPlace, profilesForItems } from "../factory/default-place.js";
+import { checkRunPlace, placeProblem } from "../factory/default-place.js";
 import { agentProfileProblem } from "../factory/feature-plan.js";
 import { choosePlacement } from "../factory/placement.js";
 import { resolveRun } from "../factory/resolve-run.js";
@@ -350,13 +350,6 @@ test("it decides as today's rules do", () => {
 						worksWithoutAsking(agent, id),
 						quick.notes.some(n => n.code === "works_without_asking"),
 					);
-				same(
-					"profilesForItems",
-					name,
-					ask("quick"),
-					profilesForItems(machine, agent).some(p => p.id === id),
-					quick.ok,
-				);
 				const run = resolveRun(
 					{ item: { place: { machine: machine.machineId }, harness: agent, machineProfile: id } },
 					"builder",
@@ -460,7 +453,7 @@ test("it decides as today's rules do", () => {
 	}
 
 	assert.deepEqual(differences, []);
-	assert.ok(compared > 700, `only ${compared} comparisons ran`);
+	assert.ok(compared > 600, `only ${compared} comparisons ran`);
 });
 
 // Sentences
@@ -536,4 +529,31 @@ test("without a profile it takes the agent's own default, else says why not", ()
 	assert.equal(unchecked.ok && unchecked.profile, "docker-hardened");
 	// "It needs Open" says nothing when Open is what cannot be used.
 	assert.equal(cell(quick("claude", machines.signedOut)), "nothing_pays");
+});
+
+test("a work item's place says the rule and what to do, not a list of things to check", () => {
+	const claude = harnessName("claude");
+	const strict = `${claude} runs only in Open isolation on “ready”. Choose Open isolation.`;
+	const run = resolveRun(
+		{ item: { place: { machine: "ready" }, harness: "claude", machineProfile: "docker-windlass-sandbox" } },
+		"builder",
+	);
+	assert.equal(checkRunPlace(run, [machines.ready]).wait, strict);
+	assert.equal(
+		placeProblem({ place: { machine: "ready" }, harness: "claude", machineProfile: "docker-windlass-sandbox" }, [
+			machines.ready,
+		]),
+		strict,
+	);
+	// A machine whose runner was not started with the agent says so, with the flag to add.
+	const missing = resolveRun({ item: { place: { machine: "no-claude" }, harness: "claude" } }, "builder");
+	assert.equal(
+		checkRunPlace(missing, [machines.noClaude]).wait,
+		`The runner on “no-claude” was not started with ${claude}. Restart it with --harness claude added.`,
+	);
+	assert.equal(
+		placeProblem({ place: "any-machine", harness: "claude" }, [machines.noClaude, machines.outdated]),
+		`None of your machines can run this. The runner on “no-claude” was not started with ${claude}. Restart it with --harness claude added.`,
+	);
+	assert.equal(placeProblem({ place: "any-machine", harness: "claude" }, [machines.noClaude, machines.ready]), null);
 });
