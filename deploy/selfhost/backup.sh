@@ -18,10 +18,32 @@ mounted=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/lib/riv
 [[ $mounted == "$volume" ]] || { echo "Selected volume differs from the running engine mount" >&2; exit 1; }
 image=$(docker inspect --format '{{.Image}}' "$engine")
 name="engine-$(date -u +%Y%m%dT%H%M%S.%NZ)-$(cat /proc/sys/kernel/random/uuid).tar.gz"
+# The engine's start-up clean-up must finish before the server registers (engine-ready.sh), so the
+# server starts only once the engine reports ready, and stays stopped if it never does. The same
+# containers restart directly: Compose would refuse the server's dependency on an engine container
+# created before the engine had a healthcheck.
+start_stack() {
+  local deadline=$((SECONDS + ${SELFHOST_ENGINE_READY_TIMEOUT:-1500})) health
+  docker start "$engine" >/dev/null || return 1
+  while :; do
+    # A container created before the engine had a healthcheck gets the same probe directly.
+    health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$engine") || return 1
+    if [[ -z $health ]]; then
+      docker exec -i "$engine" bash -s -- "${SELFHOST_ENGINE_SETTLE_SECONDS:-120}" <"$kit/engine-ready.sh" >/dev/null && health=healthy
+    fi
+    [[ $health == healthy ]] && break
+    if [[ $health == unhealthy ]] || (( SECONDS >= deadline )); then
+      echo "The engine is not ready (${health:-no answer}); the server stays stopped" >&2
+      return 1
+    fi
+    sleep 5
+  done
+  docker start "$server" >/dev/null
+}
 restart=1
 cleanup() {
   local status=$?
-  if (( restart )); then "${compose[@]}" start engine server >&2 || status=1; fi
+  if (( restart )); then start_stack >&2 || status=1; fi
   rm -rf -- "$work"
   exit "$status"
 }
@@ -39,9 +61,12 @@ done
 docker run --rm --label com.docker.compose.project= --label com.docker.compose.service= --network none --user 0 --entrypoint tar \
   --mount "type=volume,src=$volume,dst=/source,readonly" "$image" \
   -C /source --sparse --numeric-owner -cf - . > "$work/data.tar"
-"${compose[@]}" start engine server
+copied_at=$SECONDS
 restart=0
-echo "Stop, volume copy and start took $((SECONDS - stopped_at)) s" >&2
+# The copy is complete either way: publish it, then report a stack that did not come back.
+ready=1
+start_stack || ready=0
+echo "Stop and volume copy took $((copied_at - stopped_at)) s, engine readiness and server start $((SECONDS - copied_at)) s" >&2
 gzip -1 "$work/data.tar"
 gzip -t "$work/data.tar.gz"
 archive="$work/data.tar.gz"
@@ -72,3 +97,4 @@ while IFS= read -r -d '' old; do
   fi
 done < "$work/sorted"
 echo "$name"
+(( ready ))

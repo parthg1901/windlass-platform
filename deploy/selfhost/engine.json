@@ -11,7 +11,7 @@
       }
     }
   },
-  "storage": { "log_directory": "/var/lib/rivet/log", "auto_provision_partitions": 1 },
+  "storage": { "log_directory": "/var/lib/rivet/log", "auto_provision_partitions": 1, "command_timeout_ms": 600000 },
   "object_storage": { "primary": { "file_system": { "path": "/var/lib/rivet/objects" } } },
   "telemetry": { "enabled": false }
 }
