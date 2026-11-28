@@ -29,6 +29,7 @@ import { perHour, sizeName, sizeSpec } from "../lib/sizes";
 import { useApp, useAuth } from "../state/app";
 import { useCostRates, useNow } from "../state/hooks";
 import { readTwice } from "../lib/retry";
+import { LoadError, Loading, SkeletonLines } from "../components/ui";
 
 /** A length of sandbox time in a sentence: the number and its unit stay on one line. */
 const sandboxTime = (seconds: number) => spelledTime(seconds).replace(/ /g, "\u00a0");
@@ -236,21 +237,11 @@ export function Usage() {
 					</div>
 				</header>
 				{error ? (
-					<div className="state state-error" role="alert">
-						<WarnIcon size={22} />
-						<h2>Your usage could not be loaded</h2>
-						<p>{error}</p>
-						<button type="button" className="button button-outline" onClick={reload}>
-							Try again
-						</button>
-					</div>
+					<LoadError level={2} subject="Your usage" error={error} reload={reload} />
 				) : (
-					<div className="usage-loading" aria-busy="true" aria-label="Loading your usage">
-						<span className="skeleton skeleton-title" style={{ width: "34%" }} />
-						<span className="skeleton skeleton-meta" style={{ width: "100%" }} />
-						<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-						<span className="skeleton skeleton-meta" style={{ width: "46%" }} />
-					</div>
+					<Loading label="Loading your usage" className="ui-loading-spaced">
+						<SkeletonLines lines={[100, 58, 46]} />
+					</Loading>
 				)}
 			</main>
 		);

@@ -17,16 +17,17 @@ import {
 } from "@contract";
 import { useCallback, useEffect, useState } from "react";
 import { THIS_MACHINE_CLAUDE_COMMAND } from "../../../server/src/contract/machine-setup.js";
-import { payWithFor } from "../../../server/src/pay-with.js";
+import { PAY_WITH_HARNESSES, payWithFor } from "../../../server/src/pay-with.js";
 import { keyProviders, machineHarness } from "../../../server/src/sandbox/harnesses.js";
 import { ChatgptPlan } from "../components/ChatgptPlan";
 import { ClaudePlan } from "../components/ClaudePlan";
 import { Command } from "../components/Command";
 import { Dialog } from "../components/Dialog";
-import { CloudIcon, MachineIcon, WarnIcon } from "../components/Icons";
+import { CloudIcon, MachineIcon } from "../components/Icons";
 import { KeyDialog, ModelProviders } from "../components/ModelProviders";
 import { PlanWait } from "../components/PlanConnect";
 import { SettingsGroup, SettingsLayout } from "../components/SettingsGroups";
+import { LoadError, Loading, Select, Skeleton, SkeletonButton, SkeletonField } from "../components/ui";
 import { AgentGlyph } from "../components/ui/Pill";
 import { StatusTag, type StatusTone, Waiting } from "../components/ui/StatusTag";
 import { HARNESS_DISPLAY_ORDER, HARNESS_NAMES } from "../lib/acp";
@@ -282,6 +283,81 @@ function Grid({
 	);
 }
 
+/** The grid while what it is computed from loads: its real head and agents, a shape where each cell will be. */
+function GridSkeleton({ machines }: { machines: readonly MachineSummary[] }) {
+	return (
+		<Loading label="Loading your connections" className="conn-scroll">
+			<table className="conn-grid" aria-hidden="true">
+				<thead>
+					<tr>
+						<th scope="col">Agent</th>
+						<th scope="col">
+							<span className="conn-place">
+								<CloudIcon size={13} />
+								Hosted
+							</span>
+						</th>
+						{machines.map(machine => (
+							<th scope="col" key={machine.machineId}>
+								<span className="conn-place">
+									<MachineIcon size={13} />
+									{machineLabel(machine)}
+								</span>
+							</th>
+						))}
+					</tr>
+				</thead>
+				<tbody>
+					{HARNESS_DISPLAY_ORDER.map(harness => (
+						<tr key={harness}>
+							<th scope="row">
+								<span className="conn-agent">
+									<AgentGlyph harness={harness} size={14} />
+									{HARNESS_NAMES[harness]}
+								</span>
+							</th>
+							{[null, ...machines].map((machine, column) => (
+								<td key={machine?.machineId ?? "hosted"}>
+									<div className="conn-cell">
+										<Skeleton width={column === 0 ? 96 : 72} height={20} radius="var(--radius-pill)" />
+										<SkeletonButton />
+									</div>
+								</td>
+							))}
+						</tr>
+					))}
+				</tbody>
+			</table>
+		</Loading>
+	);
+}
+
+/** Who pays while the choices load: a row per plan agent, its two choices as shapes. */
+function PaysSkeleton() {
+	return (
+		<Loading label="Loading who pays" className="conn-pays">
+			{PAY_WITH_HARNESSES.map(harness => (
+				<div className="conn-pay" key={harness} aria-hidden="true">
+					<div className="conn-pay-who">
+						<h3 className="conn-agent">
+							<AgentGlyph harness={harness} size={14} />
+							{HARNESS_NAMES[harness]}
+						</h3>
+						<p className="conn-pay-what">
+							<Skeleton width={140} />
+						</p>
+					</div>
+					<SkeletonField className="conn-pay-with" />
+					<SkeletonField className="conn-pay-limited" />
+					<p className="conn-pay-meaning">
+						<Skeleton width="60%" />
+					</p>
+				</div>
+			))}
+		</Loading>
+	);
+}
+
 /** What the choice means for each kind of turn, in a short sentence (`payWithFor`, the rule the resolver will apply). */
 function payWithMeaning(choices: readonly PayWithChoice[], harness: HarnessId, keyName: string, hasKey: boolean) {
 	const item = payWithFor(choices, harness, "item", hasKey);
@@ -336,43 +412,33 @@ function PayWithCard({
 				<label className="label" htmlFor={ids.pay}>
 					Pay with
 				</label>
-				<select
+				<Select<PayWith>
 					id={ids.pay}
-					className="select"
+					menuLabel="Pay with"
 					value={choice.payWith}
 					disabled={saving}
-					onChange={event => onSave({ ...choice, payWith: event.target.value as PayWith })}
-				>
-					{(Object.keys(PAY_WITH_WORDS) as PayWith[]).map(id => (
-						<option key={id} value={id}>
-							{PAY_WITH_WORDS[id]}
-						</option>
-					))}
-				</select>
+					onChange={payWith => onSave({ ...choice, payWith })}
+					options={(Object.keys(PAY_WITH_WORDS) as PayWith[]).map(id => ({ value: id, label: PAY_WITH_WORDS[id] }))}
+				/>
 			</div>
 			<div className="conn-pay-field conn-pay-limited">
 				<label className="label" htmlFor={ids.limited}>
 					At the plan's limit
 				</label>
-				<select
+				<Select<string>
 					id={ids.limited}
-					className="select"
+					menuLabel="At the plan's limit"
 					value={choice.whenLimited ?? DEFAULT_LIMITED}
 					disabled={saving || !limitedApplies}
-					onChange={event =>
-						onSave({
-							...choice,
-							whenLimited: event.target.value === DEFAULT_LIMITED ? null : (event.target.value as WhenLimited),
-						})
-					}
-				>
-					<option value={DEFAULT_LIMITED}>Items wait, sessions ask</option>
-					{(Object.keys(WHEN_LIMITED_WORDS) as WhenLimited[]).map(id => (
-						<option key={id} value={id}>
-							{WHEN_LIMITED_WORDS[id]}
-						</option>
-					))}
-				</select>
+					onChange={next => onSave({ ...choice, whenLimited: next === DEFAULT_LIMITED ? null : (next as WhenLimited) })}
+					options={[
+						{ value: DEFAULT_LIMITED, label: "Items wait, sessions ask" },
+						...(Object.keys(WHEN_LIMITED_WORDS) as WhenLimited[]).map(id => ({
+							value: id,
+							label: WHEN_LIMITED_WORDS[id],
+						})),
+					]}
+				/>
 			</div>
 			<p className="conn-pay-meaning" role="status">
 				{payWithMeaning(choices, harness, keyName, key !== undefined)}
@@ -384,11 +450,22 @@ function PayWithCard({
 export function Connections() {
 	const { platform } = useApp();
 	const auth = useAuth();
-	const { inputs, error } = useConnectionInputs();
+	const { inputs, error, reload } = useConnectionInputs();
 	const machinesOffered = Boolean(platform.info?.machines);
 	const machines = useMachines(machinesOffered);
 	const list = machinesOffered ? (machines.list ?? []) : [];
 	const payWith = usePayWith();
+	// The grid waits for everything its cells are computed from, so no cell shows a default that then changes and no
+	// machine's column arrives late. Machines that cannot be read leave the grid with Hosted only, under the error.
+	const machinesFailed = machinesOffered && machines.list === null && machines.error !== null;
+	const machinesKnown = platform.info !== null && (!machinesOffered || machines.list !== null || machinesFailed);
+	const gridError =
+		error ?? (payWith.choices === null ? payWith.error : null) ?? (platform.info === null ? platform.error : null);
+	const reloadGrid = () => {
+		if (error) reload();
+		if (payWith.choices === null && payWith.error) payWith.reload();
+		if (platform.info === null) platform.reload();
+	};
 	const [opened, setOpened] = useState<Opened | null>(null);
 	const close = useCallback(() => setOpened(null), []);
 	const act = (action: CellAction, state: ConnectionCell["state"]) => {
@@ -417,25 +494,28 @@ export function Connections() {
 					title="Agents"
 					lede="Your plans and keys pay for each agent, hosted and on your machines, as Who pays below says. An agent signed in on a machine uses that sign-in there."
 				>
-					{inputs === null ? (
-						error ? (
-							<div className="state state-error" role="alert">
-								<WarnIcon size={22} />
-								<h3>Your connections could not be read</h3>
-								<p>{error}</p>
-							</div>
+					{inputs === null || payWith.choices === null || !machinesKnown ? (
+						gridError ? (
+							<LoadError subject="Your connections" error={gridError} reload={reloadGrid} />
 						) : (
-							<p className="usage-empty" aria-busy="true">
-								Reading your connections…
-							</p>
+							<GridSkeleton machines={machines.list ?? []} />
 						)
 					) : (
-						<Grid
-							inputs={{ ...inputs, payWith: payWith.choices ?? [] }}
-							machines={list}
-							onAct={act}
-							onMachines={machines.replace}
-						/>
+						<>
+							{machinesFailed ? (
+								<LoadError
+									inline
+									error={`Your machines could not be loaded: ${machines.error}`}
+									reload={machines.reload}
+								/>
+							) : null}
+							<Grid
+								inputs={{ ...inputs, payWith: payWith.choices }}
+								machines={list}
+								onAct={act}
+								onMachines={machines.replace}
+							/>
+						</>
 					)}
 				</SettingsGroup>
 
@@ -445,14 +525,14 @@ export function Connections() {
 					lede="For agents with a plan: what pays, and what happens when the plan hits its limit."
 				>
 					{payWith.choices === null || inputs === null ? (
-						payWith.error ? (
-							<p className="field-note tone-bad" role="alert">
-								{payWith.error}
-							</p>
+						payWith.error || error ? (
+							<LoadError
+								subject="Who pays"
+								error={payWith.error ?? error}
+								reload={payWith.error ? payWith.reload : reload}
+							/>
 						) : (
-							<p className="usage-empty" aria-busy="true">
-								Reading who pays…
-							</p>
+							<PaysSkeleton />
 						)
 					) : (
 						<div className="conn-pays">

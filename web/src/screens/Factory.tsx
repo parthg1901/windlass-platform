@@ -27,7 +27,7 @@ import { StartComposer } from "../components/StartComposer";
 import { ApiIcon, ChevronIcon, FileIcon, Mark, RepoIcon, WarnIcon } from "../components/Icons";
 import { ProviderIcon } from "../components/ProviderIcon";
 import { hostOfAddress, RepoTile } from "../components/RepoTile";
-import { Menu, PHONE_QUERY, Pill, useMediaQuery, type MenuSpec } from "../components/ui";
+import { LoadError, Menu, PHONE_QUERY, Pill, SkeletonRows, useMediaQuery, type MenuSpec } from "../components/ui";
 import { plural } from "../lib/format";
 import { feedCounts, feedRepositories, repositoryName, workingCounts } from "../lib/repositories";
 import { ITEM_SOURCES, linkProps, navigate, useHistoryState, type ItemSource, type Route } from "../lib/router";
@@ -445,26 +445,9 @@ export function Factory({
 
 				{list === null ? (
 					items.error ? (
-						<div className="state state-error" role="alert">
-							<WarnIcon size={22} />
-							<h2>The work items could not be loaded</h2>
-							<p>{items.error}</p>
-							<button type="button" className="button button-outline" onClick={items.reload}>
-								Try again
-							</button>
-						</div>
+						<LoadError level={2} subject="The work items" error={items.error} reload={items.reload} />
 					) : (
-						<ul className="agents agents-loading" aria-busy="true" aria-label="Loading the work items">
-							{[0, 1, 2].map(row => (
-								<li key={row} className="agent-row agent-row-skeleton">
-									<span className="skeleton skeleton-dot" />
-									<div className="agent-main">
-										<span className="skeleton skeleton-title" style={{ width: `${46 - row * 7}%` }} />
-										<span className="skeleton skeleton-meta" style={{ width: `${62 - row * 5}%` }} />
-									</div>
-								</li>
-							))}
-						</ul>
+						<SkeletonRows variant="agent" label="Loading the work items" rows={3} />
 					)
 				) : list.length === 0 ? (
 					<FactoryEmpty github={Boolean(platform.info?.github)} sources={Boolean(platform.info?.items)} />

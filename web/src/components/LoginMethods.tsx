@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useApp, useAuth } from "../state/app";
 import { Dialog } from "./Dialog";
 import { GitHubLogo, GoogleLogo } from "./AgentLogos";
+import { LoadError, Loading, Skeleton, SkeletonButton } from "./ui";
 
 const providers = [
 	{ id: "github", name: "GitHub", logo: <GitHubLogo /> },
@@ -117,11 +118,28 @@ export function LoginMethods() {
 						);
 					})}
 				</ul>
+			) : !info && platform.error ? (
+				<LoadError inline error={platform.error} reload={platform.reload} />
 			) : (
 				!error && (
-					<p className="usage-note" role="status">
-						{platform.error ?? "Loading sign-in methods…"}
-					</p>
+					<Loading label="Loading sign-in methods">
+						<ul className="settings-list" aria-hidden="true">
+							{providers
+								.filter(({ id }) => !info || (id === "github" ? info.github : info.googleLogin))
+								.map(({ id, name, logo }) => (
+									<li key={id} className="usage-kept-row login-method">
+										<div className="usage-kept-main">
+											<span className="provider-name">
+												{logo}
+												{name}
+											</span>
+										</div>
+										<Skeleton width={56} />
+										<SkeletonButton />
+									</li>
+								))}
+						</ul>
+					</Loading>
 				)
 			)}
 			{linked?.length === 1 && (

@@ -1,5 +1,5 @@
 import type { GitlabProjectList, GitlabStatus } from "@contract";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp, useAuth } from "../state/app";
 import { WarnIcon } from "./Icons";
 import {
@@ -14,6 +14,7 @@ import {
 } from "./IntegrationCard";
 import { LinkLine, useReportConnection, useUnlinkItems } from "./LinkedAccounts";
 import { BranchName } from "./BranchName";
+import { LoadError, Select } from "./ui";
 
 const RETURN = /^#gitlab(?:-error)?=/;
 
@@ -76,7 +77,7 @@ export function GitlabSettings({ connection }: { connection: ReturnType<typeof u
 	const [busy, setBusy] = useState(false);
 	// A chosen project is a row with a Change action; the picker opens only to choose one or to change it.
 	const [changing, setChanging] = useState(false);
-	const search = useRef<HTMLInputElement>(null);
+
 	const connected = status?.state === "connected";
 	// GitLab issues file work only where items are on: its users link there.
 	const filing = !!platform.info?.items;
@@ -84,7 +85,7 @@ export function GitlabSettings({ connection }: { connection: ReturnType<typeof u
 	useReportConnection("gitlab", filing && connected ? "*" : null);
 	const picking = connected && (!status.project || changing);
 	useEffect(() => {
-		if (changing) search.current?.focus();
+		if (changing) document.getElementById("gitlab-project")?.focus();
 	}, [changing]);
 	useEffect(() => {
 		if (!picking) return;
@@ -120,7 +121,8 @@ export function GitlabSettings({ connection }: { connection: ReturnType<typeof u
 			setBusy(false);
 		}
 	}
-	if (status?.state === "off" || (!status && !error)) return null;
+	// Hidden only once GitLab is known to be off; until then the card holds its place.
+	if (status?.state === "off") return null;
 	const connect = () =>
 		void run(async () => {
 			location.assign((await api.gitlabConnect({ origin: location.origin })).url);
@@ -132,7 +134,9 @@ export function GitlabSettings({ connection }: { connection: ReturnType<typeof u
 			provider="gitlab"
 			name="GitLab"
 			what="Agents work on a GitLab project and hand their work back as merge requests."
-			state={!status ? "loading" : connected ? "connected" : reconnect ? "reconnect" : "disconnected"}
+			state={
+				!status ? (error ? "unknown" : "loading") : connected ? "connected" : reconnect ? "reconnect" : "disconnected"
+			}
 			action={
 				status?.state === "disconnected" ? (
 					<button className="button button-outline button-small" disabled={busy} onClick={connect}>
@@ -162,19 +166,7 @@ export function GitlabSettings({ connection }: { connection: ReturnType<typeof u
 			]}
 		>
 			{filing ? <LinkLine surface="gitlab" /> : null}
-			{error && (
-				<p className="callout callout-warn" role="alert">
-					<WarnIcon />
-					<span>
-						{error}{" "}
-						{!status && (
-							<button className="link" onClick={reload}>
-								Try again
-							</button>
-						)}
-					</span>
-				</p>
-			)}
+			{error && <LoadError inline error={error} reload={status ? undefined : reload} />}
 			{status?.state === "disconnected" &&
 				(reconnect ? (
 					<p className="callout callout-warn" role="status">
@@ -221,45 +213,25 @@ export function GitlabSettings({ connection }: { connection: ReturnType<typeof u
 							title={status.project ? "Change the project" : "Choose the project"}
 							to={
 								<>
-									<label className="visually-hidden" htmlFor="gitlab-query">
-										Search GitLab projects
-									</label>
-									<input
-										ref={search}
-										className="input"
-										type="search"
-										maxLength={256}
-										id="gitlab-query"
-										placeholder="Search projects"
-										value={query}
-										onChange={e => setQuery(e.target.value)}
-										disabled={busy}
-									/>
 									<label className="visually-hidden" htmlFor="gitlab-project">
 										GitLab project
 									</label>
-									<select
-										className="select"
+									<Select
 										id="gitlab-project"
+										menuLabel="GitLab project"
 										value={selected}
-										onChange={e => setSelected(e.target.value)}
-										disabled={busy || !list?.projects.length}
-									>
-										<option value="">
-											{listError
-												? "Projects unavailable"
-												: !list
-													? "Loading projects…"
-													: !list.projects.length
-														? "No matching projects"
-														: "Choose a project"}
-										</option>
-										{list?.projects.map(p => (
-											<option key={p.id} value={String(p.id)}>
-												{p.owner}/{p.name}
-											</option>
-										))}
-									</select>
+										onChange={setSelected}
+										disabled={busy}
+										placeholder="Choose a project"
+										filter={{
+											placeholder: "Search projects",
+											value: query,
+											onChange: setQuery,
+											busy: !list && !listError,
+										}}
+										empty={listError ? "Projects unavailable" : !list ? "Loading projects…" : "No matching projects"}
+										options={list?.projects.map(p => ({ value: String(p.id), label: `${p.owner}/${p.name}` })) ?? []}
+									/>
 								</>
 							}
 							submit={

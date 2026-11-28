@@ -423,6 +423,13 @@ a.trail-link:hover {
 	min-width: 0;
 	margin-left: 8px;
 }
+.topbar-tabs > .topbar-tab {
+	transition: opacity var(--dur-menu-in) var(--ease-out);
+}
+.topbar-tabs-pending > .topbar-tab {
+	opacity: 0;
+	pointer-events: none;
+}
 .topbar-tab {
 	display: inline-flex;
 	align-items: center;

@@ -17,6 +17,7 @@ import { useApp, useAuth } from "../state/app";
 import { useNow } from "../state/hooks";
 import { WarnIcon } from "./Icons";
 import { Button } from "./ui/Button";
+import { Loading, Select, SkeletonLines } from "./ui";
 
 const SCHEDULE_WORDS: Record<EnvironmentSchedule, string> = {
 	24: "Nightly",
@@ -228,7 +229,12 @@ export function EnvironmentSection({ repositoryId, labelledBy }: { repositoryId:
 				{error}
 			</p>
 		);
-	if (!view) return <p className="usage-lede">Reading the environments…</p>;
+	if (!view)
+		return (
+			<Loading label="Loading the environments">
+				<SkeletonLines title={false} />
+			</Loading>
+		);
 	return (
 		<div className="repo-form" aria-labelledby={labelledBy}>
 			{!view.available ? (
@@ -238,25 +244,22 @@ export function EnvironmentSection({ repositoryId, labelledBy }: { repositoryId:
 					<div className="env-controls">
 						<label className="env-schedule" htmlFor={scheduleId}>
 							<span>Rebuild</span>
-							<select
+							<Select<string>
 								id={scheduleId}
-								className="select"
-								value={view.schedule}
+								menuLabel="Rebuild"
+								value={String(view.schedule)}
 								disabled={busy}
-								onChange={event =>
+								onChange={next =>
 									void act(
-										() => user.saveEnvironmentSchedule(repositoryId, Number(event.target.value) as EnvironmentSchedule),
+										() => user.saveEnvironmentSchedule(repositoryId, Number(next) as EnvironmentSchedule),
 										"Saved.",
 									)
 								}
-							>
-								{ENVIRONMENT_SCHEDULES.map(hours => (
-									<option key={hours} value={hours}>
-										{SCHEDULE_WORDS[hours]}
-										{!view.scheduleChosen && hours === view.schedule ? " (default)" : ""}
-									</option>
-								))}
-							</select>
+								options={ENVIRONMENT_SCHEDULES.map(hours => ({
+									value: String(hours),
+									label: `${SCHEDULE_WORDS[hours]}${!view.scheduleChosen && hours === view.schedule ? " (default)" : ""}`,
+								}))}
+							/>
 						</label>
 						<span className="env-also">and after a push to the default branch</span>
 						{view.environments.length > 1 ? (

@@ -272,23 +272,10 @@
 .agent-rename .input {
 	flex: 1 1 220px;
 	width: auto;
-	min-height: 32px;
-	padding: 4px 9px;
 }
 .agent-rename .field-note {
 	flex-basis: 100%;
 	margin: 0;
-}
-
-.agent-row-skeleton {
-	grid-template-columns: 22px minmax(0, 1fr);
-	animation: none;
-}
-.agent-row-skeleton .skeleton-title {
-	margin-bottom: 8px;
-}
-.agent-row-skeleton .skeleton-meta {
-	margin-bottom: 0;
 }
 
 /* ---- the groups, on Home: a quiet sans head over a ruled list ----------------------------------- */

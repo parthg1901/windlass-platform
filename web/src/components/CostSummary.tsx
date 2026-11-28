@@ -1,5 +1,5 @@
 import { SUMMARY_DAYS, type CostRates, type FinishedItems, type SummaryDays } from "@contract";
-import { useId, useState } from "react";
+import { useState } from "react";
 import {
 	summarize,
 	type SpentOn,
@@ -11,6 +11,7 @@ import { SIZE_WORDS, TYPE_WORDS, usd } from "../lib/cost";
 import { count, plural, sandboxTime } from "../lib/format";
 import { CostFigure } from "./CostFigure";
 import { useCostRates, useFinishedItems } from "../state/hooks";
+import { LoadError, Loading, Segmented, SkeletonLines } from "./ui";
 
 type Words = Record<string, { name: string; what: string }>;
 
@@ -182,32 +183,23 @@ export function CostSummary() {
 	const [days, setDays] = useState<SummaryDays>(30);
 	const { value, error } = useFinishedItems(days);
 	const rates = useCostRates();
-	const id = useId();
 	return (
 		<>
 			<div className="cost-summary-head">
 				<p className="usage-lede">What finished work cost, by size and by the kind of change.</p>
-				<div className="segmented" role="radiogroup" aria-label="Period">
-					{SUMMARY_DAYS.map(choice => (
-						<label key={choice} className={`segment${days === choice ? " segment-chosen" : ""}`}>
-							<input
-								className="segment-radio"
-								type="radio"
-								name={id}
-								checked={days === choice}
-								onChange={() => setDays(choice)}
-							/>
-							{choice} days
-						</label>
-					))}
-				</div>
+				<Segmented<(typeof SUMMARY_DAYS)[number]>
+					aria-label="Period"
+					value={days}
+					onChange={setDays}
+					options={SUMMARY_DAYS.map(choice => ({ value: choice, label: `${choice} days` }))}
+				/>
 			</div>
 			{error ? (
-				<p className="usage-empty tone-bad">The summary could not be loaded: {error}</p>
+				<LoadError inline error={`The summary could not be loaded: ${error}`} />
 			) : value === null || value.days !== days || rates === null ? (
-				<p className="usage-note" aria-busy="true">
-					Reading the items that ended…
-				</p>
+				<Loading label="Loading the items that ended">
+					<SkeletonLines title={false} lines={[100, 58, 46]} />
+				</Loading>
 			) : (
 				<SummaryBody read={value} rates={rates} />
 			)}

@@ -6,6 +6,7 @@ import { createMockClient } from "../api/mock";
 import { loadAuth, saveAuth } from "../lib/authStore";
 import { lastAppHref, navigate, pageFrom, rememberAppPage } from "../lib/router";
 import { AppProvider, useApp } from "../state/app";
+import { chooseOption, optionsOf } from "../test/select";
 import { Machines } from "./Machines";
 import { Settings } from "./Settings";
 
@@ -161,15 +162,11 @@ async function screen(name: string, render: () => ReturnType<typeof createElemen
 		for (let i = 0; i < 10; i++) await act(async () => void (await new Promise(r => setTimeout(r, 2))));
 	};
 	const field = (label: string) =>
-		[...host.querySelectorAll<HTMLSelectElement>(".run-default select")].find(
+		[...host.querySelectorAll<HTMLButtonElement>(".run-default button.select")].find(
 			el => el.labels?.[0]?.textContent === label,
 		);
 	const select = async (label: string, value: string) => {
-		await act(async () => {
-			const el = field(label)!;
-			el.value = value;
-			el.dispatchEvent(new Event("change", { bubbles: true }));
-		});
+		await chooseOption(field(label)!, value);
 		await settle();
 	};
 	await act(async () => root.render(createElement(AppProvider, { client, children: render() })));
@@ -193,7 +190,7 @@ async function screen(name: string, render: () => ReturnType<typeof createElemen
 it("chooses the default agent in Settings → Models, and says what plans and reviews", async () => {
 	const s = await screen("agent", () => createElement(Settings));
 	try {
-		expect(s.field("Agent")?.value).toBe("windlass");
+		expect(s.field("Agent")?.dataset.value).toBe("windlass");
 		expect(s.host.textContent).toContain("Builds with");
 		expect(s.host.textContent).toContain("Plans & reviews with");
 		const planning = [...s.host.querySelectorAll<HTMLButtonElement>('[data-picker="model"]')][1]!;
@@ -216,10 +213,10 @@ it("chooses the default agent in Settings → Models, and says what plans and re
 it("chooses the default place on Machines, its isolation and what happens when it is offline", async () => {
 	const s = await screen("place", () => createElement(Machines, { adding: false }));
 	try {
-		expect(s.field("Runs on")?.value).toBe("hosted");
+		expect(s.field("Runs on")?.dataset.value).toBe("hosted");
 		await s.select("Runs on", "m_nas");
 		expect(s.field("Isolation")).toBeDefined();
-		await act(async () => [...s.host.querySelectorAll<HTMLInputElement>(".run-segmented input")][1]!.click());
+		await act(async () => [...s.host.querySelectorAll<HTMLInputElement>(".run-fields .segmented input")][1]!.click());
 		await s.settle();
 		const defaults = (await s.user.account()).defaults;
 		expect(defaults).toMatchObject({ place: { machine: "m_nas" }, placeFallback: "hosted" });
@@ -269,12 +266,7 @@ describe("Integrations in Settings", () => {
 		};
 	}
 	const section = (host: HTMLElement) => host.querySelector("[data-testid='linear-settings']") as HTMLElement;
-	const choose = async (select: HTMLSelectElement, value: string) => {
-		await act(async () => {
-			Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, value);
-			select.dispatchEvent(new Event("change", { bubbles: true }));
-		});
-	};
+	const choose = (trigger: Element, value: string) => chooseOption(trigger as HTMLElement, value);
 	const press = async (scope: ParentNode, label: string) => {
 		const button = Array.from(scope.querySelectorAll("button")).find(
 			one => one.textContent === label || one.getAttribute("aria-label") === label,
@@ -327,7 +319,7 @@ describe("Integrations in Settings", () => {
 		expect(card(second.host).textContent).toMatch(/webhook.*Maintainer/);
 		await expect(secondClient.user(second.auth).gitlabComplete(landing.hash.slice(8))).rejects.toThrow();
 		const id = "90071992547409931";
-		await choose(card(second.host).querySelector("select")!, id);
+		await chooseOption(card(second.host).querySelector<HTMLElement>("#gitlab-project")!, id);
 		await press(card(second.host), "Save project");
 		expect(await secondClient.user(second.auth).gitlab()).toMatchObject({ project: { id, provider: "gitlab" } });
 		second.close();
@@ -341,7 +333,7 @@ describe("Integrations in Settings", () => {
 			await third.settle();
 			expect(card(third.host).querySelector("#gitlab-project")).not.toBeNull();
 			expect(card(third.host).textContent).toMatch(/webhook.*Maintainer/);
-			expect(document.activeElement?.id).toBe("gitlab-query");
+			expect(document.activeElement?.id).toBe("gitlab-project");
 			await press(card(third.host), "Cancel");
 			expect(card(third.host).querySelector("#gitlab-project")).toBeNull();
 			vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
@@ -430,13 +422,13 @@ describe("Integrations in Settings", () => {
 			"WorkspaceAcmeConnected asAda Lovelace",
 		);
 		expect(section(second.host).querySelector("[data-testid='linear-team-ENG']")?.textContent).toContain("Not mapped");
-		const [team, repository] = Array.from(section(second.host).querySelectorAll("select"));
+		const [team, repository] = Array.from(section(second.host).querySelectorAll("button.select"));
 		const save = Array.from(section(second.host).querySelectorAll("button")).find(
 			one => one.textContent === "Map team",
 		) as HTMLButtonElement;
 		expect(save.disabled).toBe(true);
-		await choose(team as HTMLSelectElement, "team-eng");
-		await choose(repository as HTMLSelectElement, "7101");
+		await choose(team!, "team-eng");
+		await choose(repository!, "7101");
 		await press(section(second.host), "Map team");
 		await second.settle();
 		expect(section(second.host).querySelector("[data-testid='linear-team-ENG']")?.textContent).toContain(
@@ -519,21 +511,25 @@ describe("Integrations in Settings", () => {
 		try {
 			expect(complete).toHaveBeenCalledTimes(1);
 			expect(location.hash).toBe("");
-			await choose(scope.querySelector("select")!, "site-acme");
+			await choose(scope.querySelector("button.select")!, "site-acme");
 			await press(scope, "Connect site");
 			await screen.settle();
 			expect(scope.querySelector("dl")?.textContent).toBe("SiteAcme acme.atlassian.netConnected asAda Lovelace");
-			const [project, repo] = scope.querySelectorAll("select");
+			const [project, repo] = scope.querySelectorAll<HTMLElement>("button.select");
 			await choose(project!, "10001");
-			expect(repo!.querySelector('option[value="7101"]')).toBeNull();
-			const search = scope.querySelector<HTMLInputElement>('input[type="search"]')!;
+			const values = async () => (await optionsOf(repo!)).map(row => row.dataset.value);
+			expect(await values()).not.toContain("7101");
+			const search = document.querySelector<HTMLInputElement>(
+				`#${CSS.escape(repo!.getAttribute("aria-controls")!)} input`,
+			)!;
+			expect(search.placeholder).toBe("Search repositories");
 			await act(async () => {
 				Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "harbor");
 				search.dispatchEvent(new Event("input", { bubbles: true }));
 			});
 			await vi.waitFor(async () => {
 				await screen.settle();
-				expect(repo!.textContent).toContain("acme/harbor");
+				expect(await values()).toContain("7101");
 			});
 			await choose(repo!, "7101");
 			await press(scope, "Map project");
@@ -562,16 +558,17 @@ describe("Integrations in Settings", () => {
 			const card = slack(screen.host);
 			expect(location.hash).toBe("");
 			expect(card.textContent).toContain("Acme Engineering");
-			expect(card.querySelector('option[value="7105"]')).toBeNull(); // read-only
-			const channel = card.querySelector<HTMLSelectElement>('[aria-label="Slack channel"]')!;
-			expect(Array.from(channel.options, o => o.text)).toEqual([
-				"Choose a channel",
+			const channel = card.querySelector<HTMLElement>('[aria-label="Slack channel"]')!;
+			expect(channel.textContent).toBe("Choose a channel");
+			expect((await optionsOf(channel)).map(row => row.querySelector(".ui-item-label")?.textContent)).toEqual([
 				"#harbor-engineering",
 				"#docs-triage",
 			]);
 			expect(card.textContent).not.toContain("C08HARB01");
 			await choose(channel, "C08HARB01");
-			await choose(card.querySelector('[aria-label="Repository"]')!, "7101");
+			const repository = card.querySelector<HTMLElement>('[aria-label="Repository"]')!;
+			expect((await optionsOf(repository)).map(row => row.dataset.value)).not.toContain("7105"); // read-only
+			await choose(repository, "7101");
 			await press(card, "Map channel");
 			await screen.settle();
 			expect(card.querySelector('[aria-label="Mapped channels"]')?.textContent).toContain("acme/harbor");

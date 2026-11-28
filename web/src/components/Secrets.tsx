@@ -34,6 +34,7 @@ import { absoluteTime, count, day } from "../lib/format";
 import { useApp, useAuth } from "../state/app";
 import { Dialog } from "./Dialog";
 import { WarnIcon } from "./Icons";
+import { LoadError, Loading, SkeletonLines } from "./ui";
 
 /** A secret as either list has it: the account's has the repositories that stand in for it. */
 interface ListedSecret {
@@ -119,6 +120,7 @@ interface SecretsState {
 	list: SecretList | null;
 	error: string | null;
 	set(list: SecretList): void;
+	reload(): void;
 }
 
 function useSecrets(owner: SecretsOwner | null, profile: SandboxProfileId | null): SecretsState {
@@ -126,6 +128,7 @@ function useSecrets(owner: SecretsOwner | null, profile: SandboxProfileId | null
 	const auth = useAuth();
 	const [list, setList] = useState<SecretList | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [round, setRound] = useState(0);
 
 	useEffect(() => {
 		setList(null);
@@ -143,13 +146,14 @@ function useSecrets(owner: SecretsOwner | null, profile: SandboxProfileId | null
 		return () => {
 			current = false;
 		};
-	}, [client, auth, explain, owner, profile]);
+	}, [client, auth, explain, owner, profile, round]);
 
 	const set = useCallback((next: SecretList) => {
 		setList(next);
 		setError(null);
 	}, []);
-	return { list, error, set };
+	const reload = useCallback(() => setRound(n => n + 1), []);
+	return { list, error, set, reload };
 }
 
 /** Under a secret: where another one of its name is used in its place, or it is used in another's. */
@@ -667,9 +671,9 @@ function OwnedSecrets({
 			)}
 			{list === null ? (
 				error ? null : (
-					<p className="panel-empty" aria-busy="true">
-						Reading the secrets…
-					</p>
+					<Loading label="Loading the secrets">
+						<SkeletonLines title={false} />
+					</Loading>
 				)
 			) : (
 				<>
@@ -694,11 +698,7 @@ function OwnedSecrets({
 					)}
 				</>
 			)}
-			{error ? (
-				<p className="panel-empty tone-bad secret-applies" role="alert">
-					<WarnIcon size={13} /> {error}
-				</p>
-			) : null}
+			{error ? <LoadError inline error={error} reload={secrets.reload} /> : null}
 			{open !== null && list !== null && profile !== null
 				? createPortal(
 						<SecretsDialog

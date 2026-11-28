@@ -58,6 +58,7 @@ import { Check } from "../components/ui/Check";
 import { ItemRow } from "../components/ItemRow";
 import { STATE_WORD } from "../lib/items";
 import { useItems } from "../state/items";
+import { LoadError, Loading, Segmented } from "../components/ui";
 
 // ---- the ended items, a page at a time ----------------------------------------------------------
 
@@ -307,20 +308,9 @@ export function RepositoryItems({
 			</p>
 			{mine === null ? (
 				items.error ? (
-					<div className="state state-error" role="alert">
-						<WarnIcon size={22} />
-						<h2>The work items could not be loaded</h2>
-						<p>{items.error}</p>
-						<button type="button" className="button button-outline" onClick={items.reload}>
-							Try again
-						</button>
-					</div>
+					<LoadError subject="The work items" error={items.error} reload={items.reload} />
 				) : (
-					<div className="usage-loading" aria-busy="true" aria-label="Loading the work items">
-						<span className="skeleton skeleton-title" style={{ width: "34%" }} />
-						<span className="skeleton skeleton-meta" style={{ width: "100%" }} />
-						<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-					</div>
+					<Loading label="Loading the work items" className="ui-loading-spaced" />
 				)
 			) : total === 0 ? (
 				<p className="usage-empty">
@@ -672,30 +662,22 @@ export function NewItemDialog({
 						) : null}
 						<div className="harness-pick">
 							<span className="label">Agent</span>
-							<div className="segmented" role="radiogroup" aria-label="Agent">
-								{[{ id: "windlass" as const, reason: null }, ...agents].map(({ id, reason }) => (
-									<label
-										key={id}
-										title={reason ?? undefined}
-										className={`segment${id === agent ? " segment-chosen" : ""}`}
-									>
-										<input
-											className="segment-radio"
-											type="radio"
-											name={ids.form + "-agent"}
-											value={id}
-											checked={id === agent}
-											disabled={busy || !!reason}
-											onChange={() => {
-												setAgent(id);
-												setModel("");
-												setEffort("");
-											}}
-										/>
-										{HARNESS_NAMES[id]}
-									</label>
-								))}
-							</div>
+							<Segmented
+								aria-label="Agent"
+								value={agent}
+								disabled={busy}
+								onChange={id => {
+									setAgent(id);
+									setModel("");
+									setEffort("");
+								}}
+								options={[{ id: "windlass" as const, reason: null }, ...agents].map(({ id, reason }) => ({
+									value: id,
+									label: HARNESS_NAMES[id],
+									title: reason ?? undefined,
+									disabled: !!reason,
+								}))}
+							/>
 							{partProblem && orchestrate && modeChoice === "orchestrate" ? (
 								<p className="field-note">{partProblem}</p>
 							) : null}

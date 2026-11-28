@@ -9,6 +9,7 @@ import { workingCounts } from "../lib/repositories";
 import { linkProps } from "../lib/router";
 import { allowanceState, useAllowance } from "../state/hooks";
 import { RingIcon } from "./Icons";
+import { Skeleton } from "./ui/Skeleton";
 
 /** The usage numbers, asked again when a session starts or stops working, and when one is added or deleted. */
 export function useHostedUsage(sessions: readonly SessionSummary[] | null): UsageNumbers | null {
@@ -38,24 +39,36 @@ export function RailFoot({
 	const share = allowance === null || allowance === 0 ? null : Math.min(1, spent / allowance);
 	const sandboxes = usage?.sandboxes ?? null;
 	const full = sandboxes !== null && sandboxes.limit !== null && sandboxes.kept >= sandboxes.limit;
+	// Until the numbers arrive, each of them is a shape the width of what it will say: nothing pops in.
+	const reading = usage === null;
 	return (
 		<a
 			className={`ws-rail-foot${state !== "plenty" ? " ws-rail-foot-warn" : ""}`}
 			{...linkProps({ name: "usage" })}
 			title="Usage: sandbox time and sandboxes"
+			aria-busy={reading || undefined}
 		>
 			<span className="ws-foot-time">
-				<span>
-					{month
-						? month.plan === "pro"
-							? `Hosted · resets ${monthReset(month)}`
-							: "Hosted this month"
-						: "Hosted time today"}
-				</span>
-				<span>
-					<strong>{usage === null ? "–" : month ? minutes(spent) : sandboxTime(spent)}</strong>
-					{allowance === null ? null : month ? ` of ${minutes(allowance)} min` : ` of ${sandboxTime(allowance)}`}
-				</span>
+				{reading ? (
+					<>
+						<Skeleton width={104} />
+						<Skeleton width={64} />
+					</>
+				) : (
+					<>
+						<span>
+							{month
+								? month.plan === "pro"
+									? `Hosted · resets ${monthReset(month)}`
+									: "Hosted this month"
+								: "Hosted time today"}
+						</span>
+						<span>
+							<strong>{month ? minutes(spent) : sandboxTime(spent)}</strong>
+							{allowance === null ? null : month ? ` of ${minutes(allowance)} min` : ` of ${sandboxTime(allowance)}`}
+						</span>
+					</>
+				)}
 				{month && state !== "plenty" ? (
 					<span className="ws-foot-left">
 						{state === "used" ? `Used up until ${monthReset(month)}` : `${minutes(month.leftSeconds)} min left`}
@@ -67,6 +80,7 @@ export function RailFoot({
 					</span>
 				) : null}
 			</span>
+			{reading ? <Skeleton width="100%" height={6} radius={3} /> : null}
 			{share === null ? null : (
 				<span
 					className="ws-foot-bar"
@@ -88,6 +102,7 @@ export function RailFoot({
 						{ceiling === null ? "" : ` of ${ceiling}`} working{onMachines > 0 ? `, ${onMachines} on your machines` : ""}
 					</span>
 				</span>
+				{reading ? <Skeleton width={112} /> : null}
 				{sandboxes === null ? null : (
 					<span className={full ? "ws-foot-full" : undefined}>
 						<span>

@@ -14,6 +14,7 @@ import { workspaceNetwork } from "../lib/machines";
 import { spelledDuration } from "../lib/format";
 import { useApp, useAuth } from "../state/app";
 import { WarnIcon } from "./Icons";
+import { Loading, Skeleton } from "./ui";
 
 /** The command as the server keeps it: plain line ends, nothing around it. */
 function clean(text: string): string {
@@ -231,9 +232,9 @@ export function SetupEditor({
 		<>
 			{saved === null ? (
 				error ? null : (
-					<p className="panel-empty" aria-busy="true">
-						Reading the setup command…
-					</p>
+					<Loading label="Loading the setup command">
+						<Skeleton width="100%" height={72} radius="var(--r-control)" />
+					</Loading>
 				)
 			) : (
 				<>

@@ -20,6 +20,7 @@ import { useEffect, useId, useState } from "react";
 import { useApp, useAuth } from "../state/app";
 import { PlusIcon, TrashIcon, WarnIcon } from "./Icons";
 import { Check } from "./ui/Check";
+import { Loading, SkeletonLines } from "./ui";
 
 /** A check as its row holds it: every field is text until it is saved. */
 export interface CheckDraft {
@@ -146,9 +147,9 @@ export function ChecksEditor({
 				<WarnIcon size={13} /> {error}
 			</p>
 		) : (
-			<p className="panel-empty" aria-busy="true">
-				Reading the checks…
-			</p>
+			<Loading label="Loading the checks">
+				<SkeletonLines title={false} />
+			</Loading>
 		);
 	}
 

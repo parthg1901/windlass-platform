@@ -54,11 +54,6 @@
 	border-radius: var(--r-box);
 	color: var(--ink-faint);
 }
-.usage-loading {
-	display: grid;
-	gap: 10px;
-	margin-top: 36px;
-}
 
 .usage-swatch {
 	display: inline-block;

@@ -23,14 +23,14 @@ import {
 	TrashIcon,
 	WarnIcon,
 } from "../components/Icons";
-import { RowsSkeleton } from "../components/Skeleton";
 import { HARNESS_NAMES, loginCommand, signInWords } from "../lib/acp";
 import { absoluteTime, clockTime, plural, relativeTime, spelledDuration } from "../lib/format";
 import { linkProps, navigate } from "../lib/router";
 import { cellId } from "../lib/connections";
 import { useApp, useAuth } from "../state/app";
 import { useAccount, useNow } from "../state/hooks";
-import { DefaultPlace } from "../components/RunSettings";
+import { DefaultPlace, DefaultPlaceSkeleton } from "../components/RunSettings";
+import { LoadError, Segmented, SkeletonRows } from "../components/ui";
 import { SOURCE_NAMES } from "../lib/models";
 import {
 	MAX_WHEN_TO_USE,
@@ -243,31 +243,16 @@ function PlacementPolicy({ machine, onChanged }: { machine: MachineSummary; onCh
 			<p className="machine-policy-label" id={ids.label}>
 				Subtasks of features
 			</p>
-			<div
-				className="segmented machine-policy-choice"
-				role="radiogroup"
+			<Segmented
+				className="machine-policy-choice"
+				size="sm"
 				aria-labelledby={ids.label}
 				aria-describedby={ids.means}
-			>
-				{ORCHESTRATOR_CHOICES.map(choice => (
-					<label
-						key={choice.id}
-						className={`segment${shown === choice.id ? " segment-chosen" : ""}`}
-						title={choice.means}
-					>
-						<input
-							className="segment-radio"
-							type="radio"
-							name={ids.label}
-							value={choice.id}
-							checked={shown === choice.id}
-							disabled={busy !== null}
-							onChange={() => set(choice.id)}
-						/>
-						{choice.label}
-					</label>
-				))}
-			</div>
+				value={shown}
+				disabled={busy !== null}
+				onChange={set}
+				options={ORCHESTRATOR_CHOICES.map(choice => ({ value: choice.id, label: choice.label, title: choice.means }))}
+			/>
 			<p className={`field-note${error ? " tone-bad" : ""}`} id={ids.means} role={error ? "alert" : undefined}>
 				{error ?? ORCHESTRATOR_CHOICES.find(choice => choice.id === shown)!.means}
 			</p>
@@ -1161,11 +1146,13 @@ function RemoveDialog({
 	);
 }
 
-/** How many machines the account may pair: its plan's where the deployment has billing, MAX_MACHINES otherwise. */
-function useMachineLimit(): number {
-	const { platform } = useApp();
-	const [limit, setLimit] = useState(MAX_MACHINES);
-	const { client } = useApp();
+/**
+ * How many machines the account may pair: its plan's where the deployment has billing, MAX_MACHINES otherwise; null
+ * until that is known, so no limit is said that then changes.
+ */
+function useMachineLimit(): number | null {
+	const { platform, client } = useApp();
+	const [limit, setLimit] = useState<number | null>(null);
 	const auth = useAuth();
 	const billed = Boolean(platform.info?.billing);
 	useEffect(() => {
@@ -1176,16 +1163,19 @@ function useMachineLimit(): number {
 			.billing()
 			.then(
 				view => {
-					if (current && view.enabled)
-						setLimit(view.plans.find(plan => plan.id === view.plan)?.machines ?? MAX_MACHINES);
+					if (current)
+						setLimit(
+							view.enabled ? (view.plans.find(plan => plan.id === view.plan)?.machines ?? MAX_MACHINES) : MAX_MACHINES,
+						);
 				},
-				() => undefined,
+				() => current && setLimit(MAX_MACHINES),
 			);
 		return () => {
 			current = false;
 		};
 	}, [billed, client, auth]);
-	return limit;
+	if (platform.info === null) return null;
+	return billed ? limit : MAX_MACHINES;
 }
 
 export function Machines({ adding }: { adding: boolean }) {
@@ -1197,7 +1187,7 @@ export function Machines({ adding }: { adding: boolean }) {
 	const info = platform.info?.machines ?? null;
 	const { list } = machines;
 	const maxMachines = useMachineLimit();
-	const full = list !== null && list.length >= maxMachines;
+	const full = list !== null && maxMachines !== null && list.length >= maxMachines;
 	const add = () => navigate({ name: "machines", add: true });
 	const closingAdd = useRef(false);
 	const closeAdd = useCallback(() => {
@@ -1208,7 +1198,7 @@ export function Machines({ adding }: { adding: boolean }) {
 		else navigate({ name: "machines" }, { replace: true });
 	}, []);
 	// The address a runner prints opens the dialog once what it needs is known; an account that cannot add another goes to its list.
-	const canAdd = (list !== null || machines.error !== null) && !full;
+	const canAdd = (list !== null || machines.error !== null) && maxMachines !== null && !full;
 	useEffect(() => {
 		if (!adding) closingAdd.current = false;
 		else if (full) closeAdd();
@@ -1230,7 +1220,7 @@ export function Machines({ adding }: { adding: boolean }) {
 						<PlusIcon />
 						Add a machine
 					</button>
-					{full ? (
+					{full && maxMachines !== null ? (
 						<p className="field-note">
 							Your account can connect up to {maxMachines} machines.
 							{maxMachines < 10 && platform.info?.billing ? " Pro connects up to 10." : ""}
@@ -1240,40 +1230,40 @@ export function Machines({ adding }: { adding: boolean }) {
 			</header>
 
 			{list === null || info === null ? (
-				<section className="usage-section">
-					{machines.error || (platform.error && info === null) ? (
-						<div className="state state-error" role="alert">
-							<WarnIcon size={22} />
-							<h2>Your machines could not be loaded</h2>
-							<p>{machines.error ?? platform.error}</p>
-							<button
-								type="button"
-								className="button button-outline"
-								onClick={() => {
-									if (info === null) platform.reload();
-									machines.reload();
-								}}
-							>
-								Try again
-							</button>
-						</div>
-					) : (
-						<RowsSkeleton label="Loading your machines" rows={2} chips={2} />
-					)}
-				</section>
+				machines.error || (platform.error && info === null) ? (
+					<section className="usage-section">
+						<LoadError
+							level={2}
+							subject="Your machines"
+							error={machines.error ?? platform.error}
+							reload={() => {
+								if (info === null) platform.reload();
+								machines.reload();
+							}}
+						/>
+					</section>
+				) : (
+					// The page's own shape while it loads: where work runs, then the list.
+					<>
+						<section className="usage-section" aria-labelledby="machines-default">
+							<h2 className="usage-title" id="machines-default">
+								Where work runs
+							</h2>
+							<p className="usage-lede">
+								Your default for work items and new agents. A repository or an item can choose another place.
+							</p>
+							<div className="usage-card run-card">
+								<DefaultPlaceSkeleton />
+							</div>
+						</section>
+						<section className="usage-section">
+							<SkeletonRows label="Loading your machines" rows={2} chips={2} />
+						</section>
+					</>
+				)
 			) : (
 				<>
-					{machines.error ? (
-						<p className="callout callout-warn" role="status">
-							<WarnIcon />
-							<span>
-								{machines.error}{" "}
-								<button className="link" onClick={machines.reload}>
-									Try again
-								</button>
-							</span>
-						</p>
-					) : null}
+					{machines.error ? <LoadError inline stale error={machines.error} reload={machines.reload} /> : null}
 
 					<section className="usage-section" aria-labelledby="machines-default">
 						<h2 className="usage-title" id="machines-default">
@@ -1290,7 +1280,11 @@ export function Machines({ adding }: { adding: boolean }) {
 					<section className="usage-section" aria-labelledby="machines-list">
 						<h2 className="usage-title" id="machines-list">
 							My machines
-							{list.length > 0 ? <span className="usage-count">{`${list.length} of ${maxMachines}`}</span> : null}
+							{list.length > 0 ? (
+								<span className="usage-count">
+									{maxMachines === null ? String(list.length) : `${list.length} of ${maxMachines}`}
+								</span>
+							) : null}
 						</h2>
 						{list.length === 0 ? (
 							<div className="state state-empty">

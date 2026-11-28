@@ -74,6 +74,7 @@ import { ItemGlyph, ItemTrack, itemTrack } from "../components/ItemRow";
 import { STATE_WORD } from "../lib/items";
 import { Check } from "../components/ui/Check";
 import { Tooltip } from "../components/ui/Tooltip";
+import { Segmented } from "../components/ui/Segmented";
 import { useDefaults } from "../components/StartComposer";
 import { useApp, useAuth } from "../state/app";
 
@@ -905,10 +906,10 @@ function SubtaskRow({
 							<label className="plan-budget-label" htmlFor={input}>
 								Millions of tokens
 							</label>
-							<span className={`plan-budget-input${invalid ? " plan-budget-invalid" : ""}`}>
+							<span className="plan-budget-input">
 								<input
 									id={input}
-									className="input input-mono"
+									className={`input input-sm input-mono${invalid ? " input-invalid" : ""}`}
 									inputMode="decimal"
 									value={draft}
 									readOnly={disabled}
@@ -1047,21 +1048,18 @@ function FeaturePlacement({
 					When busy
 				</span>
 				{editing ? (
-					<div className="segmented plan-overflow" role="radiogroup" aria-labelledby={id}>
-						{[false, true].map(on => (
-							<label key={String(on)} className={`segment${overflow === on ? " segment-chosen" : ""}`}>
-								<input
-									className="segment-radio"
-									type="radio"
-									name={id}
-									checked={overflow === on}
-									disabled={disabled}
-									onChange={() => onOverflow(on)}
-								/>
-								{on ? "Use another free place" : "Wait for the chosen place"}
-							</label>
-						))}
-					</div>
+					<Segmented
+						className="plan-overflow"
+						size="sm"
+						aria-labelledby={id}
+						value={overflow}
+						disabled={disabled}
+						onChange={onOverflow}
+						options={[false, true].map(on => ({
+							value: on,
+							label: on ? "Use another free place" : "Wait for the chosen place",
+						}))}
+					/>
 				) : (
 					<strong className="plan-overflow-word">
 						{overflow ? "Use another free place" : "Wait for the chosen place"}

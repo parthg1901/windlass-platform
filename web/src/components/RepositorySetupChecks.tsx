@@ -5,6 +5,7 @@ import { absoluteTime, percent, plural } from "../lib/format";
 import { linkProps } from "../lib/router";
 import type { RepositoryPage } from "../screens/Repository";
 import { useApp, useAuth } from "../state/app";
+import { Select } from "./ui";
 
 export function RepositorySetupChecks({ page, offersItems }: { page: RepositoryPage; offersItems: boolean }) {
 	const { client, explain } = useApp();
@@ -210,21 +211,25 @@ export function RepositorySetupChecks({ page, offersItems }: { page: RepositoryP
 					{questions.map(n => {
 						const text = n.text.trim().replace(/\s+/g, " ");
 						return (
-							<label key={n.id}>
+							<div key={n.id} className="setup-question">
 								<strong>
 									“{text.slice(0, 60)}
 									{text.length > 60 && "…"}”
 								</strong>{" "}
 								{n.decision?.question}{" "}
-								<select
+								<Select<"" | "keep" | "drop">
+									className="setup-answer"
+									aria-label={`Decision on “${text.slice(0, 60)}”`}
+									menuLabel="Decision"
 									value={answers[n.id] ?? ""}
-									onChange={e => setAnswers({ ...answers, [n.id]: e.target.value as "" | "keep" | "drop" })}
-								>
-									<option value="">Leave out for now</option>
-									<option value="keep">Keep if verified</option>
-									<option value="drop">Drop</option>
-								</select>
-							</label>
+									onChange={next => setAnswers({ ...answers, [n.id]: next })}
+									options={[
+										{ value: "", label: "Leave out for now" },
+										{ value: "keep", label: "Keep if verified" },
+										{ value: "drop", label: "Drop" },
+									]}
+								/>
+							</div>
 						);
 					})}
 					{questions.length > 0 && (
@@ -304,6 +309,7 @@ export function RepositorySetupChecks({ page, offersItems }: { page: RepositoryP
 				</summary>
 				<div className="setup-note-fields">
 					<textarea
+						className="input textarea"
 						aria-label="Add a note"
 						id="setup-note"
 						rows={3}

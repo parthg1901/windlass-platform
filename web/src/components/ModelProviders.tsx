@@ -11,8 +11,10 @@ import { useApp, useAuth } from "../state/app";
 import { PROVIDERS_CHANGED, useNow } from "../state/hooks";
 import { Dialog } from "./Dialog";
 import { AnthropicLogo, GeminiLogo, OpenAILogo, OpenRouterLogo } from "./AgentLogos";
-import { ExternalIcon, WarnIcon } from "./Icons";
+import { ExternalIcon } from "./Icons";
 import { Failure } from "./ui/Failure";
+import { LoadError } from "./ui/LoadError";
+import { Loading, SkeletonBadge, SkeletonButton } from "./ui/Skeleton";
 import { StatusTag } from "./ui/StatusTag";
 
 const PROVIDERS: Record<ModelProvider, { name: string; placeholder: string; keysUrl: string; logo?: ReactNode }> = {
@@ -257,18 +259,25 @@ export function ModelProviders() {
 		<section className="usage-section repo-saved" aria-label="Model keys">
 			{list === null ? (
 				state.error ? (
-					<div className="state state-error" role="alert">
-						<WarnIcon size={22} />
-						<h3>Your model providers could not be loaded</h3>
-						<p>{state.error}</p>
-						<button type="button" className="button button-outline" onClick={reload}>
-							Try again
-						</button>
-					</div>
+					<LoadError subject="Your model providers" error={state.error} reload={reload} />
 				) : (
-					<p className="usage-empty" aria-busy="true">
-						Reading your model providers…
-					</p>
+					<Loading label="Loading your model providers">
+						<ul className="settings-list" aria-hidden="true">
+							{MODEL_PROVIDERS.map(provider => (
+								<li key={provider} className="usage-kept-row provider-row">
+									<div className="usage-kept-main">
+										<span className="usage-kept-title">
+											<ProviderName provider={provider} />
+										</span>
+									</div>
+									<SkeletonBadge />
+									<div className="provider-actions">
+										<SkeletonButton />
+									</div>
+								</li>
+							))}
+						</ul>
+					</Loading>
 				)
 			) : (
 				<ul className="settings-list" aria-label="Your model providers">
@@ -367,14 +376,7 @@ export function ModelProviders() {
 					})}
 				</ul>
 			)}
-			{list !== null && state.error ? (
-				<p className="usage-note" role="status">
-					{state.error}{" "}
-					<button type="button" className="link" onClick={reload}>
-						Try again
-					</button>
-				</p>
-			) : null}
+			{list !== null && state.error ? <LoadError inline stale error={state.error} reload={reload} /> : null}
 			{editing ? (
 				<KeyDialog
 					provider={editing.provider}

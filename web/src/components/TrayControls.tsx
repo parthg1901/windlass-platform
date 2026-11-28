@@ -101,17 +101,33 @@ export function AgentPill({
 	);
 }
 
-/** The model's effort: its bars and level, beside the agent; the caller leaves it out for a model that takes none. */
+/**
+ * The model's effort: its bars and level, beside the agent. Without a trigger it stands disabled, holding its place,
+ * for a model that takes none.
+ */
 export function EffortButton({
 	trigger,
 	effort,
 	efforts,
 }: {
-	trigger: TriggerProps;
+	trigger?: TriggerProps;
 	effort: string;
 	efforts: readonly string[];
 }) {
 	const level = effort || "default";
+	if (!trigger)
+		return (
+			<button
+				type="button"
+				className="ui-pill tray-pill tray-effort tray-effort-none"
+				disabled
+				aria-label="This model takes no effort setting"
+				title="This model takes no effort setting"
+			>
+				<EffortBars level={0} of={4} />
+				<span className="ui-pill-value tray-effort-level tray-hide-phone">default</span>
+			</button>
+		);
 	return (
 		<button
 			type="button"

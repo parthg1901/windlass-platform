@@ -659,10 +659,6 @@ h3.conn-agent {
 .onboard-open[data-step="4"] .onboard-box > :not(.onboard-panel, textarea) {
 	grid-column: 1 / -1;
 }
-.onboard textarea {
-	min-height: 96px;
-	resize: vertical;
-}
 .onboard-foot {
 	display: flex;
 	flex-wrap: wrap;
@@ -919,4 +915,10 @@ h3.conn-agent {
 }
 .plan-connect .field-note code {
 	white-space: nowrap;
+}
+
+/* The grid and Who pays while they load (Loading): laid out as the content they stand for, not as a list of lines. */
+.conn-scroll.ui-loading,
+.conn-pays.ui-loading {
+	display: block;
 }

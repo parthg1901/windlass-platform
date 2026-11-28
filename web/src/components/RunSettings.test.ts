@@ -7,6 +7,7 @@ import { createMockClient } from "../api/mock";
 import { saveAuth } from "../lib/authStore";
 import { AppProvider, useApp, useAuth } from "../state/app";
 import { useAccount } from "../state/hooks";
+import { chooseOption } from "../test/select";
 import { RepositoryOverrides } from "./RunSettings";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -56,13 +57,9 @@ it("shows a repository's inherited place and agent with their source, overrides 
 		expect(row("Place").textContent).toContain("nas · waits when offline");
 		expect(row("Place").textContent).toContain("your default");
 		// Folded: nothing to edit until it is overridden.
-		expect(row("Place").querySelector("select")).toBeNull();
+		expect(row("Place").querySelector(".select")).toBeNull();
 		await press(row("Place"), "Override for this repository");
-		await act(async () => {
-			const el = row("Place").querySelector("select")!;
-			el.value = "hosted";
-			el.dispatchEvent(new Event("change", { bubbles: true }));
-		});
+		await chooseOption(row("Place").querySelector<HTMLElement>(".select")!, "hosted");
 		await settle();
 		expect((await user.repository(7103)).defaults.place).toBe("hosted");
 		expect(row("Place").textContent).toContain("Hosted");
@@ -72,11 +69,7 @@ it("shows a repository's inherited place and agent with their source, overrides 
 		expect(row("Place").textContent).toContain("your default");
 		const chooseAgent = async () => {
 			await press(row("Agent"), "Override for this repository");
-			await act(async () => {
-				const el = row("Agent").querySelector("select")!;
-				el.value = "claude";
-				el.dispatchEvent(new Event("change", { bubbles: true }));
-			});
+			await chooseOption(row("Agent").querySelector<HTMLElement>(".select")!, "claude");
 			await settle();
 		};
 		await chooseAgent();
@@ -84,11 +77,7 @@ it("shows a repository's inherited place and agent with their source, overrides 
 		await press(row("Agent"), "Use your default");
 		expect(row("Place").textContent).toContain("Strict");
 		await press(row("Place"), "Override for this repository");
-		await act(async () => {
-			const el = row("Place").querySelectorAll("select")[1]!;
-			el.value = "docker-hardened";
-			el.dispatchEvent(new Event("change", { bubbles: true }));
-		});
+		await chooseOption(row("Place").querySelectorAll<HTMLElement>(".select")[1]!, "docker-hardened");
 		await settle();
 		await chooseAgent();
 		await press(row("Agent"), "Use your default");

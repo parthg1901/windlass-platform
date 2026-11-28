@@ -53,6 +53,7 @@ import { offered } from "../../../server/src/factory/readiness-track";
 import { RepositorySetupChecks } from "../components/RepositorySetupChecks";
 import { RepositorySettings } from "./RepositorySettings";
 import { readTwice } from "../lib/retry";
+import { LoadError, Loading, SkeletonLines, SkeletonRows } from "../components/ui";
 
 /** Whether new agents can be launched on the repository, as GitHub says now. */
 export type RepositoryAccess =
@@ -353,19 +354,9 @@ function AgentsSection({
 			<ListHeader id="repo-agents" title="Agents" count={sessions && sessions.length > 0 ? sessions.length : null} />
 			{sessions === null ? (
 				page.connection === "failed" ? (
-					<p className="usage-empty tone-bad">The list of agents could not be loaded.</p>
+					<LoadError inline error="The list of agents could not be loaded." reload={() => location.reload()} />
 				) : (
-					<ul className="agents agents-loading repo-agents" aria-busy="true" aria-label="Reading your agents">
-						{[0, 1].map(row => (
-							<li key={row} className="agent-row agent-row-skeleton">
-								<span className="skeleton skeleton-dot" />
-								<div className="agent-main">
-									<span className="skeleton skeleton-title" style={{ width: `${46 - row * 9}%` }} />
-									<span className="skeleton skeleton-meta" style={{ width: `${62 - row * 8}%` }} />
-								</div>
-							</li>
-						))}
-					</ul>
+					<SkeletonRows variant="agent" label="Loading your agents" rows={2} className="repo-agents" />
 				)
 			) : sessions.length === 0 ? (
 				<p className="usage-empty">
@@ -406,12 +397,11 @@ function ItemsOverview({ page, items, filters }: { page: RepositoryPage; items: 
 			<ListHeader id="repo-items-overview" title="Work items" count={total > 0 ? total : null} />
 			{shown === null ? (
 				items.error ? (
-					<p className="usage-empty tone-bad">The work items could not be loaded: {items.error}</p>
+					<LoadError inline error={`The work items could not be loaded: ${items.error}`} reload={items.reload} />
 				) : (
-					<div className="usage-loading" aria-busy="true" aria-label="Loading the work items">
-						<span className="skeleton skeleton-meta" style={{ width: "100%" }} />
-						<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-					</div>
+					<Loading label="Loading the work items">
+						<SkeletonLines title={false} />
+					</Loading>
 				)
 			) : shown.length === 0 ? (
 				<p className="usage-empty">

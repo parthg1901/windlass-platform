@@ -1,5 +1,5 @@
 import type { GithubRepository, SlackChannel, SlackStatus } from "@contract";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useApp, useAuth } from "../state/app";
 import { WarnIcon } from "./Icons";
 import {
@@ -14,7 +14,7 @@ import {
 } from "./IntegrationCard";
 import { LinkLine, useReportConnection, useUnlinkItems } from "./LinkedAccounts";
 import { ProviderIcon } from "./ProviderIcon";
-import { Check } from "./ui";
+import { Check, Loading, Select, SkeletonLines } from "./ui";
 
 const RETURN = /^#slack(?:-error)?=/;
 
@@ -35,7 +35,7 @@ export function SlackSettings() {
 	const [repositories, setRepositories] = useState<GithubRepository[] | null>(null);
 	const [repoProblem, setRepoProblem] = useState("");
 	const card = useRef<HTMLElement>(null);
-	const repoSelect = useRef<HTMLSelectElement>(null);
+	const repoSelectId = useId();
 	const showReturn = useRef(false);
 	const initial = useRef<Promise<SlackStatus> | null>(null);
 	// A return to the page already open (only its fragment changes) is read again.
@@ -155,7 +155,7 @@ export function SlackSettings() {
 					File work items with <code>/windlass</code> or by mentioning Windlass in a mapped channel.
 				</>
 			}
-			state={!status ? (error ? "disconnected" : "loading") : connected ? "connected" : "disconnected"}
+			state={!status ? (error ? "unknown" : "loading") : connected ? "connected" : "disconnected"}
 			sectionRef={card}
 			testId="slack-settings"
 			action={
@@ -194,9 +194,9 @@ export function SlackSettings() {
 		>
 			<LinkLine surface="slack" tenant={teamId} />
 			{!status && !error && (
-				<div className="usage-loading" aria-busy="true" aria-label="Loading Slack">
-					<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-				</div>
+				<Loading label="Loading Slack">
+					<SkeletonLines title={false} lines={[58]} />
+				</Loading>
 			)}
 			{status?.state === "disconnected" && (
 				<>
@@ -231,7 +231,7 @@ export function SlackSettings() {
 										onChange={() => {
 											setChannel(mapping.channel.id);
 											setRepositoryId(String(mapping.repository.id));
-											repoSelect.current?.focus();
+											document.getElementById(repoSelectId)?.focus();
 										}}
 										changeLabel={`Change mapping for ${name}`}
 										onRemove={() => void run(async () => setStatus(await api.removeSlackMapping(mapping.channel.id)))}
@@ -292,37 +292,31 @@ export function SlackSettings() {
 								});
 						}}
 						from={
-							<select
+							<Select
 								aria-label="Slack channel"
-								className="select"
+								menuLabel="Slack channel"
 								value={channel}
-								onChange={event => setChannel(event.target.value)}
+								onChange={setChannel}
 								disabled={busy}
-							>
-								<option value="">Choose a channel</option>
-								{channels?.map(ch => (
-									<option key={ch.id} value={ch.id}>
-										#{ch.name}
-									</option>
-								))}
-							</select>
+								placeholder="Choose a channel"
+								filter={(channels?.length ?? 0) > 8 ? "Search channels" : undefined}
+								options={channels?.map(ch => ({ value: ch.id, label: `#${ch.name}` })) ?? []}
+							/>
 						}
 						to={
-							<select
-								ref={repoSelect}
+							<Select
+								id={repoSelectId}
 								aria-label="Repository"
-								className="select"
+								menuLabel="Repository"
 								value={repositoryId}
-								onChange={event => setRepositoryId(event.target.value)}
+								onChange={setRepositoryId}
 								disabled={busy}
-							>
-								<option value="">Choose a repository</option>
-								{repositories?.map(repo => (
-									<option value={repo.id} key={repo.id}>
-										{repo.owner}/{repo.name}
-									</option>
-								))}
-							</select>
+								placeholder="Choose a repository"
+								filter={(repositories?.length ?? 0) > 8 ? "Search repositories" : undefined}
+								options={
+									repositories?.map(repo => ({ value: String(repo.id), label: `${repo.owner}/${repo.name}` })) ?? []
+								}
+							/>
 						}
 						submit={
 							<button className="button button-outline" disabled={!repository || !selectedChannel || busy}>

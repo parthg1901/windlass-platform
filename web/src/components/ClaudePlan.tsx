@@ -10,11 +10,12 @@ import { PlanRow, usePlanConnect } from "./PlanConnect";
 export function ClaudePlan() {
 	const { client, explain } = useApp();
 	const auth = useAuth();
-	const { allowed, plan, setPlan, waiting, wait, cancel } = usePlanConnect("anthropic");
+	const { allowed, loaded, error: plansError, plan, setPlan, waiting, wait, cancel } = usePlanConnect("anthropic");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	if (!allowed) return null;
+	// Hidden only once the plans say this account may not connect one; until then the row keeps its place.
+	if (loaded && !allowed) return null;
 
 	function connect() {
 		setError(null);
@@ -47,7 +48,8 @@ export function ClaudePlan() {
 			plan={plan}
 			waiting={waiting}
 			busy={busy}
-			error={error}
+			error={error || plansError}
+			loading={!loaded && !plansError}
 			onConnect={connect}
 			onCancel={cancel}
 			onDisconnect={() => void disconnect()}

@@ -5,6 +5,7 @@ import { planBadge } from "../lib/connections";
 import { PROVIDERS_CHANGED, useNow } from "../state/hooks";
 import { AnthropicLogo, OpenAILogo } from "./AgentLogos";
 import { Command } from "./Command";
+import { SkeletonBadge, SkeletonButton, SkeletonText } from "./ui/Skeleton";
 import { StatusTag, Waiting } from "./ui/StatusTag";
 
 /** The command a terminal runs to connect each plan (the `cli/` package); the connect page names them too. */
@@ -20,9 +21,11 @@ const POLL_MS = 2_000;
  * `refresh` reads the plans again when it changes.
  */
 export function usePlanConnect(provider: PlanProvider, refresh?: unknown) {
-	const { client } = useApp();
+	const { client, explain } = useApp();
 	const auth = useAuth();
 	const [allowed, setAllowed] = useState(false);
+	/** Why the plans could not be read the last time they were asked for. */
+	const [error, setError] = useState<string | null>(null);
 	const [plan, setPlan] = useState<ModelPlanStatus | null>(null);
 	/** Whether the plans were read once: before that `plan` is null whether one is connected or not. */
 	const [loaded, setLoaded] = useState(false);
@@ -41,8 +44,9 @@ export function usePlanConnect(provider: PlanProvider, refresh?: unknown) {
 						setAllowed(found.allowed);
 						setPlan(found.plans.find(p => p.provider === provider) ?? null);
 						setLoaded(true);
+						setError(null);
 					},
-					() => undefined,
+					(failure: unknown) => live && setError(explain(failure)),
 				);
 		void read();
 		if (!waiting) return () => void (live = false);
@@ -51,7 +55,7 @@ export function usePlanConnect(provider: PlanProvider, refresh?: unknown) {
 			live = false;
 			clearInterval(timer);
 		};
-	}, [client, auth, provider, waiting, refresh]);
+	}, [client, auth, explain, provider, waiting, refresh]);
 
 	useEffect(() => {
 		if (waiting && plan && plan.addedAt !== waiting.since) {
@@ -63,6 +67,7 @@ export function usePlanConnect(provider: PlanProvider, refresh?: unknown) {
 	return {
 		allowed,
 		loaded,
+		error,
 		plan,
 		setPlan,
 		waiting: waiting !== null,
@@ -145,6 +150,7 @@ export function PlanRow({
 	waiting,
 	busy,
 	error,
+	loading = false,
 	onConnect,
 	onCancel,
 	onDisconnect,
@@ -161,6 +167,8 @@ export function PlanRow({
 	waiting: boolean;
 	busy: boolean;
 	error: string | null;
+	/** Whether what the row shows is still being read: its line, state and action are shapes until it is. */
+	loading?: boolean;
 	onConnect(): void;
 	onCancel(): void;
 	onDisconnect(): void;
@@ -170,14 +178,15 @@ export function PlanRow({
 			className={`usage-kept-row provider-row plan-row ${className}`}
 			id={`plan-${provider}`}
 			data-provider={dataProvider}
+			aria-busy={loading || undefined}
 		>
 			<div className="usage-kept-main">
 				<span className="usage-kept-title provider-name">
 					{provider === "anthropic" ? <AnthropicLogo /> : <OpenAILogo />}
 					{title}
 				</span>
-				<p className="plan-row-line">{line}</p>
-				{extra}
+				<p className="plan-row-line">{loading ? <SkeletonText lines={1} width={45} /> : line}</p>
+				{loading ? null : extra}
 				{waiting ? <PlanCommand provider={provider}>{CONNECT_NOTES[provider]}</PlanCommand> : null}
 				{error ? (
 					<p className="field-note tone-bad" role="alert">
@@ -185,9 +194,11 @@ export function PlanRow({
 					</p>
 				) : null}
 			</div>
-			<PlanState connected={connected} plan={plan} />
+			{loading ? <SkeletonBadge /> : <PlanState connected={connected} plan={plan} />}
 			<div className="provider-actions">
-				{waiting ? (
+				{loading ? (
+					<SkeletonButton />
+				) : waiting ? (
 					<button type="button" className="button button-quiet button-small" onClick={onCancel}>
 						Cancel
 					</button>

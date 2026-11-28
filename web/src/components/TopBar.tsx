@@ -220,8 +220,14 @@ function SignedInMenu() {
  */
 export function ListTabs({ current, asking = 0 }: { current?: Section | null; asking?: number }) {
 	const { platform } = useApp();
+	// Until the platform says which places it offers, the tabs hold their room unseen, so none pops in beside the others.
+	const pending = platform.info === null;
 	return (
-		<nav className="topbar-tabs" aria-label="Main">
+		<nav
+			className={`topbar-tabs${pending ? " topbar-tabs-pending" : ""}`}
+			aria-label="Main"
+			aria-busy={pending || undefined}
+		>
 			<a
 				className="topbar-tab"
 				aria-current={current === "agents" ? "page" : undefined}
@@ -229,7 +235,7 @@ export function ListTabs({ current, asking = 0 }: { current?: Section | null; as
 			>
 				Agents
 			</a>
-			{platform.info?.items ? (
+			{pending || platform.info?.items ? (
 				<a
 					className="topbar-tab"
 					aria-current={current === "factory" ? "page" : undefined}
@@ -247,7 +253,7 @@ export function ListTabs({ current, asking = 0 }: { current?: Section | null; as
 					) : null}
 				</a>
 			) : null}
-			{platform.info?.machines ? (
+			{pending || platform.info?.machines ? (
 				<a
 					className="topbar-tab"
 					aria-current={current === "machines" ? "page" : undefined}

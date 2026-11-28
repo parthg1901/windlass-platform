@@ -91,7 +91,7 @@ function AgentRow({
 						<input
 							ref={input}
 							id={`rename-${session.id}`}
-							className="input"
+							className="input input-md"
 							value={title}
 							maxLength={MAX_TITLE_CHARS}
 							onChange={event => setTitle(event.target.value)}

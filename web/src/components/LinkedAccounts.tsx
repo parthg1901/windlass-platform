@@ -13,6 +13,7 @@ import { useApp, useAuth } from "../state/app";
 import { CheckIcon, WarnIcon } from "./Icons";
 import { useReturnRound } from "./IntegrationCard";
 import type { MenuItem } from "./ui";
+import { Skeleton } from "./ui/Skeleton";
 
 const RETURN = /^#link(?:-return|-error)?=/;
 
@@ -246,7 +247,16 @@ export function useReportConnection(surface: LinkSurface, tenant: string | null)
  */
 export function LinkLine({ surface, tenant }: { surface: LinkSurface; tenant?: string | null }) {
 	const links = useLinks();
-	if (!links?.data) return null;
+	if (!links) return null;
+	// While the links are read, the line keeps its place.
+	if (!links.data)
+		return (
+			<div className="integration-you" aria-busy="true">
+				<p className="integration-you-line">
+					<Skeleton width={240} />
+				</p>
+			</div>
+		);
 	const { data, busy, notes, offer } = links;
 	const account = linkOn(data, surface, tenant);
 	const name = SURFACE_NAMES[surface];

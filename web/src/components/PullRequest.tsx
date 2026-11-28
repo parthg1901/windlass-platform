@@ -40,6 +40,7 @@ import { Dialog } from "./Dialog";
 import { CrossIcon, ExternalIcon, InfoIcon, MergedIcon, PullRequestIcon, RefreshIcon, WarnIcon } from "./Icons";
 import { Check } from "./ui/Check";
 import { Tooltip } from "./ui/Tooltip";
+import { Loading, SkeletonLines } from "./ui";
 
 /** What letting the agent publish without asking means, in one sentence, as the panel says it. */
 export const PUBLISH_UNASKED_MEANS =
@@ -562,9 +563,9 @@ export function PullRequestSection({
 					<WarnIcon size={13} /> {error}
 				</p>
 			) : state === null ? (
-				<p className="panel-empty" aria-busy="true">
-					Reading the pull request…
-				</p>
+				<Loading label="Loading the pull request">
+					<SkeletonLines title={false} lines={[72]} />
+				</Loading>
 			) : reviewer ? null : (
 				<>
 					<p className="panel-empty gh-pull-note">

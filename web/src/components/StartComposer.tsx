@@ -664,6 +664,16 @@ export function StartComposer({
 				models.reading ||
 				(harness !== "windlass" && catalogs[harness].reading) ||
 				!!startPlace?.pending);
+	// The tray's choices come from several reads (settings, machines, catalogs, the repository); until they have
+	// all come in once, it holds still rather than flicking from one default to the next. Once only: a later
+	// change (another repository) reads in place. A read that never ends lets go after a few seconds.
+	const [settled, setSettled] = useState(false);
+	if (!reading && !settled) setSettled(true);
+	useEffect(() => {
+		if (settled) return;
+		const timer = setTimeout(() => setSettled(true), 3000);
+		return () => clearTimeout(timer);
+	}, [settled]);
 	const canCreate = !item && !reading && profile !== null && !repoInvalid && busy === null;
 	const task = prompt.trim();
 	const maxChars = item ? MAX_ITEM_BODY_CHARS : MAX_PROMPT_CHARS;
@@ -1812,7 +1822,7 @@ export function StartComposer({
 					<WarnIcon size={14} />
 					<span>{error}</span>
 				</p>
-			) : limit && chosenMachine === null && !item ? (
+			) : limit && settled && chosenMachine === null && !item ? (
 				<p className={`composer-error composer-allowance${limit.warn ? "" : " start-allowance-low"}`} role="status">
 					<WarnIcon size={14} />
 					<span>
@@ -1862,7 +1872,7 @@ export function StartComposer({
 					}
 				/>
 				{criteriaLine}
-				<div className="start-tools tray">
+				<div className={`start-tools tray${settled ? "" : " tray-settling"}`} aria-busy={!settled || undefined}>
 					{hasSetup ? (
 						<Tooltip content="Setup command and secrets">
 							<button
@@ -1911,7 +1921,10 @@ export function StartComposer({
 							surface={phone ? undefined : "popover"}
 							trigger={props => <EffortButton trigger={props} effort={effort} efforts={efforts} />}
 						/>
-					) : null}
+					) : phone ? null : (
+						// A model that takes no effort keeps the pill's place, so the tray does not move when the agent changes.
+						<EffortButton effort="" efforts={[]} />
+					)}
 					<span className="tray-where-anchor" ref={anchors.where}>
 						<Menu
 							spec={whereSpec}
@@ -1979,6 +1992,8 @@ export function StartComposer({
 						/>
 						{isolation && !phone ? (
 							<IsolationChip name={isolation.name} sentence={isolation.sentence} onOpen={() => setOpen("where")} />
+						) : !settled && !item && !phone ? (
+							<span className="tray-isolation tray-isolation-pending" aria-hidden="true" />
 						) : null}
 						<SplitButton
 							type="submit"

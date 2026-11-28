@@ -170,7 +170,7 @@ export function EverythingIcon() {
 /** The rows a key moves between: the rail's links, in the order they stand; above the first, its search, where it has one. */
 export function moveFocus(event: ReactKeyboardEvent<HTMLElement>, list: HTMLElement | null) {
 	if (!list) return;
-	const rows = [...list.querySelectorAll<HTMLElement>("[data-rail-row]")];
+	const rows = [...list.querySelectorAll<HTMLElement>("[data-rail-row]")].filter(row => !row.closest("[inert]"));
 	if (rows.length === 0) return;
 	const at = rows.indexOf(document.activeElement as HTMLElement);
 	const to =
@@ -466,7 +466,9 @@ export function RepoRail({
 									</button>
 								</h3>
 							) : null}
-							{shut ? null : <ul className="ws-rail-rows">{group.repositories.map(repository => row(repository))}</ul>}
+							<div className="ws-rail-fold" inert={shut}>
+								<ul className="ws-rail-rows">{group.repositories.map(repository => row(repository))}</ul>
+							</div>
 						</section>
 					);
 				})}

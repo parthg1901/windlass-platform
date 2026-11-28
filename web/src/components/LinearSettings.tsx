@@ -6,9 +6,10 @@
  * The signed-in user redeems the ticket returned by the OAuth callback.
  */
 import type { GithubRepository, LinearStatus, LinearTeam } from "@contract";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useApp, useAuth } from "../state/app";
 import { WarnIcon } from "./Icons";
+import { LoadError, Loading, Select, SkeletonLines } from "./ui";
 import { LinkLine, useLinks, useReportConnection, useUnlinkItems } from "./LinkedAccounts";
 import {
 	IntegrationCard,
@@ -42,7 +43,6 @@ export function LinearSettings() {
 	const [error, setError] = useState<string | null>(null);
 	const [failed, setFailed] = useState<string | null>(null);
 	const [repositoryProblem, setRepositoryProblem] = useState<string | null>(null);
-	const repositorySelect = useRef<HTMLSelectElement>(null);
 	// A return to the page already open (only its fragment changes) is read again.
 	const returned = useReturnRound(RETURN);
 	const links = useLinks();
@@ -160,13 +160,7 @@ export function LinearSettings() {
 				</>
 			}
 			state={
-				status === null
-					? failed
-						? "disconnected"
-						: "loading"
-					: status.state === "connected"
-						? "connected"
-						: "disconnected"
+				status === null ? (failed ? "unknown" : "loading") : status.state === "connected" ? "connected" : "disconnected"
 			}
 			testId="linear-settings"
 			action={
@@ -195,14 +189,11 @@ export function LinearSettings() {
 				</p>
 			) : null}
 			{failed ? (
-				<p className="callout callout-warn" role="alert">
-					<WarnIcon />
-					<span>{failed}</span>
-				</p>
+				<LoadError inline error={failed} />
 			) : status === null ? (
-				<div className="usage-loading" aria-busy="true" aria-label="Loading Linear">
-					<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-				</div>
+				<Loading label="Loading Linear">
+					<SkeletonLines title={false} lines={[58]} />
+				</Loading>
 			) : status.state === "connected" ? (
 				<>
 					<IntegrationFacts
@@ -218,9 +209,9 @@ export function LinearSettings() {
 						<code>windlass-quick</code> or <code>windlass:quick</code> for Quick mode.
 					</details>
 					{teams === null ? (
-						<div className="usage-loading" aria-busy="true" aria-label="Loading teams">
-							<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-						</div>
+						<Loading label="Loading teams">
+							<SkeletonLines title={false} lines={[58]} />
+						</Loading>
 					) : (
 						<MappingList label="Teams">
 							{teams.map(team => (
@@ -242,7 +233,7 @@ export function LinearSettings() {
 										!team.mapping && canMap
 											? () => {
 													setTeamId(team.id);
-													repositorySelect.current?.focus();
+													document.getElementById(ids.repository)?.focus();
 												}
 											: undefined
 									}
@@ -263,20 +254,15 @@ export function LinearSettings() {
 									<label className="visually-hidden" htmlFor={ids.team}>
 										Team
 									</label>
-									<select
+									<Select
 										id={ids.team}
-										className="select"
+										menuLabel="Team"
 										value={teamId}
-										onChange={event => setTeamId(event.target.value)}
+										onChange={setTeamId}
 										disabled={busy}
-									>
-										<option value="">Choose a team</option>
-										{unmapped.map(team => (
-											<option key={team.id} value={team.id}>
-												{team.name} ({team.key})
-											</option>
-										))}
-									</select>
+										placeholder="Choose a team"
+										options={unmapped.map(team => ({ value: team.id, label: `${team.name} (${team.key})` }))}
+									/>
 								</>
 							}
 							to={
@@ -284,21 +270,19 @@ export function LinearSettings() {
 									<label className="visually-hidden" htmlFor={ids.repository}>
 										Repository
 									</label>
-									<select
-										ref={repositorySelect}
+									<Select
 										id={ids.repository}
-										className="select"
+										menuLabel="Repository"
 										value={repositoryId}
-										onChange={event => setRepositoryId(event.target.value)}
+										onChange={setRepositoryId}
 										disabled={busy}
-									>
-										<option value="">Choose a repository</option>
-										{repositories!.map(repository => (
-											<option key={repository.id} value={String(repository.id)}>
-												{repository.owner}/{repository.name}
-											</option>
-										))}
-									</select>
+										placeholder="Choose a repository"
+										filter={repositories!.length > 8 ? "Search repositories" : undefined}
+										options={repositories!.map(repository => ({
+											value: String(repository.id),
+											label: `${repository.owner}/${repository.name}`,
+										}))}
+									/>
 								</>
 							}
 							submit={

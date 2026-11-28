@@ -184,10 +184,16 @@
 }
 /* Hidden, the conversation takes the panel's room, and its column stays in the middle of it. */
 .session.session-panel-hidden {
-	grid-template-columns: minmax(0, 1fr);
+	/* Two tracks still, so the panel's column can slide shut rather than vanish. */
+	grid-template-columns: minmax(0, 1fr) 0px;
 }
 .session-panel-hidden > .panel {
-	display: none;
+	visibility: hidden;
+	opacity: 0;
+	border-left-color: transparent;
+	transition:
+		opacity 120ms var(--ease),
+		visibility 0s linear var(--dur-sheet);
 }
 @media (max-width: 1280px) {
 	.app-fixed > .topbar .topbar-docs,
@@ -211,6 +217,7 @@
 	min-height: 0;
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) var(--panel);
+	transition: grid-template-columns var(--dur-sheet) var(--ease-sheet);
 }
 
 .session-main {
@@ -2060,6 +2067,25 @@ button.output-more:hover {
 	overscroll-behavior: contain;
 	font-size: var(--text-13);
 }
+@media (min-width: 1021px) {
+	.panel {
+		overflow-x: hidden;
+		transition:
+			opacity var(--dur-sheet) var(--ease-out),
+			visibility 0s;
+	}
+	/* The panel keeps its width while its column slides, so nothing in it rewraps. */
+	.session:not(.session-loading) > .panel > * {
+		width: calc(var(--panel) - 1px);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.session,
+	.panel,
+	.session-panel-hidden > .panel {
+		transition: none;
+	}
+}
 .session-loading .panel {
 	padding: 32px 22px;
 }
@@ -2980,7 +3006,9 @@ dd.kv-clip > svg {
 		display: none;
 	}
 	.session-panel-hidden > .panel {
-		display: block;
+		visibility: visible;
+		opacity: 1;
+		border-left-color: var(--line);
 	}
 	.app-fixed {
 		height: auto;

@@ -751,6 +751,98 @@
 	gap: 8px;
 }
 
+/* A part of the page that is loading (Loading): its skeleton lines, spaced as the text they stand for. */
+.ui-loading {
+	display: grid;
+	gap: 10px;
+}
+.ui-loading-spaced {
+	margin-top: var(--space-7);
+}
+.ui-loading .skeleton-title,
+.ui-loading .skeleton-meta {
+	margin: 0;
+}
+.skeleton-badge {
+	display: inline-block;
+	width: 92px;
+	height: 20px;
+	border-radius: var(--radius-pill);
+}
+.skeleton-field {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+}
+.skeleton-field-label {
+	width: 72px;
+	height: 14px;
+}
+.skeleton-field-control {
+	height: var(--h-lg);
+	border-radius: var(--r-control);
+}
+.skeleton-button {
+	display: inline-block;
+	width: 84px;
+	height: var(--h-sm);
+	border-radius: var(--r-control);
+}
+.skeleton-button-md {
+	width: 108px;
+	height: var(--h-md);
+}
+.state-loading {
+	color: var(--ink-dim);
+}
+
+/* A list that is loading: rows the shape of the rows it will show, under the heading it will have. */
+.skeleton-list {
+	display: grid;
+	margin-top: var(--space-4);
+	border-top: 1px solid var(--line);
+}
+.skeleton-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	gap: var(--space-2) var(--space-4);
+	padding: var(--space-4) var(--space-2) var(--space-4) var(--space-3);
+	border-bottom: 1px solid var(--line);
+}
+.skeleton-row > div {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+}
+.skeleton-row .skeleton-title,
+.skeleton-row .skeleton-meta {
+	margin: 0;
+}
+.skeleton-break {
+	flex-basis: 100%;
+	height: 0;
+}
+.skeleton-heading {
+	width: 180px;
+	height: 26px;
+	margin-top: var(--space-7);
+}
+
+.agent-row.agent-row-skeleton {
+	grid-template-columns: 22px minmax(0, 1fr);
+	animation: none;
+}
+.agent-row.agent-row-skeleton .skeleton-title {
+	margin-bottom: 8px;
+}
+.agent-row.agent-row-skeleton .skeleton-meta {
+	margin-bottom: 0;
+}
+
+
 @media (prefers-reduced-motion: reduce) {
 	.ui-pop,
 	.ui-sheet,
@@ -786,39 +878,89 @@
 	color: var(--ink);
 }
 
-/* A long list keeps room for a few rows, however much its header and foot hold. */
-.ui-pop-menu .ui-menu-list {
+/* A long list keeps room for a few rows, however much its header and foot hold; a short plain list fits its rows. */
+.ui-pop-menu:has(.ui-menu-header, .ui-menu-filter, .ui-menu-footer) .ui-menu-list {
 	min-height: 96px;
 }
 
-/*
- * A picker opened from a form: a select's look (its border, chevron and height), holding the chosen
- * model's provider glyph and clean name, or the effort's bars and level. The menu it opens is the
- * composer's own.
- */
-.picker-select {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	min-width: 0;
-	text-align: left;
-	cursor: pointer;
-}
-.picker-select-text {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-.picker-select .ui-glyph {
-	width: 16px;
-	height: 16px;
-}
-.picker-select[data-state="open"] {
-	border-color: var(--ink-faint);
-}
+/* The effort in a form (components/ModelPicker.tsx): its bars before the level. */
 .picker-effort .effort-bars {
 	flex: none;
+}
+
+/*
+ * A segmented choice (components/ui/Segmented.tsx): the field box of styles/base.css holding two to
+ * four segments, the chosen one raised. `segmented-fill` stretches it with equal segments;
+ * `segmented-sm` is the compact size for a line of small controls.
+ */
+.segmented {
+	display: inline-flex;
+	gap: 2px;
+	min-height: var(--h-lg);
+	padding: 3px;
+	border-radius: var(--r-control);
+	background: var(--field-bg);
+	box-shadow: var(--field-edge);
+	transition: box-shadow var(--dur-hover) var(--ease);
+}
+.segmented:hover {
+	box-shadow: var(--field-edge-hover);
+}
+.segmented:has(.segment-radio:focus-visible) {
+	box-shadow: var(--field-focus);
+}
+.segment {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0 12px;
+	border-radius: calc(var(--r-control) - 3px);
+	font-size: var(--text-13);
+	font-weight: var(--weight-medium);
+	line-height: 1.3;
+	text-align: center;
+	color: var(--ink-dim);
+	cursor: pointer;
+	transition:
+		background-color var(--dur-hover) var(--ease),
+		color var(--dur-hover) var(--ease);
+}
+.segment:hover {
+	color: var(--ink);
+}
+.segment-chosen {
+	background: var(--bg-overlay);
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	color: var(--ink);
+}
+.segment:has(.segment-radio:disabled) {
+	cursor: default;
+}
+.segment:has(.segment-radio:disabled):not(.segment-chosen) {
+	color: var(--ink-faint);
+}
+.segment-radio {
+	position: absolute;
+	opacity: 0;
+	pointer-events: none;
+}
+.segmented-fill {
+	display: flex;
+	width: 100%;
+}
+.segmented-fill .segment {
+	flex: 1 1 auto;
+	padding-inline: 8px;
+}
+.segmented-sm {
+	min-height: var(--h-sm);
+	padding: 2px;
+}
+.segmented-sm .segment {
+	padding: 0 10px;
+	border-radius: calc(var(--r-control) - 2px);
+	font-size: var(--text-12);
 }
 
 /* A connection's state (components/ui/StatusTag.tsx): a dot and a few words; tinted as a pill where it asks for attention. */
