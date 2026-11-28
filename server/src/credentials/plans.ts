@@ -110,7 +110,11 @@ const MODELS_FROM: Record<PlanProvider, "provider" | "agent"> = { anthropic: "ag
 async function claudeAccepts(token: string): Promise<boolean> {
 	const origin = (process.env.WLP_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com").replace(/\/+$/, "");
 	const res = await fetch(origin + "/v1/models?limit=1", {
-		headers: { authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20", "anthropic-version": "2023-06-01" },
+		headers: {
+			authorization: `Bearer ${token}`,
+			"anthropic-beta": "oauth-2025-04-20",
+			"anthropic-version": "2023-06-01",
+		},
 		redirect: "error",
 		signal: AbortSignal.timeout(8_000),
 	});
