@@ -63,7 +63,7 @@ export interface PublicPage {
 
 export const DEFAULT_IMAGE = {
 	path: "/og.png",
-	alt: "Windlass: put an agent to work, and watch every turn.",
+	alt: "Windlass, the open-source software factory: hand off the issue, get back a PR you can trust.",
 	width: 1200,
 	height: 630,
 };
