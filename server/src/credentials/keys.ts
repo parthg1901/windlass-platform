@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { UserError } from "rivetkit";
-import { modelKeyCaller } from "./actors/internal.js";
-import { requireServiceFor, requireUser } from "./auth.js";
+import { modelKeyCaller } from "../actors/internal.js";
+import { requireServiceFor, requireUser } from "../auth.js";
 import {
 	MODEL_CHECKS_PER_MINUTE,
 	isModelProvider,
@@ -9,10 +9,10 @@ import {
 	type ModelProvider,
 	type ModelProviderCheck,
 	type ModelProviderStatus,
-} from "./contract.js";
-import { MINUTE_MS } from "./http-limits.js";
-import type { DefaultsDb } from "./repository-defaults.js";
-import { serverSealer } from "./signin/seal.js";
+} from "../contract.js";
+import { MINUTE_MS } from "../http-limits.js";
+import type { DefaultsDb } from "../repository-defaults.js";
+import { serverSealer } from "../signin/seal.js";
 
 export const MODEL_PROVIDER_TABLES = [
 	`CREATE TABLE IF NOT EXISTS model_key_usage (day INTEGER NOT NULL, session TEXT NOT NULL, seq INTEGER NOT NULL,
@@ -73,10 +73,6 @@ const PROVIDERS: Record<
 	openrouter: { origin: "https://openrouter.ai", path: "/api/v1/models", headers: bearer },
 };
 
-export async function savedProviders(db: DefaultsDb): Promise<ModelProvider[]> {
-	return (await savedModelKeys(db)).map(k => k.provider);
-}
-
 function status(row: StatusRow): ModelProviderStatus {
 	return {
 		provider: row.provider,
@@ -92,12 +88,12 @@ function status(row: StatusRow): ModelProviderStatus {
 	};
 }
 
-function providerOf(raw: unknown): ModelProvider {
+export function providerOf(raw: unknown): ModelProvider {
 	if (!isModelProvider(raw)) throw new UserError("Unknown model provider.", { code: "bad_provider" });
 	return raw;
 }
 
-async function takeCheck(db: DefaultsDb): Promise<void> {
+export async function takeCheck(db: DefaultsDb): Promise<void> {
 	// Saves and rechecks share one per-user budget. The upsert reserves a slot atomically
 	// across concurrent calls and returns no row when the current minute is full.
 	const admitted = await db.execute(
@@ -112,23 +108,8 @@ async function takeCheck(db: DefaultsDb): Promise<void> {
 }
 
 const subject = (uid: string, provider: ModelProvider) => JSON.stringify([uid, provider]);
-const modelKeyTransitSubject = (uid: string, provider: ModelProvider, nonce: string) =>
-	JSON.stringify(["model-key", uid, provider, nonce]);
 
-export function openModelKeyTransit(
-	uid: string,
-	provider: ModelProvider,
-	nonce: string,
-	blob: string,
-): { key: string; generation: string } {
-	const { key, generation, exp } = JSON.parse(
-		serverSealer().open("transit", modelKeyTransitSubject(uid, provider, nonce), blob),
-	);
-	if (!Number.isSafeInteger(exp) || exp <= Date.now()) throw new Error("Model key transit expired");
-	return { key, generation };
-}
-
-async function savedKey(db: DefaultsDb, uid: string, provider: ModelProvider) {
+export async function savedKey(db: DefaultsDb, uid: string, provider: ModelProvider) {
 	const [row] = await db.execute<{ sealed: string; generation: string }>(
 		"SELECT sealed, generation FROM model_provider WHERE provider = ?",
 		provider,
@@ -145,11 +126,11 @@ async function savedKey(db: DefaultsDb, uid: string, provider: ModelProvider) {
 			row.sealed,
 		);
 	}
-	return { key, generation: row.generation };
+	return { secret: key, generation: row.generation };
 }
 
 // A model ID echoed by a provider must not disclose key material, even in truncated form.
-function safeModelId(id: unknown, key: string): id is string {
+export function safeModelId(id: unknown, key: string): id is string {
 	if (typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(id)) return false;
 	for (let i = 0; i + 5 <= id.length; i++) {
 		if (key.includes(id.slice(i, i + 5))) return false;
@@ -291,7 +272,7 @@ export const modelProviderActions = {
 		await takeCheck(c.db);
 		const saved = await savedKey(c.db, uid, provider);
 		if (!saved) throw new UserError("No key is saved for this provider.", { code: "model_key_missing" });
-		return runCheck(c.db, provider, saved.key, saved.generation);
+		return runCheck(c.db, provider, saved.secret, saved.generation);
 	},
 	async removeModelProvider(c: Context, raw: ModelProvider): Promise<void> {
 		requireUser(c);
@@ -302,29 +283,13 @@ export const modelProviderActions = {
 		requireServiceFor(c, modelKeyCaller(c.key[0]!));
 		return savedModelKeys(c.db);
 	},
-	/** A turn can pin the saved generation without opening the key. */
-	async internalModelKeyGeneration(c: Context, raw: ModelProvider): Promise<string | null> {
-		requireServiceFor(c, modelKeyCaller(c.key[0]!));
-		const [row] = await c.db.execute<{ generation: string }>(
-			"SELECT generation FROM model_provider WHERE provider = ? AND check_ok=1",
-			providerOf(raw),
-		);
-		return row?.generation ?? null;
-	},
-	async internalModelKey(c: Context, raw: ModelProvider, nonce: string): Promise<string | null> {
-		const uid = c.key[0]!;
-		requireServiceFor(c, modelKeyCaller(uid));
-		const provider = providerOf(raw);
-		if (typeof nonce !== "string" || !/^[A-Za-z0-9_-]{16,64}$/.test(nonce))
-			throw new UserError("Invalid model key request nonce.", { code: "bad_nonce" });
-		const saved = await savedKey(c.db, uid, provider);
-		return (
-			saved &&
-			serverSealer().seal(
-				"transit",
-				modelKeyTransitSubject(uid, provider, nonce),
-				JSON.stringify({ ...saved, exp: Date.now() + MINUTE_MS }),
-			)
-		);
-	},
 };
+
+/** The checked key's generation: a turn pins it without opening the key. */
+export async function keyGeneration(db: DefaultsDb, provider: ModelProvider): Promise<string | null> {
+	const [row] = await db.execute<{ generation: string }>(
+		"SELECT generation FROM model_provider WHERE provider = ? AND check_ok=1",
+		provider,
+	);
+	return row?.generation ?? null;
+}

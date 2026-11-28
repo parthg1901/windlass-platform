@@ -22,6 +22,7 @@ import "./styles/landing.css";
 import "./styles/docs.css";
 import "./styles/settings.css";
 import "./styles/integrations.css";
+import "./styles/connections.css";
 import { QUESTION_TIMEOUT_MS } from "@contract";
 import { StrictMode } from "react";
 import { flushSync } from "react-dom";
@@ -65,8 +66,10 @@ async function createPlatformClient(): Promise<PlatformClient> {
 		// `?resume=1` a turn paused by a server restart and one that resumed after it,
 		// `?items=few|features|none|full|many|loading|failed|off` the user's work items and API tokens in that state (`MockItemsState`), `off` a deployment without them,
 		// `&long=1` with `items=features`, the features' texts as long as planners and agents write them,
-		// and `?reviewer=off` a deployment without the second review.
+		// `?reviewer=off` a deployment without the second review,
+		// and `?fresh=1` a new account (no GitHub, agents, sessions, items or machines): the first-run setup opens on Home.
 		const params = new URLSearchParams(location.search);
+		const fresh = params.get("fresh") === "1";
 		const usage = params.get("usage");
 		const machine = params.get("machine");
 		const machineSession = params.get("machineSession");
@@ -81,15 +84,18 @@ async function createPlatformClient(): Promise<PlatformClient> {
 			// The user has MCP servers of their own and secrets for them saved, unless the address says `account=empty`.
 			account: params.get("account") === "empty" ? "empty" : "seeded",
 			models: params.get("models") === "unavailable" ? "unavailable" : "account",
-			machine: MOCK_MACHINE_STATES.find(state => state === machine),
+			machine: fresh ? "none" : MOCK_MACHINE_STATES.find(state => state === machine),
 			// `?keys=1` a checked Settings key for each model provider.
 			keys: params.get("keys") === "1",
+			// `?plans=limited|invalid` the connected plans at their limit, or refused twice.
+			plans: params.get("plans") === "limited" ? "limited" : params.get("plans") === "invalid" ? "invalid" : "ok",
 			machineSession: MOCK_MACHINE_SESSIONS.find(state => state === machineSession),
-			items: MOCK_ITEMS_STATES.find(state => state === items),
+			items: fresh ? "none" : MOCK_ITEMS_STATES.find(state => state === items),
 			long: params.get("long") === "1",
 			blocked: params.get("blocked") === "1",
 			resume: params.get("resume") === "1",
 			reviewer: params.get("reviewer") !== "off",
+			fresh,
 		});
 		// For looking at states by hand, in the console: `__wlpMock.simulateDrop(4000)` (reconnecting),
 		// `__wlpMock.mockNextAnswer("elsewhere" | "error")` (an answer that does not go through),

@@ -1,18 +1,19 @@
 /**
- * The settings page's model providers: one API key per provider, which every agent that can use
- * that provider uses. The list is the user's actor's (`modelProviders`); a key is sent once, when it
- * is saved, and only its last four characters come back.
+ * The Connections page's API keys: one per provider, which every agent that can use that provider
+ * uses. The list is the user's actor's (`modelProviders`); a key is sent once, when it is saved, and
+ * only its last four characters come back. `KeyDialog` is also opened from a Connections cell and the
+ * first-run setup.
  */
 import { MODEL_PROVIDERS, type ModelProvider, type ModelProviderCheck, type ModelProviderStatus } from "@contract";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { absoluteTime, day, relativeTime } from "../lib/format";
 import { useApp, useAuth } from "../state/app";
 import { PROVIDERS_CHANGED, useNow } from "../state/hooks";
-import { ChatgptPlan } from "./ChatgptPlan";
 import { Dialog } from "./Dialog";
 import { AnthropicLogo, GeminiLogo, OpenAILogo, OpenRouterLogo } from "./AgentLogos";
 import { ExternalIcon, WarnIcon } from "./Icons";
 import { Failure } from "./ui/Failure";
+import { StatusTag } from "./ui/StatusTag";
 
 const PROVIDERS: Record<ModelProvider, { name: string; placeholder: string; keysUrl: string; logo?: ReactNode }> = {
 	openai: {
@@ -61,7 +62,7 @@ function GetKey({ provider }: { provider: ModelProvider }) {
 	);
 }
 
-function KeyDialog({
+export function KeyDialog({
 	provider,
 	replacing,
 	onClose,
@@ -222,8 +223,11 @@ export function ModelProviders() {
 
 	useEffect(() => {
 		reload();
+		// A key saved elsewhere on the page (a Connections cell) shows here too.
+		window.addEventListener(PROVIDERS_CHANGED, reload);
 		return () => {
 			asked.current += 1;
+			window.removeEventListener(PROVIDERS_CHANGED, reload);
 		};
 	}, [reload]);
 
@@ -268,7 +272,6 @@ export function ModelProviders() {
 				)
 			) : (
 				<ul className="settings-list" aria-label="Your model providers">
-					{!auth.profile.demo && <ChatgptPlan />}
 					{MODEL_PROVIDERS.map(provider => {
 						const { name } = PROVIDERS[provider];
 						const saved = list.find(one => one.provider === provider);
@@ -276,7 +279,12 @@ export function ModelProviders() {
 						const failed =
 							last.message ?? (saved && saved.checkedAt !== null && !saved.ok ? "The last check failed." : undefined);
 						return (
-							<li key={provider} className="usage-kept-row provider-row" data-provider={provider}>
+							<li
+								key={provider}
+								id={`key-${provider}`}
+								className="usage-kept-row provider-row"
+								data-provider={provider}
+							>
 								<div className="usage-kept-main">
 									<span className="usage-kept-title">
 										<ProviderName provider={provider} />
@@ -302,9 +310,9 @@ export function ModelProviders() {
 										</p>
 									) : null}
 								</div>
-								<span className={`machine-used${saved ? (saved.ok ? " tone-good" : " tone-bad") : ""}`}>
-									{saved ? (saved.ok ? "connected" : "check failed") : "no key"}
-								</span>
+								<StatusTag tone={saved ? (saved.ok ? "good" : "bad") : "off"} className="provider-state">
+									{saved ? (saved.ok ? "Connected" : "Check failed") : "No key"}
+								</StatusTag>
 								<div className="provider-actions">
 									{saved ? (
 										<>

@@ -66,7 +66,7 @@ const noAnswer = () => new PlatformError("network", "The server at http://localh
 
 describe("the composer's submissions", () => {
 	it("keeps a hosted draft and disables Send while its selected provider key is missing", async () => {
-		const reason = "Add an Anthropic key in Settings to run Claude Code here.";
+		const reason = "Add an Anthropic key on the Connections page to run Claude Code here.";
 		show({ modelProblem: () => reason });
 		write("Review the parser");
 		await send();
@@ -199,6 +199,63 @@ describe("the composer's submissions", () => {
 		expect(messages).toEqual(["Fix the flaky test"]);
 		close();
 		client.dispose();
+	});
+});
+
+describe("a limited plan's question", () => {
+	const limited = (reason: string) =>
+		new PlatformError(
+			"user",
+			"Your Claude plan is limited until 14:00 UTC. Wait for it, or pay for this turn with your Anthropic key.",
+			{
+				reason,
+			},
+		);
+	const button = (name: string) => [...host.querySelectorAll("button")].find(b => b.textContent === name);
+
+	it("asks whether to wait or pay with the key, and sends the same message on the key this time", async () => {
+		show();
+		write("Fix the flaky test");
+		answers.push(limited("plan_ask"));
+		await send();
+		expect(host.querySelector(".composer-plan-ask")?.textContent).toContain("limited until 14:00 UTC");
+		expect(field().value).toBe("Fix the flaky test");
+		await act(async () => button("Use my key this time")!.click());
+		expect(sent).toHaveLength(2);
+		expect(sent[1]).toMatchObject({
+			text: "Fix the flaky test",
+			payWith: "key",
+			idempotencyKey: sent[0]?.idempotencyKey,
+		});
+		expect(sent[0]?.payWith).toBeUndefined();
+		expect(field().value).toBe("");
+		expect(host.querySelector(".composer-plan-ask")).toBeNull();
+	});
+
+	it("keeps the draft and says until when, when the person waits", async () => {
+		show();
+		write("Fix the flaky test");
+		answers.push(limited("plan_ask"));
+		await send();
+		await act(async () => button("Wait")!.click());
+		expect(sent).toHaveLength(1);
+		expect(field().value).toBe("Fix the flaky test");
+		expect(host.querySelector(".composer-plan-ask")).toBeNull();
+		expect(host.querySelector('[role="status"]')?.textContent).toContain("limited until 14:00 UTC");
+		// Sent again later, it is the same message under the same key, on the rule as it stands.
+		await send();
+		expect(sent[1]).toMatchObject({ text: "Fix the flaky test", idempotencyKey: sent[0]?.idempotencyKey });
+		expect(sent[1]?.payWith).toBeUndefined();
+	});
+
+	it("shows a plan that only waits as the refusal it is, with the draft kept", async () => {
+		show();
+		write("Fix the flaky test");
+		answers.push(limited("plan_limited"));
+		await send();
+		expect(host.querySelector(".composer-plan-ask")).toBeNull();
+		expect(host.querySelector('[role="alert"]')?.textContent).toContain("limited until 14:00 UTC");
+		expect(field().value).toBe("Fix the flaky test");
 	});
 });
 

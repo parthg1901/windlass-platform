@@ -97,7 +97,7 @@ Keep the login and socket volumes private to their designated containers. Restri
 and none use Docker’s `none` network. Open uses the pairing bridge with inter-container
 communication disabled. The wrapper includes loopback in both forms of `NO_PROXY`.
 The relay needs outbound HTTPS to Anthropic in all modes. A command in a Claude
-session can call that session’s model API and consume quota. See [docs/machines.md](../../docs/machines.md#claude-code-on-this-machine)
+session can call that session’s model API and consume quota. See [docs/machines.md](../../docs/machines.md#claude-codes-own-login-on-this-machine)
 for the upgrade and credential rotation steps.
 
 ## OpenCode 1.19.6

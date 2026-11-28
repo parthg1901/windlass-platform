@@ -64,7 +64,7 @@ const button = (name: string) =>
 		| HTMLButtonElement
 		| undefined;
 
-it.each(["/machines", "/settings"])("shows the Settings key upgrade on %s for runner 0.3.8", async path => {
+it.each(["/machines", "/connections"])("shows the Settings key upgrade on %s for runner 0.3.8", async path => {
 	history.replaceState(null, "", path);
 	client = createMockClient({ pace: 0, machine: "online" });
 	const user = client.user.bind(client);
@@ -113,7 +113,7 @@ describe("adding a machine", () => {
 		expect((await client.user(ada).machines()).length).toBe(before + 1);
 	});
 
-	it("shows the one-line install first, and the Docker commands under Other ways", async () => {
+	it("shows the connect command first, the one-line install under No Node?, and the Docker commands under Other ways", async () => {
 		history.replaceState(null, "", "/machines");
 		client = createMockClient({ pace: 0, origin: "http://localhost:5173" });
 		saveAuth("mock", ada);
@@ -122,13 +122,43 @@ describe("adding a machine", () => {
 		await settle();
 		act(() => button("Add a machine")?.click());
 		const commands = [...document.body.querySelectorAll<HTMLElement>(".machine-dialog .machine-command pre")];
-		expect(commands[0]?.textContent).toBe("curl -fsSL http://localhost:5173/install.sh | sh");
+		expect(commands[0]?.textContent).toBe("npx @windlassai/cli connect --machine");
+		expect(commands[0]?.closest("details")).toBeNull();
+		expect(document.body.querySelector(".machine-wait")?.textContent).toBe("Waiting for your machine…");
+		const noNode = document.body.querySelector<HTMLDetailsElement>("details.machine-no-node");
+		expect(noNode?.open).toBe(false);
+		expect(noNode?.querySelector("summary")?.textContent).toBe("No Node?");
+		expect(commands[1]?.textContent).toBe("curl -fsSL http://localhost:5173/install.sh | sh");
+		expect(commands[1]?.closest("details")).toBe(noNode);
+		expect(button("Enter the code")?.closest("details")).toBe(noNode);
 		const other = document.body.querySelector<HTMLDetailsElement>("details.machine-other-ways");
 		expect(other?.open).toBe(false);
 		expect(other?.querySelector("summary")?.textContent).toBe("Other ways");
-		expect(commands.slice(1).map(pre => pre.closest("details") === other)).toEqual([true, true]);
-		expect(commands[1]?.textContent).toContain(" setup --platform http://localhost:5173");
-		expect(commands[2]?.textContent).toContain("docker run -d --name windlass-runner");
+		expect(commands.slice(2).map(pre => pre.closest("details") === other)).toEqual([true, true]);
+		expect(commands[2]?.textContent).toContain(" setup --platform http://localhost:5173");
+		expect(commands[3]?.textContent).toContain("docker run -d --name windlass-runner");
+	});
+
+	it("notices a machine paired from the connect page while it waits", async () => {
+		history.replaceState(null, "", "/machines");
+		client = createMockClient({ pace: 0, origin: "http://localhost:5173" });
+		saveAuth("mock", ada);
+		root = createRoot(host);
+		act(() => root.render(createElement(AppProvider, { client, children: createElement(App) })));
+		await settle();
+		act(() => button("Add a machine")?.click());
+		await settle();
+		const status = () => document.body.querySelector(".machine-wait")?.textContent;
+		expect(status()).toBe("Waiting for your machine…");
+		// The connect page, in another tab, approves the code the command printed.
+		const user = client.user(ada);
+		await user.claimMachine({ code: "KQ2M-8XF4" });
+		await act(async () => void (await user.confirmMachine({ code: "KQ2M-8XF4", keyConfirmed: true })));
+		await settle(40);
+		expect(status()).toBe("Paired: workstation.");
+		act(() => button("Done")?.click());
+		await settle();
+		expect(document.body.querySelector(".machine-dialog")).toBeNull();
 	});
 
 	it("is refused by the mock, as by the platform, without the person's word", async () => {
@@ -142,31 +172,28 @@ describe("adding a machine", () => {
 	});
 });
 
-it("chooses whose credential an agent uses where the machine's sign-in and a Settings key both could", async () => {
-	history.replaceState(null, "", "/machines");
+it("offers no payer choice on Connections: an agent the account pays for follows Pay with, and Machines links there", async () => {
+	history.replaceState(null, "", "/connections");
 	client = createMockClient({ pace: 0, machine: "sources", keys: true });
 	saveAuth("mock", ada);
 	root = createRoot(host);
 	act(() => root.render(createElement(AppProvider, { client, children: createElement(App) })));
 	await settle();
-	const choice = host.querySelector(
-		'[role="radiogroup"][aria-labelledby]:has(label[data-source="key"])',
-	) as HTMLElement;
-	expect(choice.textContent).toContain("Use this Mac's Claude subscription");
-	expect(choice.querySelector<HTMLInputElement>('label[data-source="machine"] input')?.checked).toBe(true);
-	await act(async () => choice.querySelector<HTMLInputElement>('label[data-source="key"] input')!.click());
-	await settle();
 	const [mac] = await client.user(ada).machines();
-	expect(mac!.harnesses?.find(h => h.id === "claude")).toMatchObject({
-		source: "key",
-		platformKeys: ["anthropic"],
-		method: "api-key",
-	});
-	expect(choice.querySelector<HTMLInputElement>('label[data-source="key"] input')?.checked).toBe(true);
-	const codex = [...host.querySelectorAll<HTMLElement>(".machine-agent")].find(row =>
-		row.textContent?.includes("this Mac's ChatGPT plan"),
-	)!;
-	await act(async () => codex.querySelector<HTMLInputElement>('label[data-source="key"] input')!.click());
+	expect(host.querySelector('[role="radiogroup"] label[data-source]')).toBeNull();
+	// Codex keeps no login on the machine: it pays as hosted does.
+	expect(mac!.harnesses?.find(h => h.id === "codex")).toMatchObject({ paysWith: true });
+	expect(host.querySelector(`#codex-${mac!.machineId} .conn-detail`)?.textContent).toBe("Same as Hosted");
+
+	act(() => root.unmount());
+	history.replaceState(null, "", "/machines");
+	root = createRoot(host);
+	act(() => root.render(createElement(AppProvider, { client, children: createElement(App) })));
 	await settle();
-	expect(codex.textContent).toContain("Use this Mac's ChatGPT plan");
+	const paid = [...host.querySelectorAll<HTMLElement>(".machine-agent-paid")];
+	expect(paid.map(line => line.textContent)).toContain("Paid with your plan or key · Change on Connections");
+	expect(paid[0]?.querySelector("a")?.getAttribute("href")).toMatch(/^\/connections\?mock=|^\/connections#/);
+	// Only OpenCode keeps logins of its own on a machine: no other agent is given a login command.
+	for (const command of host.querySelectorAll(".machine-agent-command code"))
+		expect(command.textContent).toContain("login opencode");
 });

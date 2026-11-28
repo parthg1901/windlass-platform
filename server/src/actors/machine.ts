@@ -7,7 +7,6 @@ import {
 	platformWelcome,
 	type FrameAuth,
 } from "../runner/frame-auth.js";
-import { OLD_RUNNER } from "../runner/protocol.js";
 import { NAME } from "../sandbox/provider.js";
 import { compactReport, optionsDigest, type CatalogFrame, type CatalogId } from "../runner/catalog.js";
 import { actor, UserError } from "rivetkit";
@@ -33,7 +32,6 @@ import {
 	CONTROL_DEAD_MS,
 	CONTROL_HEARTBEAT_MS,
 	MACHINE_ID,
-	LEGACY_MIN_RUNNER_VERSION,
 	MAX_REPORT_BYTES,
 	MIN_RUNNER_VERSION,
 	REFUSED_RETRY_MS,
@@ -49,7 +47,6 @@ import {
 } from "../runner/control.js";
 import { grantIsValid, isSessionGone, sessionActor, type ActorClient } from "./internal.js";
 
-const minimum = () => (config.machines?.identity ? MIN_RUNNER_VERSION : LEGACY_MIN_RUNNER_VERSION);
 const SEEN_INTERVAL = 3 * 60_000;
 // A refused copy has no open socket. Give it time to retry before retiring the warning.
 const KEY_WARNING_MS = REFUSED_RETRY_MS + CONTROL_DEAD_MS;
@@ -82,7 +79,13 @@ interface Vars {
 	live: Live | null;
 	work: Promise<void>;
 	greeting: Socket | null;
+	/** The `internalForgetClaudeLogin` calls waiting for the runner's `claude-login-forgotten`. */
+	loginRemovals: Set<(answer: ClaudeLoginRemoval) => void>;
 }
+/** How a request to remove the machine's own Claude login ended: removed, refused by Docker, or no runner to ask. */
+export type ClaudeLoginRemoval = "removed" | "failed" | "offline";
+/** How long the runner has to remove the login and answer: a helper container and a relay to stop. */
+const LOGIN_REMOVAL_MS = 45_000;
 interface Ctx {
 	db: RawAccess;
 	vars: Vars;
@@ -222,7 +225,7 @@ function update(c: Ctx, row: Row): MachineUpdate {
 	const report: Report | null = row.report ? JSON.parse(row.report) : null;
 	const warnings: MachineWarning[] = [];
 	if (!config.machines?.identity && row.protocol === 2) warnings.push({ kind: "signing-disabled" });
-	if ((config.machines?.identity && row.protocol === 1) || !versionAtLeast(row.version, minimum()))
+	if ((config.machines?.identity && row.protocol === 1) || !versionAtLeast(row.version, MIN_RUNNER_VERSION))
 		warnings.push({ kind: "outdated" });
 	if (report && !report.docker.ok) warnings.push({ kind: "docker", reason: report.docker.reason });
 	if (Math.abs(row.offset) > CLOCK_TOLERANCE_MS)
@@ -285,9 +288,15 @@ async function tell(c: Ctx, row: Row | undefined, delay = 1000): Promise<void> {
 	}
 }
 
+function answerLoginRemovals(c: Ctx, answer: ClaudeLoginRemoval) {
+	for (const resolve of c.vars.loginRemovals) resolve(answer);
+	c.vars.loginRemovals.clear();
+}
+
 async function disconnected(c: Ctx, ws: Socket) {
 	if (c.vars.live?.ws !== ws) return;
 	c.vars.live = null;
+	answerLoginRemovals(c, "offline");
 	const [row] = await c.db.execute<Row>("UPDATE machine SET seen = ? WHERE removed_at IS NULL RETURNING *", Date.now());
 	await tell(c, row);
 }
@@ -313,6 +322,7 @@ async function revoke(c: Ctx, removeSandboxes: boolean, idle: boolean): Promise<
 		revokeMachineLeases(c.key[0], c.key[1]);
 		const live = c.vars.live;
 		c.vars.live = null;
+		answerLoginRemovals(c, "offline");
 		if (live) reject(live.ws, refuse("removed", { removeSandboxes }));
 		await publish(c, row);
 		// A turn paused while the machine was away cannot resume on it now: its session ends it.
@@ -419,6 +429,7 @@ export const machine = actor({
 		live: null,
 		work: Promise.resolve(),
 		greeting: null,
+		loginRemovals: new Set(),
 	}),
 	onCreate: async (c, input?: Input) => {
 		if (
@@ -585,21 +596,19 @@ export const machine = actor({
 						return;
 					}
 					const foreign = (frame.protocol === 2) !== !!identity;
-					if (foreign || !versionAtLeast(frame.runnerVersion, minimum())) {
+					if (foreign || !versionAtLeast(frame.runnerVersion, MIN_RUNNER_VERSION)) {
 						const [changed] = await c.db.execute<Row>(
 							"UPDATE machine SET version = ?, protocol = ? WHERE removed_at IS NULL RETURNING *",
 							frame.runnerVersion,
 							frame.protocol ?? 1,
 						);
-						if (identity)
-							decline({ kind: "refused", reason: "outdated", minimum: MIN_RUNNER_VERSION, message: OLD_RUNNER });
-						else if (foreign)
+						if (foreign && !identity)
 							decline({
 								kind: "refused",
 								reason: "signing-disabled",
 								message: "This platform has signed runner connections disabled.",
 							});
-						else decline(refuse("outdated", { ...frame, minimum: minimum() }));
+						else decline(refuse("outdated", foreign ? {} : frame));
 						await tell(c, changed);
 						return;
 					}
@@ -653,6 +662,7 @@ export const machine = actor({
 					if (frame.kind === "removed") await c.db.execute("DELETE FROM pending WHERE sandbox = ?", frame.sandbox);
 					if (frame.kind === "backup-forgotten")
 						await c.db.execute("DELETE FROM pending_backups WHERE session = ?", frame.sessionId);
+					if (frame.kind === "claude-login-forgotten") answerLoginRemovals(c, frame.ok ? "removed" : "failed");
 					if (frame.kind === "host") {
 						const sample = frame.host ? JSON.stringify(frame.host) : null;
 						const changed = await storeHost(c.db, sample);
@@ -823,10 +833,23 @@ export const machine = actor({
 				if (c.vars.live?.backups) c.vars.live.ws.send({ kind: "forget-backup", sessionId });
 			});
 		},
-		internalLogout: async c => {
+		/**
+		 * Asks the runner to remove the Claude Code login kept on the machine ("Switch back to your plan" on
+		 * Connections) and waits for its answer. Not queued behind `ordered`: the answer arrives through it.
+		 */
+		internalForgetClaudeLogin: async (c): Promise<ClaudeLoginRemoval> => {
 			requireServiceFor(c, "call");
-			await ordered(c, async () => {
-				if (c.vars.live) c.vars.live.ws.send({ kind: "logout" });
+			const live = c.vars.live;
+			if (!live) return "offline";
+			return new Promise<ClaudeLoginRemoval>(resolve => {
+				const timer = setTimeout(() => done("failed"), LOGIN_REMOVAL_MS);
+				const done = (answer: ClaudeLoginRemoval) => {
+					clearTimeout(timer);
+					c.vars.loginRemovals.delete(done);
+					resolve(answer);
+				};
+				c.vars.loginRemovals.add(done);
+				if (!live.ws.send({ kind: "forget-claude-login" })) done("offline");
 			});
 		},
 		internalRevoke: async (c, removeSandboxes: boolean) => {

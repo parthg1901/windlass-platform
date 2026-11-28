@@ -16,6 +16,7 @@ Start with the area guide below before editing its code. Paths are repository-ro
 - `server/src/slack/` verifies Slack requests, connects workspaces, and posts item threads, plans and questions.
 - `server/src/runner/` is the server side of the machine runner protocol; see `server/src/runner/AGENTS.md`.
 - `server/src/signin/` runs harness sign-ins and seals their credentials; see `server/src/signin/AGENTS.md`.
+- `server/src/credentials/` keeps what pays for model requests: Settings keys and connected plans; see `server/src/credentials/AGENTS.md`.
 - `server/src/billing/` holds plans, metering and the payment provider; see `server/src/billing/AGENTS.md`.
 - `server/src/contract/` holds the topic modules re-exported by `server/src/contract.ts`.
 - `server/src/bucket/` is the object store for backups and screenshots (`server/src/bucket/store.ts`, with S3 and stand-in backends).
@@ -42,6 +43,7 @@ Entry, wiring and HTTP routes (dispatched from `server/src/index.ts`):
 - `server/src/login-route.ts` serves the `/platform/login/` steps; `server/src/platform-login.ts` runs the Google and GitHub OAuth exchange.
 - `server/src/runner-routes.ts` serves machine pairing, pair polling and runner connection requests.
 - `server/src/install-script.ts` serves `GET /install.sh` for machine installs.
+- `server/src/connect-route.ts` serves `/platform/connect/start`, `/poll` and `/platform/connect`: the connect command (`cli/`) opens a request, waits for the user to approve its code on the web page, then hands a plan's token over once.
 - `server/src/platform-info.ts` serves `/platform/info` and `/platform/connection` with cached deployment facts.
 - `server/src/model-relay-route.ts` is the credential boundary for E2B and forwarded Docker model requests; `server/src/model-relay-url.ts` parses `WLP_MODEL_RELAY_URL`.
 - `server/src/web.ts` serves the built web app when `WLP_WEB_DIR` is set.
@@ -80,7 +82,7 @@ Usage, limits and provider refusals:
 Models and model providers:
 
 - `server/src/account-models.ts` lists the models and reasoning efforts a user may choose.
-- `server/src/model-providers.ts` stores a user's own model provider keys and their usage.
+- `server/src/model-prices.ts` reads model prices from the public models.dev catalog once a day (bounded, stale prices kept on failure) for items' dollar cost (`server/src/factory/cost.ts`).
 
 Platform tools, MCP servers and Windlass config:
 
@@ -95,6 +97,7 @@ Repositories and secrets:
 - `server/src/repo-secrets.ts` validates, seals, scopes and redacts repository secrets; `server/src/account-secrets.ts` builds account secrets on it.
 - `server/src/repository-checks.ts` stores the saved verification checks; `server/src/verified.ts` reads what a turn's checks came to and how a pull request reports it.
 - `server/src/repository-defaults.ts` stores account and repository run choices (bundled by web too).
+- `server/src/pay-with.ts` stores each plan agent's Pay-with choice (`pay_with`) and holds `payWithFor` and `decidePayer`, the rule a hosted turn follows at its start, and `planPays`: Windlass's ChatGPT models follow it too, without a choice (bundled by web too).
 - `server/src/repository-network.ts` stores a repository's network allow list and blocked-host requests; `server/src/blocked-network.ts` merges and caps blocked-host reports.
 - `server/src/setup-command.ts` validates the setup command and keeps its output tail.
 - `server/src/environments.ts` builds and promotes a repository's prepared environments.

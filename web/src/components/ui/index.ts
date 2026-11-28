@@ -29,6 +29,7 @@ export { AgentGlyph, AgentLogo, agentId, Pill, type PillProps } from "./Pill";
 export { Popover, inLayer, type CloseReason, type PopoverProps } from "./Popover";
 export { place, type Align, type Placement, type Side } from "./position";
 export { Sheet, type SheetProps } from "./Sheet";
+export { StatusTag, type StatusTone, Waiting } from "./StatusTag";
 export { Skeleton, SkeletonText } from "./Skeleton";
 export { Tooltip } from "./Tooltip";
 export { PHONE_QUERY, useMediaQuery, useSurface, type Surface } from "./useMediaQuery";

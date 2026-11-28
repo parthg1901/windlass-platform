@@ -16,7 +16,14 @@ import { forwardHost, forwardPlaceholder, validProofKey } from "../../../sandbox
 import { isIP } from "node:net";
 import { DEFERRED_INPUTS } from "../sandbox/snapshot-key.js";
 import { helloFields, welcomeFields } from "./frame-auth.js";
-import { MACHINE_HARNESS_IDS, MODEL_PROVIDERS, type SandboxProfileId } from "../contract.js";
+import {
+	HARNESS_IDS,
+	MACHINE_HARNESS_IDS,
+	MODEL_PROVIDERS,
+	type RelaySeen,
+	type SandboxProfileId,
+} from "../contract.js";
+import { relaySeenOf } from "../credentials/plan-health.js";
 import type { BackupOwner, CreateSandboxInput, ExecOptions, ExecResult } from "../sandbox/api.js";
 import { PACK_PATH, SESSION } from "../sandbox/backup-names.js";
 import {
@@ -53,7 +60,16 @@ import {
 export const positiveLimit = is<number>(v => count(v) && v > 0);
 
 export const PROTOCOL_VERSION = 2;
-export const OLD_RUNNER = "This runner is too old for this platform. Update it with the command on the Machines page.";
+/**
+ * The oldest runner release this server serves: the first whose turns pay with a plan through a relay on the machine
+ * and that keeps no ChatGPT or Codex sign-in of its own. Raise it when the server stops reading what older runners send.
+ */
+export const MIN_RUNNER_VERSION = "0.3.13";
+/** What a runner below `MIN_RUNNER_VERSION` is told, on connect and on the Machines page. `version`: the runner's, when known. */
+export function outdatedRunner(version?: string): string {
+	return `${version ? `This runner is ${version}. ` : ""}Update your runner to ${MIN_RUNNER_VERSION} or later with the command on the Machines page.`;
+}
+export const OLD_RUNNER = outdatedRunner();
 /** Under the 256 KiB RivetKit takes per incoming message (registry.ts); the probe measures the gateway. */
 export const MAX_FRAME_BYTES = 128 * 1024;
 /** The largest message, as JSON: a `run` result holds up to 4 MiB of output (sandboxes.ts, STDOUT_CAP). */
@@ -92,8 +108,14 @@ export const PROFILE_DENIED =
 const harness = optional(oneOf(...MACHINE_HARNESS_IDS));
 const sandbox = { id };
 const relayLease = is<string>(v => typeof v === "string" && /^[a-f0-9]{32}$/.test(v));
+/** A plan's token as the plan relay takes it (plan.cjs `TOKEN`). */
+const planToken = is<string>(v => typeof v === "string" && /^[\x21-\x7e]{16,4096}$/.test(v));
+/** What a plan relay on the machine saw of the plan's answers between two asks, at most this many (the latest kept). */
+export const MAX_PLAN_SEEN = 32;
+const relaySeen = is<RelaySeen>(v => relaySeenOf(v) !== null);
 const forwardKey = object({
-	provider: oneOf(...MODEL_PROVIDERS),
+	// The relay wire (`credentialWire`): a provider, or a plan's `claude-plan` or `chatgpt-plan`.
+	provider: oneOf(...MODEL_PROVIDERS, "claude-plan", "chatgpt-plan"),
 	host: forwardHost,
 	placeholder: forwardPlaceholder,
 	proofKey: optional(validProofKey),
@@ -197,9 +219,8 @@ const operations = {
 				snapshot: optional(snapshotSource),
 				screenshots: optional(boolean),
 				ownData: optional(oneOf(true)),
-				/** Its turns can use the machine's model relay (the three operations below), said only to a server that named `model-relay`. */
+				/** Windlass's Settings-key turns can use the machine's model relay (`modelRelay` below): its image's Windlass reads the relay's address. */
 				modelRelay: optional(oneOf(true)),
-				windlassKeyRelay: optional(oneOf(true)),
 				blockedNetwork: optional(oneOf(true)),
 				memoryEvents: optional(oneOf(true)),
 				/** On the first connect after its create, what making it took (SandboxHandle.runnerStart), said only to a server that named `start-times`. */
@@ -252,28 +273,44 @@ const operations = {
 	writeSecretFile: [object({ ...sandbox, path: string, content: string }), nil],
 	removeFiles: [object({ ...sandbox, paths: list(string) }), nil],
 	/**
-	 * Windlass's model relay (docs/model-relay.md), only to a runner whose connect said `modelRelay`: a
-	 * lease for one turn (its forwarder listens in the sandbox), the turn's token handed to the relay, and
-	 * the lease's end. `lease` names the lease on the runner; it is no credential.
+	 * A Settings key's lease for one turn (docs/model-relay.md): Windlass's through the machine's model relay, only to a
+	 * runner whose connect said `modelRelay`, or a harness's through its key relay. The forwarder listens in the
+	 * sandbox; the key stays on the platform. `lease` names the lease on the runner; it is no credential.
 	 */
 	modelRelay: [
-		object({ ...sandbox, forward: optional(forwardKey) }),
+		object({ ...sandbox, forward: forwardKey }),
 		object({
 			lease: relayLease,
 			placeholder: is<string>(v => typeof v === "string" && /^wlp-model\.[a-f0-9]{32}$/.test(v)),
 			env,
 		}),
 	],
-	modelRelayToken: [
+	modelRelayClose: [object({ ...sandbox, lease: relayLease }), nil],
+	/**
+	 * A plan-paid turn's relay on the machine: the runner starts the
+	 * plan relay (sandbox/relay/plan.cjs) with the plan's token on its standard input, kept in its memory only, and a
+	 * forwarder in the sandbox. `expiresAt` is when it stops by itself, and `requestLimit` the most model requests it
+	 * sends (the turn's). `planRelayToken` replaces the token (a ChatGPT plan's, before it expires, or any plan's when a
+	 * restarted server takes the turn up) and moves `expiresAt` on; `planRelaySeen` takes what the provider said of the
+	 * plan since the last ask. It ends with `modelRelayClose`, the end of its sandbox, or the conversation's.
+	 */
+	planRelay: [
 		object({
 			...sandbox,
-			lease: relayLease,
-			accessToken: is<string>(v => typeof v === "string" && /^[\x21-\x7e]{16,16384}$/.test(v)),
+			wire: oneOf("claude-plan", "chatgpt-plan"),
+			harness: oneOf(...HARNESS_IDS),
+			token: planToken,
 			expiresAt: count,
+			requestLimit: positiveLimit,
 		}),
-		nil,
+		object({
+			lease: relayLease,
+			placeholder: is<string>(v => typeof v === "string" && /^wlp-plan\.[A-Za-z0-9_-]{43}$/.test(v)),
+			env,
+		}),
 	],
-	modelRelayClose: [object({ ...sandbox, lease: relayLease }), nil],
+	planRelayToken: [object({ ...sandbox, lease: relayLease, token: planToken, expiresAt: count }), nil],
+	planRelaySeen: [object({ ...sandbox, lease: relayLease }), list(relaySeen, MAX_PLAN_SEEN)],
 	/**
 	 * The copies of a session's agent session that the machine keeps (machine-backups.ts), only to a
 	 * runner whose report said `sessionBackups`. The runner holds each in a volume of its own and checks

@@ -209,7 +209,7 @@ async function testNode() {
 			await update(c, id, {
 				status: state === "offline" ? "offline" : "online",
 				since: Date.now(),
-				runnerVersion: "0.2.0",
+				runnerVersion: "0.3.13",
 				warnings: [],
 				turns: { max: 1, running: Number(state === "full"), queued: 0 },
 				report: {
@@ -2196,7 +2196,7 @@ async function run() {
 
 			await repo({ ...policy, placeFallback: "hosted" });
 			await machine.checkPlaceMachine(mac, "signed-out");
-			assert.match((await file(true)).question!.text, /not signed in/i);
+			assert.match((await file(true)).question!.text, /not signed in|nothing can pay/i);
 			await assert.rejects(repo(policy), /sign-in|supports/i);
 			const draftFeature = make(++number, reader);
 			await applyLabel(draftFeature, "windlass:orchestrate", writer);

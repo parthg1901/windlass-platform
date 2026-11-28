@@ -161,7 +161,7 @@ function providerFor(
 		secrets: () => secrets,
 		accepts: url => Boolean(endpointFor(allowed, url)),
 		// A ChatGPT sign-in's stream comes from chatgpt.com/backend-api, which may send its 200 without a content
-		// type (codex.cjs): only that route is read as an event stream. API-key providers name their types.
+		// type: only that route is read as an event stream. API-key providers name their types.
 		untyped: (method, url) =>
 			method === "POST" && endpointFor(allowed, url)?.id === "chatgpt" ? "text/event-stream" : null,
 		bearer(h, url) {

@@ -168,11 +168,9 @@ export class MachineDocker {
 	readonly labels: Record<string, string>;
 	readonly volume: string;
 	readonly claudeVolume: string;
-	readonly codexVolume: string;
 	readonly opencodeVolume: string;
 	constructor(readonly identity: Identity) {
 		this.labels = { [MACHINE_LABEL]: identity.machineId, [LABEL + ".uid"]: identity.uid };
-		this.codexVolume = "wlp-harness-codex-" + identity.machineId;
 		this.opencodeVolume = "wlp-harness-opencode-" + identity.machineId;
 		this.claudeVolume = "wlp-harness-claude-" + identity.machineId;
 		this.volume = "wlp-machine-" + identity.machineId;
@@ -272,13 +270,5 @@ export class MachineDocker {
 			await docker(["rm", "-f", name]);
 			await this.dropVolume(probeVolume);
 		}
-	}
-	async logout() {
-		if (!(await this.ownedVolume(false))) return;
-		const result = await this.helper(
-			["sh", "-c", "rm -f -- /data/access-token-*.json /data/access-token-*.json.tmp"],
-			true,
-		);
-		if (result.code !== 0) throw new RunnerError("Could not remove access token files from the data volume.");
 	}
 }

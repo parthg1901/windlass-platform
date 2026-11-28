@@ -2,13 +2,13 @@ import "./check-secret.js";
 import assert from "node:assert/strict";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { test, type TestContext } from "node:test";
-import { agentSession, turnCredential } from "../server/src/actors/agent-session.js";
+import { agentSession } from "../server/src/actors/agent-session.js";
 import { user } from "../server/src/actors/user.js";
 import { workItem } from "../server/src/actors/work-item.js";
 import { advance, createItem } from "../server/src/factory/blueprint.js";
 import { checkRunPlace } from "../server/src/factory/default-place.js";
 import { resolveRun } from "../server/src/factory/resolve-run.js";
-import { providerStatuses } from "../server/src/model-providers.js";
+import { providerStatuses } from "../server/src/credentials/keys.js";
 import { cleanDefaults, readAccountDefaults, readDefaults, saveDefaults } from "../server/src/repository-defaults.js";
 import { issueServiceToken } from "../server/src/tokens.js";
 
@@ -339,21 +339,10 @@ test("M13 renders both retired reviewer reasons from stored top-level items", as
 	}
 });
 
-test("H2 loads pre-payer origins and rejects a changed or ambiguous machine payer", async t => {
+test("H2 loads pre-payer origins with the payer they were filed with", async t => {
 	const { sql, db } = database(t);
 	sql.exec("CREATE TABLE meta(id INTEGER PRIMARY KEY,data TEXT NOT NULL); CREATE TABLE timeline(seq INTEGER)");
-	let source = "key";
-	const ctx = {
-		db,
-		client: () => ({
-			user: {
-				get: () => ({
-					internalModelKeys: async () => [{ provider: "anthropic", generation: "g" }],
-					internalCredentialSource: async () => source,
-				}),
-			},
-		}),
-	};
+	const ctx = { db, client: () => ({ user: { get: () => ({}) } }) };
 	async function load(harness: string, fields: object) {
 		const origin = { kind: "item", itemId: "i_filed", role: "builder", ...fields };
 		sql
@@ -361,23 +350,9 @@ test("H2 loads pre-payer origins and rejects a changed or ambiguous machine paye
 			.run(JSON.stringify({ uid: "owner", place: machine, harness, origin }));
 		return (await wakeSession(ctx as never, undefined)).meta!;
 	}
-	const turn = (meta: Awaited<ReturnType<typeof load>>) =>
-		turnCredential(
-			{ ...ctx, vars: {} } as never,
-			meta,
-			{ id: meta.harness, signIn: "token", keyRelay: true, method: "subscription" } as never,
-			"anthropic/opus",
-		);
-	for (const signIn of ["subscription", "chatgpt"]) {
-		const local = await load(signIn === "chatgpt" ? "codex" : "claude", { signIn });
-		assert.equal(local.origin?.payer, "machine");
-		await assert.rejects(turn(local), /payer changed/);
-	}
-	const keyed = await load("claude", { filedWithKey: true, signIn: "api-key" });
-	assert.deepEqual((await turn(keyed)).key, { provider: "anthropic", generation: "g" });
-	for (source of ["key", "machine"]) {
-		await assert.rejects(turn(await load("opencode", {})), /did not record who pays/);
-		await assert.rejects(turn(await load("codex", { signIn: "api-key" })), /did not record who pays/);
-	}
-	await assert.rejects(turn(keyed), /payer changed/);
+	for (const signIn of ["subscription", "chatgpt"])
+		assert.equal((await load(signIn === "chatgpt" ? "codex" : "claude", { signIn })).origin?.payer, "machine");
+	assert.equal((await load("claude", { filedWithKey: true, signIn: "api-key" })).origin?.payer, "key");
+	assert.equal((await load("opencode", {})).origin?.payer, undefined);
+	assert.equal((await load("codex", { signIn: "api-key" })).origin?.payer, undefined);
 });

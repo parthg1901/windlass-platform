@@ -34,7 +34,6 @@ import {
 import { runSetupCommand } from "../server/src/sandbox/setup.js";
 import { containerName, DockerSandboxes } from "../server/src/sandbox/sandboxes.js";
 import { tokenFilePath } from "../server/src/sandbox/token-file.js";
-import { DockerWindlass } from "../server/src/sandbox/windlass.js";
 import { imageId } from "./check-image.js";
 
 const docs = readFileSync(new URL("../docs/configuration.md", import.meta.url), "utf8").split(
@@ -363,43 +362,7 @@ if (process.argv.includes("--docker")) {
 			assert.ok(!entries.includes(producerToken.slice(1)));
 			rmSync(archive);
 
-			await checked("network", "disconnect", "bridge", box.container);
-			await checked("exec", "-d", box.container, "/bin/sleep", "610");
-			const sleepers = () => box.ask(["pgrep", "-fx", "/bin/sleep 610"]);
-			assert.equal((await sleepers())?.code, 0);
-			await box.writeTextFile(
-				"/tmp/restore-turn.json",
-				JSON.stringify({
-					responses: [
-						[
-							{ type: "text", text: "Done." },
-							{ type: "finish", reason: "stop" },
-						],
-					],
-				}),
-			);
-			const windlass = new DockerWindlass(
-				{
-					current: async () => {
-						assert.equal((await sleepers())?.code, 1, "restored sandbox still had a sleeper at token handoff");
-						return { accessToken: "fake-restored-token", expiresAt: Date.now() + 3_600_000 };
-					},
-				},
-				{
-					image: base,
-					engineCommand: [
-						"sh",
-						"-ec",
-						'test -s "$WINDLASS_ACCESS_TOKEN_FILE"; test "$(stat -f -c %T "$WINDLASS_ACCESS_TOKEN_FILE")" = tmpfs; WINDLASS_ACP_SCRIPT=/tmp/restore-turn.json exec windlass acp',
-					],
-				},
-			);
-			const turn = await windlass.runTurn(box, { prompt: "Check restored token handoff" });
-			assert.equal(turn.failure, null);
-			assert.equal(turn.summary?.outcome, "succeeded");
-			console.log(
-				"PASS committed rootfs excludes the tmpfs token, and a restored turn sweeps before handoff on its private tmpfs",
-			);
+			console.log("PASS committed rootfs excludes the producer's tmpfs token");
 		} finally {
 			await sandboxes.destroy(restored);
 		}

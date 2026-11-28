@@ -18,7 +18,6 @@ import {
 	REFUSED_RETRY_MS,
 	machineKeyFingerprint,
 	parseConnection,
-	PRINTS_KEY_RUNNER_VERSION,
 	RUNNER_PAIR_PATH,
 } from "../server/src/runner/control.js";
 import { FakeRunner, controlProxy, post } from "./runner-fake.js";
@@ -74,21 +73,12 @@ async function server() {
 		}
 		return changed(c, id, facts);
 	};
-	// A machine of this name stands for a machine actor that does not answer a logout.
 	const machineActions = machine.config.actions!;
-	const logout = machineActions.internalLogout;
-	machineActions.internalLogout = async c => {
-		const [row] = await c.db.execute<{ name: string }>("SELECT name FROM machine");
-		if (row?.name === "Logout fails fixture") {
-			process.send?.({ hook: "logout-refused", id: c.key[1] });
-			throw new Error("The machine actor is away.");
-		}
-		return logout(c);
-	};
+	type MachineCtx = Parameters<typeof machineActions.internalRevoke>[0];
 	Object.assign(machineActions, {
-		e2eWaitingForHello: (c: Parameters<typeof logout>[0]) => c.vars.greeting !== null,
+		e2eWaitingForHello: (c: MachineCtx) => c.vars.greeting !== null,
 		// Advance the production alarm and its stored timestamp together in this private database.
-		async e2eAgeKeyWarning(c: Parameters<typeof logout>[0]) {
+		async e2eAgeKeyWarning(c: MachineCtx) {
 			const alarm = (await c.schedule.list()).find(event => event.action === "expireKeyWarning");
 			if (!alarm || alarm.runAt <= Date.now() + REFUSED_RETRY_MS) return false;
 			await c.db.execute(
@@ -114,6 +104,20 @@ async function realRunner() {
 	const [{ id, key }] = (await once(process, "message")) as [{ id: { uid: string; machineId: string }; key: Buffer }];
 	process.disconnect();
 	Object.assign(globalThis, { SANDBOX_IMAGE: "sha256:" + "0".repeat(64), SHOTS_IMAGE_PIN: "" });
+	// The runner in this tree says its last release (runner/package.json) until the release commit raises it to the
+	// platform's minimum: its hello says the release it will ship as.
+	const { MIN_RUNNER_VERSION, versionAtLeast } = await import("../server/src/runner/control.js");
+	const { VERSION } = await import(new URL("../runner/src/state.ts", import.meta.url).href);
+	if (!versionAtLeast(VERSION, MIN_RUNNER_VERSION)) {
+		const send = WebSocket.prototype.send;
+		WebSocket.prototype.send = function (this: WebSocket, data: Parameters<WebSocket["send"]>[0]) {
+			const frame = typeof data === "string" && data.includes('"hello"') ? JSON.parse(data) : null;
+			return send.call(
+				this,
+				frame?.kind === "hello" ? JSON.stringify({ ...frame, runnerVersion: MIN_RUNNER_VERSION }) : data,
+			);
+		};
+	}
 	const { control } = await import(new URL("../runner/src/control.ts", import.meta.url).href);
 	const { Executor } = await import(new URL("../runner/src/docker-executor.ts", import.meta.url).href);
 	const { save } = await import(new URL("../runner/src/state.ts", import.meta.url).href);
@@ -242,9 +246,8 @@ async function check() {
 		const printed = machineKeyFingerprint(runner.details.publicKey);
 		assert.match(printed ?? "", /^[A-Z2-7]{5}-[A-Z2-7]{5}$/);
 		assert.equal(claimed.keyFingerprint, printed);
-		// The fake runner reports the oldest version the platform takes, which prints no fingerprint.
-		assert.equal(claimed.keyPrinted, false);
-		assert.notEqual(runner.details.runnerVersion, PRINTS_KEY_RUNNER_VERSION);
+		// The fake runner reports the oldest version the platform takes, which prints the fingerprint.
+		assert.equal(claimed.keyPrinted, true);
 		assert.notEqual(machineKeyFingerprint(new FakeRunner().details.publicKey), printed);
 		await refused(user.confirmMachine({ ...code } as Parameters<typeof user.confirmMachine>[0]), "key_not_confirmed");
 		const [first, repeat] = await Promise.all([
@@ -313,12 +316,22 @@ async function check() {
 		assert(conn);
 		const bad = await wrong.connect(conn, id);
 		await eventually(() => bad.frames.some(f => f.kind === "refused" && f.reason === "unknown"));
-		const old = await runner.connect(conn, id, { version: "0.0.9" });
-		await eventually(() => old.frames.some(f => f.kind === "refused" && f.reason === "outdated"));
+		// The last release before the plan relay is told to update, with the version it needs.
+		const old = await runner.connect(conn, id, { version: "0.3.12" });
+		await eventually(() =>
+			old.frames.some(
+				f =>
+					f.kind === "refused" &&
+					f.reason === "outdated" &&
+					f.message ===
+						"This runner is 0.3.12. Update your runner to 0.3.13 or later with the command on the Machines page.",
+			),
+		);
 		await eventually(async () => (await row()).warnings.some(w => w.kind === "outdated"));
+		assert.equal((await row()).runnerVersion, "0.3.12");
 		await assert.rejects(user.createSession({ profile: "docker-hardened", place: { kind: "machine", machineId } }), {
 			code: "runner_outdated",
-			message: /Linux arm64 machine \(012345\)/,
+			message: /^Update your runner on “Linux arm64 machine \(012345\)” to 0\.3\.13 or later/,
 		});
 		const replay = await runner.connect(conn, id, { signature: old.proof() });
 		await eventually(() => replay.frames.some(f => f.kind === "refused" && f.reason === "unknown"));
@@ -331,7 +344,7 @@ async function check() {
 		};
 		await eventually(() => foreign.readyState === 3);
 		assert(!challenged);
-		step("same-process reconnect, a refused second runner, reports, logout and opaque attach");
+		step("same-process reconnect, a refused second runner, reports and opaque attach");
 		proxy = await controlProxy(port);
 		const loginSocket = await runner.connect({ ...conn, endpoint: proxy.endpoint }, id);
 		await eventually(() =>
@@ -426,8 +439,6 @@ async function check() {
 		await eventually(() => duplicate.frames.some(f => f.kind === "refused" && f.reason === "key-in-use"));
 		await eventually(async () => (await row()).warnings.some(w => w.kind === "key"));
 		assert.equal(back.ws.readyState, 1);
-		await user.forgetChatgpt();
-		await eventually(() => back.frames.some(f => f.kind === "logout"));
 		step("the duplicate-key warning clears after its retry window while the original runner stays online");
 		const fixture = () =>
 			service() as unknown as { e2eAgeKeyWarning(): Promise<boolean>; e2eWaitingForHello(): Promise<boolean> };
@@ -520,8 +531,14 @@ async function check() {
 		await eventually(() => returned.frames.some(f => f.kind === "remove" && f.sandbox === "deleted-sandbox"));
 		await eventually(() => returned.frames.some(f => f.kind === "forget-backup" && f.sessionId === "s_deleted"));
 		delete runner.report.sessionBackups;
+		step(
+			"Switch back to your plan: the runner removes the machine's own Claude login and answers; offline, nothing to ask",
+		);
+		assert.equal(await service().internalForgetClaudeLogin(), "removed");
+		assert.ok(returned.frames.some(f => f.kind === "forget-claude-login"));
 		returned.ws.close();
 		await eventually(async () => (await row()).status === "offline");
+		assert.equal(await service().internalForgetClaudeLogin(), "offline");
 
 		step("the real runner connects, and a second process epoch is refused without either control loop exiting");
 		// Use the real control loop and Docker executor. A missing local socket makes the Docker
@@ -599,7 +616,6 @@ async function check() {
 		const more = await Promise.all(
 			Array.from({ length: 4 }, () => {
 				const fixture = new FakeRunner();
-				fixture.details.name = "Logout fails fixture";
 				return fixture.pair(origin);
 			}),
 		);
@@ -609,9 +625,6 @@ async function check() {
 		);
 		assert.equal(confirmed.filter(r => r.status === "fulfilled").length, 3);
 		assert(confirmed.some(r => r.status === "rejected" && r.reason.code === "too_many_machines"));
-		// Each machine actor fails the logout: forgetting the sign-in still succeeds.
-		await user.forgetChatgpt();
-		await eventually(() => hooks.filter(h => h.hook === "logout-refused").length === 3);
 		for (let i = 0; i < 4; i++) await refused(other.claimMachine({ code: "0000-0000" }), "pairing_not_found");
 		await refused(other.claimMachine({ code: "0000-0000" }), "too_many_claims");
 		step("expired pairing and scheduled 90-day removal");
@@ -653,6 +666,31 @@ async function check() {
 		assert.equal(expired.status, 410);
 		assert.deepEqual(await expired.json(), { reason: "removed", removeSandboxes: false });
 
+		step("Deny on the connect page ends a pairing, only for the account that looked its code up");
+		const denier = await account();
+		const outsider = await account();
+		const deniedRunner = new FakeRunner();
+		const deniedPair = await deniedRunner.pair(origin);
+		const deniedCode = { code: deniedPair.code };
+		await refused(denier.user.denyMachine(deniedCode), "pairing_not_found");
+		await denier.user.claimMachine(deniedCode);
+		await refused(outsider.user.claimMachine(deniedCode), "pairing_not_found");
+		await refused(outsider.user.denyMachine(deniedCode), "pairing_not_found");
+		assert.deepEqual(await deniedRunner.poll(origin, deniedPair), { state: "waiting" });
+		await denier.user.denyMachine(deniedCode);
+		assert.deepEqual(await deniedRunner.poll(origin, deniedPair), { state: "gone" });
+		await refused(denier.user.confirmMachine({ ...deniedCode, keyConfirmed: true }), "pairing_not_found");
+		await refused(denier.user.denyMachine(deniedCode), "pairing_not_found");
+		// Once confirmed, Deny leaves the machine paired: it is removed on Machines.
+		const keptPair = await new FakeRunner().pair(origin);
+		await denier.user.claimMachine({ code: keptPair.code });
+		const keptMachine = await denier.user.confirmMachine({ code: keptPair.code, keyConfirmed: true });
+		await denier.user.denyMachine({ code: keptPair.code });
+		assert.deepEqual(
+			(await denier.user.machines()).map(m => m.machineId),
+			[keptMachine.machineId],
+		);
+
 		step("pairing quotas across nodes regardless of forwarding headers, with room for other runners");
 		const quotaRunner = new FakeRunner();
 		const starts = await Promise.all(
@@ -682,8 +720,8 @@ async function check() {
 		const budget = client.pairingDirectory.get(["starts"], { params: serviceParams() }).connect();
 		let admitted = 0;
 		try {
-			// Eleven earlier admissions are still in this ten-minute window (including the short-lived fixture).
-			const earlier = 11;
+			// Thirteen earlier admissions are still in this ten-minute window (including the short-lived fixture and the two of Deny).
+			const earlier = 13;
 			for (let i = 0; i < 128 && admitted + earlier < 1024; i++) {
 				const batch = await Promise.all(
 					Array.from({ length: 32 }, () =>

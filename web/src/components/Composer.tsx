@@ -28,7 +28,14 @@
  * refuses any other (`item_session`). Its page has `ItemNote` in the composer's place: one quiet line
  * that says so and links to the item, with Stop beside it while a turn runs, which the server allows.
  */
-import { MAX_PROMPT_CHARS, type ModelList, type PromptInput, type SessionMode, type SessionStatus } from "@contract";
+import {
+	MAX_PROMPT_CHARS,
+	type ModelList,
+	PLAN_ASK,
+	type PromptInput,
+	type SessionMode,
+	type SessionStatus,
+} from "@contract";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { errorMessage, hasReason } from "../api/client";
 import { isLimitRefusal } from "../api/errors";
@@ -220,6 +227,10 @@ export function Composer({
 	);
 	/** A message the running turn's harness could not take: sent, with its key, once the turn ends. */
 	const [held, setHeld] = useState<Submission | null>(null);
+	/** The plan that pays is limited and a key could (`plan_ask`): the message as it was sent, and the server's words. */
+	const [planAsk, setPlanAsk] = useState<{ message: string; input: PromptInput } | null>(null);
+	/** Chosen to wait for the plan: the server's words stay until the next send. */
+	const [planWait, setPlanWait] = useState<string | null>(null);
 	const area = useRef<HTMLTextAreaElement>(null);
 	const ids = { text: useId(), reason: useId(), keys: useId() };
 
@@ -325,23 +336,28 @@ export function Composer({
 		setSending(true);
 		setError(null);
 		setNotice(null);
+		setPlanAsk(null);
+		setPlanWait(null);
 		const { content, idempotencyKey } = submissionOf(text.trim(), untaken.current);
 		untaken.current = { content, idempotencyKey };
+		// The model and effort do not apply to a steer.
+		const input: PromptInput = steering
+			? { text: content, idempotencyKey }
+			: {
+					text: content,
+					idempotencyKey,
+					model: chosenModel !== null && chosenModel !== model ? chosenModel : undefined,
+					effort: effortInput,
+				};
 		try {
-			// The model and effort do not apply to a steer.
-			await onSend(
-				steering
-					? { text: content, idempotencyKey }
-					: {
-							text: content,
-							idempotencyKey,
-							model: chosenModel !== null && chosenModel !== model ? chosenModel : undefined,
-							effort: effortInput,
-						},
-			);
+			await onSend(input);
 			untaken.current = null;
 			setText("");
 		} catch (failure) {
+			if (hasReason(failure, PLAN_ASK)) {
+				setPlanAsk({ message: errorMessage(failure), input });
+				return;
+			}
 			// Another harness's message waits for the turn's end; Windlass's turn is asked again by its user.
 			if (steering && harness !== null && steerUnavailable(failure) && held === null) {
 				setHeld({ content, idempotencyKey });
@@ -352,6 +368,24 @@ export function Composer({
 				setError(failure instanceof Error ? errorMessage(failure) : "The message could not be sent.");
 				setLimited(isLimitRefusal(failure));
 			}
+		} finally {
+			setSending(false);
+		}
+	};
+
+	/** The answer to `plan_ask`: this one turn pays with the key; the same message, under the same key, sent again. */
+	const useKeyOnce = async () => {
+		if (!planAsk) return;
+		const { input } = planAsk;
+		setPlanAsk(null);
+		setSending(true);
+		try {
+			await onSend({ ...input, payWith: "key" });
+			untaken.current = null;
+			setText(current => (current.trim() === input.text ? "" : current));
+		} catch (failure) {
+			setError(failure instanceof Error ? errorMessage(failure) : "The message could not be sent.");
+			setLimited(isLimitRefusal(failure));
 		} finally {
 			setSending(false);
 		}
@@ -488,7 +522,38 @@ export function Composer({
 				void send();
 			}}
 		>
-			{error ? (
+			{planAsk ? (
+				<div className="composer-error composer-plan-ask" role="alert">
+					<WarnIcon size={14} />
+					<span>{planAsk.message}</span>
+					<div className="composer-plan-ask-actions">
+						<button
+							type="button"
+							className="button button-outline button-small"
+							disabled={sending}
+							onClick={() => void useKeyOnce()}
+						>
+							Use my key this time
+						</button>
+						<button
+							type="button"
+							className="button button-quiet button-small"
+							onClick={() => {
+								setPlanWait(planAsk.message);
+								setPlanAsk(null);
+								area.current?.focus();
+							}}
+						>
+							Wait
+						</button>
+					</div>
+				</div>
+			) : planWait ? (
+				<p className="composer-error composer-notice" role="status">
+					<WarnIcon size={14} />
+					<span>{planWait} Your message is still here.</span>
+				</p>
+			) : error ? (
 				<p className="composer-error" role="alert">
 					<WarnIcon size={14} />
 					<span>

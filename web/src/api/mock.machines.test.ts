@@ -27,7 +27,7 @@ describe("the mock's machines", () => {
 		const on = make();
 		const info = await on.info();
 		expect(info.machines?.runnerImage).toMatch(/@sha256:[0-9a-f]{64}$/);
-		expect(info.machines?.minRunnerVersion).toBe("0.2.0");
+		expect(info.machines?.minRunnerVersion).toBe("0.3.13");
 		expect((await make("unpublished").info()).machines?.runnerImage).toBeNull();
 		const off = make("off");
 		expect((await off.info()).machines).toBeUndefined();
@@ -217,6 +217,24 @@ describe("the mock's machines", () => {
 		await tick();
 		expect(heard.at(-1)?.map(machine => machine.status)).toEqual(["online"]);
 		close();
+		mock.dispose();
+	});
+
+	it("denies a code it looked up, so it pairs nothing, and refuses to deny one it did not", async () => {
+		const mock = make("none");
+		const user = mock.user(auth);
+		await expect(user.denyMachine({ code: "WXYZ-1210" })).rejects.toMatchObject({ reason: "pairing_not_found" });
+		await user.claimMachine({ code: "WXYZ-1210" });
+		await user.denyMachine({ code: "wxyz 12lo" });
+		await expect(user.confirmMachine({ code: "WXYZ-1210", keyConfirmed: true })).rejects.toMatchObject({
+			reason: "pairing_not_found",
+		});
+		await expect(user.claimMachine({ code: "WXYZ-1210" })).rejects.toMatchObject({ reason: "pairing_not_found" });
+		// Once paired, denying changes nothing.
+		await user.claimMachine({ code: "WXYZ-1211" });
+		const made = await user.confirmMachine({ code: "WXYZ-1211", keyConfirmed: true });
+		await user.denyMachine({ code: "WXYZ-1211" });
+		expect((await user.machines()).map(machine => machine.machineId)).toEqual([made.machineId]);
 		mock.dispose();
 	});
 
@@ -429,7 +447,7 @@ describe("the start composer's agent picker", () => {
 	};
 	const showCommands = () => act(() => (pop()?.querySelector(".agent-commands summary") as HTMLElement).click());
 
-	it("offers Windlass or Claude Code on a machine that reports it, and its sign-in where it is not signed in", async () => {
+	it("offers Windlass or Claude Code on a machine that reports it, and what pays for it there", async () => {
 		await open();
 		place("m_workshop");
 		await settle();
@@ -437,11 +455,10 @@ describe("the start composer's agent picker", () => {
 		switchAgent("opencode");
 		expect(text()).toContain("OpenAI login · workshop");
 		switchAgent("claude");
-		showCommands();
-		expect(text()).toContain("Claude Code: sign in needed");
-		expect(pop()?.querySelector(".machine-harness pre")?.textContent).toBe(
-			"docker exec -it windlass-runner windlass-runner login claude",
-		);
+		// Claude Code pays with the account's plan or key there: no login command is offered.
+		expect(text()).toContain("It pays with your plan or key, as Connections sets.");
+		if (pop()?.querySelector(".agent-commands")) showCommands();
+		expect(pop()?.querySelector(".machine-harness pre")).toBeNull();
 		chip("agent", true);
 		// The second machine reports its own sign-in state.
 		place("m_nas");
@@ -516,7 +533,7 @@ describe("the start composer's agent picker", () => {
 		agents();
 		agent("claude");
 		agents();
-		expect(text()).toContain("Choose whose sign-in it uses on the Machines page.");
+		expect(text()).toContain("It uses its own sign-in on this machine.");
 		expect(value("on")).toContain("nas");
 		expect(value("sandbox")).toBe("Open");
 		// nas's runner reported Claude Code's models: its default is named as the adapter names it, and chosen.

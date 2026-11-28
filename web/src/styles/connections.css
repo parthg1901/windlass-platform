@@ -1,0 +1,922 @@
+/* The Connections page (screens/Connections.tsx) and the first-run setup (components/Onboarding.tsx). */
+
+/* ---- the grid: an agent per row, a place per column -------------------------------------------- */
+
+.conn-scroll {
+	overflow-x: auto;
+}
+.settings-card > .conn-scroll {
+	padding: 0;
+}
+.conn-grid {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--text-13);
+}
+.conn-grid th,
+.conn-grid td {
+	padding: 14px var(--card-gutter, 20px);
+	border-top: 1px solid var(--line);
+	text-align: left;
+	vertical-align: top;
+}
+.conn-grid thead th {
+	border-top: 0;
+	padding-block: 12px 10px;
+	font-size: var(--text-12);
+	font-weight: var(--weight-medium);
+	color: var(--ink-faint);
+	white-space: nowrap;
+	background: var(--bg-sunk);
+}
+.conn-grid thead th:first-child {
+	width: 180px;
+}
+.conn-place {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.conn-place svg {
+	flex: none;
+}
+.conn-grid tbody th {
+	font-weight: var(--weight-medium);
+	color: var(--ink);
+	white-space: nowrap;
+}
+.conn-agent {
+	display: inline-flex;
+	align-items: center;
+	gap: 9px;
+	min-height: 20px;
+}
+h3.conn-agent {
+	font-size: var(--text-14);
+	font-weight: var(--weight-strong);
+}
+
+.conn-cell {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+	min-width: 168px;
+	margin: -6px -8px;
+	padding: 6px 8px;
+	border-radius: var(--r-item);
+	scroll-margin-top: calc(var(--topbar) + 80px);
+}
+.conn-cell-target {
+	box-shadow: 0 0 0 1.5px var(--accent-edge);
+	background: var(--accent-wash);
+}
+.conn-detail {
+	padding-left: 12px;
+	font-size: var(--text-12);
+	color: var(--ink-faint);
+}
+.conn-cell > .conn-badge {
+	margin-left: 4px;
+}
+.conn-action {
+	margin-top: 4px;
+}
+.conn-link {
+	margin-top: 2px;
+	padding-left: 12px;
+	font-size: var(--text-12);
+	text-decoration: none;
+}
+.conn-link:hover {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+/* A machine's Claude Code: the plan from Windlass or the machine's own login, and the command for the latter. */
+.conn-own {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 6px 0 0;
+	padding: 0 0 0 12px;
+	border: 0;
+	min-width: 0;
+	font-size: var(--text-12);
+}
+.conn-own-option {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	color: var(--ink);
+	cursor: pointer;
+}
+.conn-own-command {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 4px;
+	max-width: 360px;
+}
+.conn-own > .conn-action {
+	margin-top: 0;
+}
+
+/* On a phone each agent is a block, each place a line in it: the place on the left, its state on the right. */
+@media (max-width: 560px) {
+	.conn-grid thead {
+		display: none;
+	}
+	.conn-grid,
+	.conn-grid tbody,
+	.conn-grid tr,
+	.conn-grid th,
+	.conn-grid td {
+		display: block;
+		width: 100%;
+	}
+	.conn-grid tbody th {
+		padding-bottom: 8px;
+	}
+	.conn-grid td {
+		display: grid;
+		grid-template-columns: 84px minmax(0, 1fr);
+		gap: 8px;
+		border-top: 0;
+		padding-block: 6px;
+	}
+	.conn-grid td:last-child {
+		padding-bottom: 16px;
+	}
+	.conn-grid td::before {
+		content: attr(data-place);
+		overflow: hidden;
+		min-height: 20px;
+		font-size: var(--text-12);
+		line-height: 20px;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--ink-faint);
+	}
+	.conn-cell {
+		min-width: 0;
+	}
+}
+
+/* ---- who pays: a row per agent, the two choices beside it, what they mean under them ------------- */
+
+.settings-card > .conn-pays {
+	padding: 0;
+}
+.conn-pay {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 220px) minmax(0, 220px);
+	grid-template-areas:
+		"who pay limited"
+		"who meaning meaning";
+	align-items: start;
+	gap: 6px 16px;
+	padding: 16px var(--card-gutter);
+	scroll-margin-top: calc(var(--topbar) + 80px);
+}
+.conn-pay + .conn-pay {
+	border-top: 1px solid var(--line);
+}
+.conn-pay-who {
+	grid-area: who;
+	min-width: 0;
+	padding-top: 22px;
+}
+.conn-pay-field {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+}
+.conn-pay-with {
+	grid-area: pay;
+}
+.conn-pay-limited {
+	grid-area: limited;
+}
+.conn-pay-field .label {
+	font-size: var(--text-12);
+	color: var(--ink-dim);
+}
+.conn-pay-what {
+	margin-top: 4px;
+	padding-left: 23px;
+	font-size: var(--text-12);
+	color: var(--ink-faint);
+}
+.conn-pay-what > span:not(:last-child)::after {
+	content: "·";
+	margin: 0 0.5em;
+}
+.conn-pay-meaning {
+	grid-area: meaning;
+	font-size: var(--text-12);
+	line-height: 1.5;
+	color: var(--ink-dim);
+}
+.conn-pays > .field-note {
+	padding: 0 var(--card-gutter) 14px;
+}
+@media (max-width: 760px) {
+	.conn-pay {
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		grid-template-areas:
+			"who who"
+			"pay limited"
+			"meaning meaning";
+	}
+	.conn-pay-who {
+		padding-top: 0;
+		padding-bottom: 4px;
+	}
+}
+@media (max-width: 480px) {
+	.conn-pay {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-areas: "who" "pay" "limited" "meaning";
+	}
+}
+
+/* ---- plan rows: the name and who it is connected as, its state, its actions ---------------------- */
+
+.plan-row-line {
+	margin-top: 3px;
+	font-size: var(--text-13);
+	color: var(--ink-dim);
+}
+.plan-row .usage-kept-title {
+	font-weight: var(--weight-medium);
+}
+.chatgpt-plan-codex {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	font-size: var(--text-12);
+	color: var(--ink-faint);
+}
+.chatgpt-plan-codex .button {
+	min-width: 0;
+	min-height: var(--h-xs);
+	padding-inline: 6px;
+}
+
+/* ---- the first-run setup: four cards in a row, the open step as the panel under them, the outcome below ---- */
+
+.onboard {
+	width: 100%;
+	margin: 6px 0 0;
+	text-align: left;
+	animation: arrive 320ms var(--ease-out) both;
+}
+.onboard-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 12px 24px;
+	margin-bottom: 22px;
+}
+.onboard-title {
+	font-size: clamp(var(--text-24), 2.2vw + 0.5rem, var(--text-32));
+	font-weight: var(--weight-strong);
+	line-height: 1.1;
+	letter-spacing: var(--tracking-display);
+	color: var(--ink);
+}
+.onboard-lede {
+	max-width: 58ch;
+	margin-top: 8px;
+	font-size: var(--text-15);
+	line-height: 1.5;
+	color: var(--ink-dim);
+}
+.onboard-head-end {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+}
+.onboard-progress {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	font-size: var(--text-12);
+	font-variant-numeric: tabular-nums;
+	color: var(--ink-faint);
+}
+.onboard-progress-bar {
+	display: inline-flex;
+	gap: 3px;
+}
+.onboard-progress-bar i {
+	width: 16px;
+	height: 4px;
+	border-radius: 2px;
+	background: var(--bg-active);
+}
+.onboard-progress-bar i[data-on] {
+	background: var(--ok);
+}
+.onboard-head-end .button-quiet {
+	margin-right: -10px;
+}
+
+.onboard-cards {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 12px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.onboard-card {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+	padding: 16px 16px 14px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-box);
+	background: var(--bg-raised);
+	transition:
+		border-color var(--dur-hover) var(--ease),
+		box-shadow var(--dur-hover) var(--ease);
+}
+.onboard-card[data-state="current"] {
+	border-color: var(--accent-edge);
+	background: linear-gradient(180deg, var(--accent-wash), transparent 75%), var(--bg-raised);
+	box-shadow:
+		0 0 0 3px var(--accent-wash),
+		var(--shadow-box);
+}
+.onboard-card[data-state="blocked"] {
+	background: transparent;
+	border-style: dashed;
+}
+.onboard-card-top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 6px;
+}
+.onboard-card-icon {
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	border-radius: var(--r-control);
+	background: var(--bg-active);
+	color: var(--ink-dim);
+}
+.onboard-card[data-state="current"] .onboard-card-icon {
+	background: var(--accent-fill);
+	color: var(--accent-ink);
+}
+.onboard-card[data-done] .onboard-card-icon {
+	background: var(--ok-wash);
+	color: var(--ok);
+}
+.onboard-card-step {
+	font-size: var(--text-11);
+	font-weight: var(--weight-medium);
+	letter-spacing: 0.02em;
+	color: var(--ink-faint);
+}
+.onboard-card[data-done] .onboard-card-step {
+	color: var(--ok);
+}
+.onboard-card h3 {
+	font-size: var(--text-15);
+	font-weight: var(--weight-strong);
+	letter-spacing: -0.01em;
+	color: var(--ink);
+}
+.onboard-card[data-state="blocked"] h3 {
+	color: var(--ink-dim);
+}
+.onboard-card-why {
+	flex: 1;
+	font-size: var(--text-13);
+	line-height: 1.45;
+	color: var(--ink-dim);
+	overflow-wrap: anywhere;
+}
+.onboard-card[data-done] .onboard-card-why {
+	color: var(--ink);
+}
+.onboard-card-action {
+	display: flex;
+	align-items: center;
+	min-height: var(--h-sm);
+	margin-top: 6px;
+}
+.onboard-card-action .button-quiet {
+	margin-left: -10px;
+}
+.onboard-card-after {
+	font-size: var(--text-12);
+	color: var(--ink-faint);
+}
+.onboard-card-now {
+	font-size: var(--text-12);
+	font-weight: var(--weight-medium);
+	color: var(--accent-text);
+}
+
+/* The open step: under the row on a wide screen, under its card on a phone (the cards' order). */
+.onboard-open {
+	grid-column: 1 / -1;
+	min-width: 0;
+	margin-top: 6px;
+	padding: 24px 32px 22px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--r-box);
+	background:
+		radial-gradient(120% 80% at 0% 0%, var(--accent-wash), transparent 55%),
+		var(--bg-raised);
+	box-shadow: var(--shadow-box);
+	animation: arrive 260ms var(--ease-out) both;
+}
+.onboard-panel-head {
+	margin-bottom: 20px;
+}
+.onboard-panel-step {
+	font-size: var(--text-11);
+	font-weight: var(--weight-strong);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--accent-text);
+}
+.onboard-panel-head h2 {
+	margin-top: 6px;
+	font-size: var(--text-20);
+	font-weight: var(--weight-strong);
+	letter-spacing: var(--tracking-tight);
+	color: var(--ink);
+}
+.onboard-sub {
+	max-width: 80ch;
+	margin-top: 6px;
+	font-size: var(--text-14);
+	line-height: 1.55;
+	color: var(--ink-dim);
+}
+.onboard-label {
+	margin-bottom: 12px;
+	font-size: var(--text-13);
+	font-weight: var(--weight-strong);
+	color: var(--ink);
+}
+
+/* GitHub: what the App can do beside the choice of repositories. */
+.onboard-github {
+	display: grid;
+	grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+	gap: 20px 32px;
+	align-items: start;
+}
+.onboard-grants {
+	display: grid;
+	gap: 10px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.onboard-grants li {
+	display: grid;
+	grid-template-columns: 22px minmax(0, 1fr);
+	align-items: start;
+	gap: 10px;
+}
+.onboard-grants svg {
+	width: 22px;
+	height: 22px;
+	padding: 4px;
+	border-radius: 50%;
+	background: var(--ok-wash);
+	color: var(--ok);
+}
+.onboard-grants span {
+	font-size: var(--text-13);
+	line-height: 1.5;
+	color: var(--ink-dim);
+}
+.onboard-grants strong {
+	margin-right: 8px;
+	font-size: var(--text-14);
+	font-weight: var(--weight-medium);
+	color: var(--ink);
+}
+.onboard-aside {
+	padding: 18px 20px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-pop);
+	background: var(--bg-sunk);
+}
+.onboard-aside p {
+	font-size: var(--text-13);
+	line-height: 1.55;
+	color: var(--ink-dim);
+}
+.onboard-aside .onboard-aside-note {
+	display: grid;
+	grid-template-columns: 14px minmax(0, 1fr);
+	gap: 10px;
+	margin-top: 14px;
+	padding-top: 14px;
+	border-top: 1px solid var(--line);
+	color: var(--ink-faint);
+}
+.onboard-aside-note svg {
+	margin-top: 3px;
+}
+
+.onboard-box {
+	display: grid;
+	justify-items: start;
+	gap: 8px;
+}
+.onboard-done {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: var(--text-14);
+	color: var(--ink);
+}
+.onboard-done svg {
+	flex: none;
+	color: var(--ok);
+}
+.onboard-choice,
+.onboard-box > .input,
+.onboard-box > .onboard-panel,
+.onboard-agent-head {
+	width: 100%;
+}
+/* A choice in a list: a radio ring, its words, and a quieter line under them. */
+.onboard-choice {
+	display: grid;
+	grid-template-columns: 16px minmax(0, 1fr);
+	align-items: center;
+	column-gap: 10px;
+	row-gap: 2px;
+	padding: 11px 14px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-control);
+	background: var(--bg-raised);
+	text-align: left;
+	font-size: var(--text-14);
+	color: var(--ink);
+	cursor: pointer;
+	transition:
+		border-color var(--dur-hover) var(--ease),
+		background-color var(--dur-hover) var(--ease);
+}
+.onboard-choice::before {
+	content: "";
+	grid-row: span 2;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	box-shadow: inset 0 0 0 1.5px var(--line-field);
+}
+.onboard-choice:hover:not(:disabled) {
+	background: var(--bg-hover);
+}
+.onboard-choice:disabled {
+	cursor: default;
+	opacity: 0.55;
+}
+.onboard-choice[aria-checked="true"] {
+	border-color: var(--accent-edge);
+	background: var(--accent-wash);
+}
+.onboard-choice[aria-checked="true"]::before {
+	box-shadow: inset 0 0 0 4px var(--accent);
+}
+.onboard-choice small {
+	font-size: var(--text-12);
+	color: var(--ink-faint);
+}
+.onboard-choice-mono {
+	font-family: var(--font-mono);
+	font-size: var(--text-13);
+}
+.onboard-repos {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.onboard-agents {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	gap: 14px;
+}
+.onboard-agents .onboard-box {
+	align-content: start;
+	padding: 18px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-pop);
+	background: var(--bg-sunk);
+}
+.onboard-agents .onboard-choice {
+	padding-block: 8px;
+	font-size: var(--text-13);
+	background: transparent;
+}
+.onboard-agent-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+.onboard-agent-head .conn-state {
+	margin-left: auto;
+}
+.onboard-panel {
+	display: grid;
+	gap: 8px;
+}
+.onboard-panel:empty {
+	display: none;
+}
+.onboard-panel .field-note {
+	margin: 0;
+}
+.onboard-note {
+	margin-top: 16px;
+	font-size: var(--text-13);
+	color: var(--ink-faint);
+}
+/* The first item: the starter tasks beside the user's own words. */
+.onboard-open[data-step="4"] .onboard-box {
+	grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+	align-items: stretch;
+	gap: 12px 20px;
+}
+.onboard-open[data-step="4"] .onboard-box > :not(.onboard-panel, textarea) {
+	grid-column: 1 / -1;
+}
+.onboard textarea {
+	min-height: 96px;
+	resize: vertical;
+}
+.onboard-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px 14px;
+	margin-top: 20px;
+	padding-top: 18px;
+	border-top: 1px solid var(--line);
+}
+.onboard-foot-end {
+	display: flex;
+	gap: 8px;
+	margin-left: auto;
+}
+.onboard-foot-note {
+	font-size: var(--text-13);
+	color: var(--ink-faint);
+}
+.onboard-open .failure,
+.onboard-open .callout {
+	margin-top: 14px;
+}
+.onboard-resume {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-top: 16px;
+	font-size: var(--text-13);
+	color: var(--ink-dim);
+}
+
+/* What you'll get: the way a task goes, and an example item at its end. */
+.onboard-outcome {
+	margin-top: 48px;
+	animation: arrive 320ms var(--ease-out) 80ms both;
+}
+.onboard-outcome-title {
+	font-size: var(--text-16);
+	font-weight: var(--weight-strong);
+	letter-spacing: -0.01em;
+	color: var(--ink);
+}
+.onboard-flow {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 16px;
+	margin: 18px 0 0;
+	padding: 0;
+	list-style: none;
+}
+.onboard-flow li {
+	position: relative;
+	display: grid;
+	align-content: start;
+	gap: 4px;
+	min-width: 0;
+}
+/* A dashed thread from each step's icon to the next. */
+.onboard-flow li:not(:last-child)::after {
+	content: "";
+	position: absolute;
+	top: 16px;
+	left: 44px;
+	right: -8px;
+	border-top: 1px dashed var(--line-strong);
+}
+.onboard-flow-icon {
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	margin-bottom: 8px;
+	border: 1px solid var(--line-strong);
+	border-radius: 50%;
+	background: var(--bg-raised);
+	color: var(--ink-dim);
+}
+.onboard-flow li:last-child .onboard-flow-icon {
+	border-color: var(--accent-edge);
+	color: var(--accent-text);
+}
+.onboard-flow strong {
+	font-size: var(--text-14);
+	font-weight: var(--weight-medium);
+	color: var(--ink);
+}
+.onboard-flow span:last-child {
+	font-size: var(--text-13);
+	line-height: 1.5;
+	color: var(--ink-dim);
+}
+.onboard-example {
+	margin: 24px 0 0;
+	border: 1px solid var(--line);
+	border-radius: var(--r-box);
+	background: var(--bg-sunk);
+	overflow: hidden;
+}
+.onboard-example figcaption {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 10px;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--line);
+	font-size: var(--text-13);
+	color: var(--ink-dim);
+}
+.onboard-example-tag {
+	padding: 1px 8px;
+	border: 1px dashed var(--accent-edge);
+	border-radius: var(--radius-pill);
+	font-size: var(--text-11);
+	font-weight: var(--weight-strong);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--accent-text);
+}
+.onboard-example .agents {
+	padding: 4px 8px;
+	background: var(--bg-raised);
+	list-style: none;
+}
+
+@media (min-width: 561px) {
+	/* The order inline puts the open step under its card on a phone; here it goes under the whole row. */
+	.onboard-open {
+		order: 99 !important;
+	}
+}
+@media (max-width: 900px) {
+	.onboard-cards,
+	.onboard-flow {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.onboard-flow {
+		row-gap: 24px;
+	}
+	.onboard-flow li:nth-child(2)::after {
+		display: none;
+	}
+	.onboard-github {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+@media (max-width: 560px) {
+	.onboard-head {
+		margin-bottom: 16px;
+	}
+	.onboard-cards {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 10px;
+	}
+	.onboard-open {
+		margin-top: -2px;
+		padding: 20px 16px 16px;
+	}
+	.onboard-card {
+		display: grid;
+		grid-template-columns: 32px minmax(0, 1fr);
+		column-gap: 12px;
+		row-gap: 2px;
+		padding: 14px;
+	}
+	.onboard-card-top {
+		grid-row: span 3;
+		align-self: start;
+		margin: 0;
+	}
+	.onboard-card-step {
+		display: none;
+	}
+	.onboard-card > :not(.onboard-card-top) {
+		grid-column: 2;
+	}
+	.onboard-card-action {
+		min-height: 0;
+		margin-top: 2px;
+	}
+	.onboard-card-action:empty,
+	.onboard-card-now {
+		display: none;
+	}
+	.onboard-repos,
+	.onboard-open[data-step="4"] .onboard-box {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.onboard-agents {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.onboard-agents .onboard-box {
+		padding: 14px;
+	}
+	.onboard-foot > .button-primary {
+		width: 100%;
+	}
+	.onboard-foot-end {
+		width: 100%;
+		margin-left: 0;
+	}
+	.onboard-foot-end .button {
+		flex: 1;
+	}
+	.onboard-outcome {
+		margin-top: 36px;
+	}
+	/* The example's row is crowded on a phone: its words say where it stands, without the track and the time. */
+	.onboard-example .agent-time,
+	.onboard-example .item-track {
+		display: none;
+	}
+	.onboard-flow {
+		grid-template-columns: minmax(0, 1fr);
+		row-gap: 0;
+	}
+	/* A phone reads the flow downwards: the icon on the left, the thread under it. */
+	.onboard-flow li {
+		grid-template-columns: 32px minmax(0, 1fr);
+		column-gap: 12px;
+		row-gap: 2px;
+		padding-bottom: 18px;
+	}
+	.onboard-flow-icon {
+		grid-row: span 2;
+		margin: 0;
+	}
+	.onboard-flow li:not(:last-child)::after,
+	.onboard-flow li:nth-child(2)::after {
+		display: block;
+		top: 38px;
+		bottom: 4px;
+		left: 16px;
+		right: auto;
+		border-top: 0;
+		border-left: 1px dashed var(--line-strong);
+	}
+}
+
+/* Plan and key rows on Connections: the state column wide enough for a plan's limit, and no hover on rows that are not links. */
+.connections .provider-row {
+	grid-template-columns: minmax(0, 1fr) 160px auto;
+}
+.connections .provider-row:hover {
+	background: none;
+}
+@media (max-width: 560px) {
+	.connections .provider-row {
+		grid-template-columns: minmax(0, 1fr) auto;
+	}
+}
+.connections .provider-row .provider-state {
+	justify-self: start;
+}
+.plan-connect .field-note code {
+	white-space: nowrap;
+}

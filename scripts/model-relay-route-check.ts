@@ -1,7 +1,8 @@
 /**
- * Windlass's model relay without Docker or E2B (docs/model-relay.md): the turn's token file on a relayed
- * sandbox (token-file.ts), the E2B relay route (server/src/model-relay-route.ts) and its leases and
- * limits (server/src/sandbox/relay-leases.ts), and the E2B network with the relay's host.
+ * The model relay without Docker or E2B (docs/model-relay.md): a machine turn's token file on a relayed
+ * sandbox (token-file.ts), the platform relay route (server/src/model-relay-route.ts) with hosted Windlass on
+ * the ChatGPT plan and Settings keys, its leases and limits (server/src/sandbox/relay-leases.ts), and the E2B
+ * network with the relay's host.
  *
  *   cd server && npx tsx ../scripts/model-relay-route-check.ts
  *
@@ -17,12 +18,15 @@ import { validArgs } from "../server/src/runner/protocol.js";
 import { carriesSecret } from "../server/src/runner/channel.js";
 import type { ForwardedKeyLease } from "../server/src/sandbox/provider.js";
 import { createRequire } from "node:module";
-import { MODEL_PROVIDERS } from "../server/src/contract.js";
+import { MODEL_PROVIDERS, type CredentialRef, type RelaySeen } from "../server/src/contract.js";
 import { modelKeyCaller } from "../server/src/actors/internal.js";
-import { MODEL_PROVIDER_TABLES, modelProviderActions } from "../server/src/model-providers.js";
+import { modelProviderActions } from "../server/src/credentials/keys.js";
+import { CREDENTIAL_TABLES, credentialActions } from "../server/src/credentials/index.js";
+import { openSavedCredential, sealCredentialTransit } from "../server/src/credentials/transit.js";
+import { hostedKeyEnv, windlassPlanEnv } from "../server/src/sandbox/hosted-keys.js";
 import { issueServiceToken, issueUserToken } from "../server/src/tokens.js";
 import { serverSealer } from "../server/src/signin/seal.js";
-import { TokenFile, TokenFileError, openModelKeyRelay } from "../server/src/sandbox/token-file.js";
+import { TokenFileError, openModelKeyRelay } from "../server/src/sandbox/token-file.js";
 import {
 	BodyBudget,
 	RelayLimiter,
@@ -31,7 +35,6 @@ import {
 	holdsLease,
 	leaseToken,
 	remoteLease,
-	relayTransitSubject,
 	openRelayLease,
 	readPlaceholder,
 	type RemoteLease,
@@ -45,7 +48,7 @@ import {
 } from "../server/src/model-relay-route.js";
 import { createServer } from "node:http";
 import { brotliCompressSync, gzipSync } from "node:zlib";
-import { e2bModelRelay, readE2bNetwork } from "../server/src/sandbox/e2b/network.js";
+import { e2bModelRelay, readE2bNetwork, withPlanHosts } from "../server/src/sandbox/e2b/network.js";
 import { parseModelRelayUrl } from "../server/src/model-relay-url.js";
 import { dayOf, TOKEN_USAGE_TABLE, recordTurnTokens, tokensOn } from "../server/src/usage.js";
 import { checkHostedTurn } from "./hosted-agent-turn.js";
@@ -56,7 +59,6 @@ import { E2bSandboxHandle, E2bProvider } from "../server/src/sandbox/e2b/sandbox
 import { DockerSandboxes } from "../server/src/sandbox/sandboxes.js";
 import type { DockerModelRelay } from "../server/src/sandbox/model-relay.js";
 import { RELAY_REFUSED, relayRefused } from "../server/src/sandbox/handoff.js";
-import type { AccessToken } from "../server/src/sandbox/api.js";
 import { keyedDigest, signedPayload } from "../server/src/signatures.js";
 import { randomBytes } from "node:crypto";
 import { OkReport } from "./check-report.js";
@@ -66,6 +68,18 @@ const tally = new OkReport();
 const { expect } = tally;
 const REAL_A = "real-chatgpt-token-A-" + "a".repeat(48);
 const REAL_B = "real-chatgpt-token-B-" + "b".repeat(48);
+/** Hosted Windlass on the ChatGPT plan: its lease names the plan, and the route asks for its current token per request. */
+const PLAN = { provider: "openai", generation: "plan-g1", plan: true, harness: "windlass" } as const;
+let planToken: string | null = REAL_A;
+const planCredential = async (user: string, ref: { provider: string; plan?: true }, nonce: string) =>
+	ref.plan && ref.provider === "openai" && planToken !== null
+		? sealCredentialTransit(user, { provider: "openai", plan: true }, nonce, {
+				secret: planToken,
+				generation: PLAN.generation,
+			})
+		: null;
+const planLease = (uid: string, sessionId: string, origin = "https://wlp.example.com", ttlMs = 60_000) =>
+	openRelayLease({ uid, sessionId, origin, ttlMs, key: PLAN });
 
 async function relayGuest(
 	uid: string,
@@ -146,12 +160,7 @@ async function machineKeyChecks() {
 					},
 					{
 						paired: async (owner, id) => paired && owner === uid && id === machine,
-						key: async (user, p, n) =>
-							serverSealer().seal(
-								"transit",
-								JSON.stringify(["model-key", user, p, n]),
-								JSON.stringify({ key: "fixture", generation, exp: Date.now() + 60_000 }),
-							),
+						credential: async (user, ref, n) => sealCredentialTransit(user, ref, n, { secret: "fixture", generation }),
 					},
 				);
 				const send = (path: string, method: string) =>
@@ -235,150 +244,17 @@ async function machineKeyChecks() {
 }
 if (process.argv.includes("--key-wires")) {
 	for (const provider of MODEL_PROVIDERS) await keyWireCheck(provider);
+	await planWireCheck();
+	await chatgptPlanWireCheck();
+	process.exit(0);
+}
+if (process.argv.includes("--plan-wire")) {
+	await planWireCheck();
+	await chatgptPlanWireCheck();
 	process.exit(0);
 }
 await machineKeyChecks();
 if (process.argv.some(arg => arg.startsWith("--machine-key="))) process.exit(0);
-
-// ---- the token file of a relayed turn ---------------------------------------------------------
-
-{
-	const written: { path: string; content: string }[] = [];
-	const handed: AccessToken[] = [];
-	let closed = 0;
-	const relay = {
-		placeholder: "wlp-model." + "c".repeat(32),
-		env: { WINDLASS_MODEL_BASE_URL: "http://127.0.0.1:17893/v1" },
-		hand: async (token: AccessToken) => {
-			handed.push(token);
-		},
-		close: async () => {
-			closed += 1;
-		},
-	};
-	const sandbox = {
-		id: "abcdefabcdef",
-		uid: "u1",
-		profile: "docker-hardened",
-		modelRelay: async () => relay,
-		writeSecretFile: async (path: string, content: string) => {
-			written.push({ path, content });
-		},
-	};
-	let next: AccessToken = { accessToken: REAL_A, expiresAt: Date.now() + 25 * 60_000 };
-	const tokens = { current: async () => next };
-	const file = new TokenFile(sandbox as never, tokens as never, {
-		leadMs: 25 * 60_000 - 300,
-		retryMs: 50,
-		log: () => {},
-	});
-	await file.start();
-	expect(
-		"a relayed turn's token goes to the relay, and the sandbox's file holds only the placeholder",
-		handed[0]?.accessToken === REAL_A &&
-			written.length === 1 &&
-			JSON.parse(written[0].content).accessToken === relay.placeholder &&
-			!written.some(w => w.content.includes(REAL_A)),
-		JSON.stringify(written),
-	);
-	expect(
-		"the placeholder carries the real token's expiry, so Windlass still refuses an expired one",
-		JSON.parse(written[0].content).expiresAt === next.expiresAt,
-	);
-	expect(
-		"Windlass is started with the relay's address",
-		file.env.WINDLASS_MODEL_BASE_URL === "http://127.0.0.1:17893/v1" && file.relayed,
-	);
-	// The replacement: the next token goes to the relay too, never into the sandbox.
-	next = { accessToken: REAL_B, expiresAt: Date.now() + 50 * 60_000 };
-	for (let i = 0; i < 100 && handed.length < 2; i++) await sleep(20);
-	expect(
-		"a replaced token goes to the relay while the turn runs, and the file gets the placeholder again",
-		handed[1]?.accessToken === REAL_B &&
-			written.length === 2 &&
-			!written.some(w => w.content.includes(REAL_B)) &&
-			JSON.parse(written[1].content).accessToken === relay.placeholder,
-		JSON.stringify({ handed: handed.length, written: written.length }),
-	);
-	expect(
-		"a token printed by a command is still taken out of the engine's output",
-		file.scrub(`x ${REAL_A} ${relay.placeholder}`) === "x [access token removed] [access token removed]",
-	);
-	await file.stop();
-	expect("the lease ends with the turn", closed === 1);
-}
-{
-	// Fail closed: a relay that cannot be had fails the turn, and nothing goes into the sandbox.
-	const written: string[] = [];
-	const sandbox = {
-		id: "abcdefabcdef",
-		uid: "u1",
-		profile: "docker-hardened",
-		modelRelay: async () => {
-			throw new Error("docker is gone");
-		},
-		writeSecretFile: async (_: string, content: string) => {
-			written.push(content);
-		},
-	};
-	const file = new TokenFile(
-		sandbox as never,
-		{ current: async () => ({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 }) } as never,
-		{ log: () => {} },
-	);
-	const error = await file.start().then(
-		() => null,
-		(e: unknown) => e,
-	);
-	expect(
-		"a relay that cannot be started fails the turn, with no fallback to writing the token into the sandbox",
-		error instanceof TokenFileError &&
-			/model relay could not be started: docker is gone/.test(String((error as Error).message)) &&
-			written.length === 0,
-		String(error),
-	);
-	const handFails = {
-		id: "abcdefabcdef",
-		uid: "u1",
-		profile: "docker-hardened",
-		writeSecretFile: sandbox.writeSecretFile,
-		modelRelay: async () => ({
-			placeholder: "wlp-model." + "d".repeat(32),
-			env: {},
-			hand: async () => {
-				throw new Error("relay refused");
-			},
-			close: async () => {},
-		}),
-	};
-	const second = new TokenFile(
-		handFails as never,
-		{ current: async () => ({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 }) } as never,
-		{ log: () => {} },
-	);
-	const refused = await second.start().then(
-		() => null,
-		(e: unknown) => e,
-	);
-	expect(
-		"a relay that refuses the token fails the turn too, and the sandbox gets nothing",
-		refused instanceof TokenFileError && written.length === 0,
-		String(refused),
-	);
-	// Without a relay (a runner 0.3.x, WLP_MODEL_RELAY=off): the file holds the token, as before.
-	const plain = { id: "abcdefabcdef", uid: "u1", profile: "docker-hardened", writeSecretFile: sandbox.writeSecretFile };
-	const old = new TokenFile(
-		plain as never,
-		{ current: async () => ({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 }) } as never,
-		{ log: () => {} },
-	);
-	await old.start();
-	await old.stop();
-	expect(
-		"without a relay the token goes into the file, as on runners before model-relay",
-		written.length === 1 && JSON.parse(written[0]).accessToken === REAL_A && !old.relayed,
-	);
-}
 
 // ---- the E2B route ----------------------------------------------------------------------------
 
@@ -435,7 +311,7 @@ const call = (placeholder: string, path = "/model-relay/v1/responses", init: Req
 function deps(fetch: typeof globalThis.fetch, extra: Partial<RelayRouteDeps> = {}): RelayRouteDeps {
 	return {
 		paired: async () => true,
-		key: async () => null,
+		credential: planCredential,
 		remote: async () => null,
 		fetch,
 		limiter: new RelayLimiter(),
@@ -448,30 +324,15 @@ function deps(fetch: typeof globalThis.fetch, extra: Partial<RelayRouteDeps> = {
 /** A placeholder of a lease another server process of the deployment opened: signed as theirs are, unknown to this process. */
 function foreignPlaceholder(uid: string, sessionId: string, ttlMs = 60_000): string {
 	return signedPayload("wlpm1", "model-relay", {
-		k: "m",
+		k: "h",
 		u: uid,
 		s: sessionId,
 		n: randomBytes(16).toString("hex"),
 		exp: Date.now() + ttlMs,
 	});
 }
-function sealedRemote(
-	uid: string,
-	session: string,
-	lease: string,
-	request: string,
-	access: AccessToken,
-	exp = Date.now() + 60_000,
-): RemoteLease {
-	return {
-		held: true,
-		token: serverSealer().seal(
-			"transit",
-			relayTransitSubject(uid, session, lease, request),
-			JSON.stringify({ ...access, exp }),
-		),
-	};
-}
+/** What the session actor of another server process answers for a live plan lease: its reference, no secret. */
+const heldPlan: RemoteLease = { held: true, token: PLAN };
 /** Reads on until the stream ends or fails; "still running" when it does neither within `ms`. */
 async function untilEnd(
 	reader: ReadableStreamDefaultReader<Uint8Array>,
@@ -505,35 +366,33 @@ const code = async (res: Response) =>
 			? Response.json({ models: [{ slug: "m" }], echo: s.authorization })
 			: sse(`echo ${s.authorization}`),
 	);
-	const lease = openRelayLease({
-		uid: "u1",
-		sessionId: "sess-1",
-		origin: "https://wlp.example.com",
-		ttlMs: 60 * 60_000,
-	});
+	const lease = planLease("u1", "sess-1", "https://wlp.example.com", 60 * 60_000);
+	const env = windlassPlanEnv(lease, "/dev/shm/access-token-abcdefabcdef.json");
 	expect(
-		"the E2B lease gives Windlass the route under WLP_PUBLIC_URL, with the exact origin a relay outside loopback needs",
-		lease.env.WINDLASS_MODEL_BASE_URL === "https://wlp.example.com/model-relay/v1" &&
-			lease.env.WINDLASS_MODEL_ALLOWED_ORIGIN === "https://wlp.example.com",
-		JSON.stringify(lease.env),
+		"hosted Windlass on the ChatGPT plan gets the route's chatgpt-plan base and exact origin, its ChatGPT provider and a token file",
+		env.WINDLASS_MODEL_BASE_URL === "https://wlp.example.com/model-relay/v1" &&
+			env.WINDLASS_MODEL_ALLOWED_ORIGIN === "https://wlp.example.com" &&
+			env.WINDLASS_PROVIDER === "chatgpt" &&
+			env.WINDLASS_ACCESS_TOKEN_FILE === "/dev/shm/access-token-abcdefabcdef.json" &&
+			!JSON.stringify(env).includes(lease.placeholder),
+		JSON.stringify(env),
 	);
 	expect(
 		"the placeholder is no token and names no secret",
 		!lease.placeholder.includes(REAL_A) && readPlaceholder(lease.placeholder)?.uid === "u1",
 	);
+	planToken = null;
 	const early = await modelRelayResponse(call(lease.placeholder), deps(up.fetch));
 	expect(
-		"before the token is handed the lease is refused, with the relay's own code",
+		"while the plan gives no token the lease is refused, with the relay's own code",
 		early.status === 401 && up.seen.length === 0 && (await code(early)) === "relay_lease_ended",
 	);
-	await lease.hand({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 });
+	planToken = REAL_A;
 	const { nonce } = readPlaceholder(lease.placeholder)!;
-	const envelope = await remoteLease(nonce, "u1", "sess-1", randomBytes(16).toString("hex"));
+	const envelope = await remoteLease(nonce, "u1", "sess-1");
 	expect(
-		"the session actor returns the ChatGPT token sealed for transit",
-		typeof envelope.token === "string" &&
-			envelope.token.startsWith("wlps1.") &&
-			!JSON.stringify(envelope).includes(REAL_A),
+		"the session actor answers the lease's plan reference, never a token",
+		JSON.stringify(envelope.token) === JSON.stringify(PLAN) && !JSON.stringify(envelope).includes(REAL_A),
 	);
 	const streamed = await modelRelayResponse(call(lease.placeholder), deps(up.fetch));
 	const text = await streamed.text();
@@ -577,13 +436,14 @@ const code = async (res: Response) =>
 		);
 		expect(`${method} ${path} is refused`, res.status === 403, String(res.status));
 	}
-	// Refresh: a new token handed while the turn runs is the next request's.
-	await lease.hand({ accessToken: REAL_B, expiresAt: Date.now() + 3_600_000 });
+	// Refresh: the holder refreshed the plan's sign-in while the turn runs; the next request carries the new token.
+	planToken = REAL_B;
 	await (await modelRelayResponse(call(lease.placeholder), deps(up.fetch))).text();
 	expect(
-		"a token replaced while the turn runs is the one the next request carries",
+		"the plan's token refreshed while the turn runs is the one the next request carries, on the same lease",
 		up.seen.at(-1)?.authorization === `Bearer ${REAL_B}`,
 	);
+	planToken = REAL_A;
 
 	// Forged, foreign, expired and ended.
 	const [v, kid, data, mac] = lease.placeholder.split(".");
@@ -622,7 +482,7 @@ const code = async (res: Response) =>
 {
 	// A lease of another server process that has ended is asked about once: the answer is kept until its placeholder expires.
 	const up = upstream(() => sse("ok"));
-	const local = openRelayLease({ uid: "u4", sessionId: "sess-4", origin: "https://relay.example.com", ttlMs: 60_000 });
+	const local = planLease("u4", "sess-4", "https://relay.example.com");
 	await local.close();
 	let asked = 0;
 	const d = deps(up.fetch, {
@@ -643,14 +503,14 @@ const code = async (res: Response) =>
 	);
 }
 {
-	// A lease another server process holds: its session's actor answers, and the answer is kept briefly.
+	// A lease another server process holds: its session's actor answers with the lease's reference.
 	const up = upstream(() => sse("ok"));
 	const placeholder = foreignPlaceholder("u3", "sess-3");
 	const asked: string[] = [];
-	let answer: AccessToken | null = { accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 };
-	const remote = async (uid: string, sessionId: string, nonce: string, request: string): Promise<RemoteLease> => {
+	let held = true;
+	const remote = async (uid: string, sessionId: string, nonce: string): Promise<RemoteLease> => {
 		asked.push(`${uid}/${sessionId}/${nonce.length}`);
-		return answer === null ? { held: false, token: null } : sealedRemote(uid, sessionId, nonce, request, answer);
+		return held ? heldPlan : { held: false, token: null };
 	};
 	const d = deps(up.fetch, { remote });
 	const first = await modelRelayResponse(call(placeholder), d);
@@ -660,7 +520,7 @@ const code = async (res: Response) =>
 		first.status === 200 && asked[0] === "u3/sess-3/32" && up.seen[0]?.authorization === `Bearer ${REAL_A}`,
 		asked.join(),
 	);
-	answer = null;
+	held = false;
 	const ended = await modelRelayResponse(call(placeholder), { ...d, now: () => Date.now() + 10_000 });
 	expect("when that actor says the turn has ended, the placeholder is refused", ended.status === 401);
 }
@@ -676,11 +536,13 @@ const code = async (res: Response) =>
 		totalWaiting: 10,
 		waitMs: 200,
 	});
-	const a = openRelayLease({ uid: "u1", sessionId: "a", origin: "https://wlp.example.com", ttlMs: 60_000 });
-	const b = openRelayLease({ uid: "u2", sessionId: "b", origin: "https://wlp.example.com", ttlMs: 60_000 });
-	await a.hand({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 });
-	await b.hand({ accessToken: REAL_B, expiresAt: Date.now() + 3_600_000 });
-	const d = deps(up.fetch, { limiter });
+	const a = planLease("u1", "a");
+	const b = planLease("u2", "b");
+	const d = deps(up.fetch, {
+		limiter,
+		credential: async (user, ref, nonce) =>
+			sealCredentialTransit(user, ref, nonce, { secret: user === "u2" ? REAL_B : REAL_A, generation: PLAN.generation }),
+	});
 	const held = [modelRelayResponse(call(a.placeholder), d), modelRelayResponse(call(a.placeholder), d)];
 	while (release.length < 2) await sleep(5);
 	const waiting = modelRelayResponse(call(a.placeholder), d);
@@ -739,8 +601,7 @@ const code = async (res: Response) =>
 				},
 			),
 	);
-	const a = openRelayLease({ uid: "u1", sessionId: "e", origin: "https://wlp.example.com", ttlMs: 60_000 });
-	await a.hand({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 });
+	const a = planLease("u1", "e");
 	const res = await modelRelayResponse(call(a.placeholder), deps(up.fetch));
 	const body = await res.text();
 	expect(
@@ -773,8 +634,7 @@ const code = async (res: Response) =>
 		totalWaiting: 10,
 		waitMs: 5_000,
 	});
-	const a = openRelayLease({ uid: "u1", sessionId: "q", origin: "https://relay.example.com", ttlMs: 60_000 });
-	await a.hand({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 });
+	const a = planLease("u1", "q", "https://relay.example.com");
 	const d = deps(up.fetch, { limiter });
 	const first = modelRelayResponse(call(a.placeholder), d);
 	while (release.length < 1) await sleep(5);
@@ -793,8 +653,7 @@ const code = async (res: Response) =>
 {
 	// The body is counted as it is read: past its limit the request fails as too large, and the bodies in flight have a ceiling.
 	const up = upstream(() => sse("ok"));
-	const a = openRelayLease({ uid: "u1", sessionId: "big", origin: "https://relay.example.com", ttlMs: 60_000 });
-	await a.hand({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 });
+	const a = planLease("u1", "big", "https://relay.example.com");
 	const chunks = (n: number, size: number) =>
 		new ReadableStream<Uint8Array>({
 			start(c) {
@@ -877,8 +736,7 @@ const code = async (res: Response) =>
 		seen.signal?.addEventListener("abort", () => push.error(new Error("aborted")));
 		return new Response(body, { headers: { "content-type": "text/event-stream" } });
 	});
-	const a = openRelayLease({ uid: "u1", sessionId: "abort", origin: "https://relay.example.com", ttlMs: 60_000 });
-	await a.hand({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 });
+	const a = planLease("u1", "abort", "https://relay.example.com");
 	const res = await modelRelayResponse(call(a.placeholder), deps(up.fetch));
 	const reader = res.body!.getReader();
 	await reader.read();
@@ -907,10 +765,7 @@ const code = async (res: Response) =>
 	);
 	const placeholder = foreignPlaceholder("u7", "far");
 	const d = deps(up.fetch, {
-		remote: async (uid, session, lease, request): Promise<RemoteLease> =>
-			held
-				? sealedRemote(uid, session, lease, request, { accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 })
-				: { held: false, token: null },
+		remote: async (): Promise<RemoteLease> => (held ? heldPlan : { held: false, token: null }),
 	});
 	const res = await modelRelayResponse(call(placeholder), d);
 	const reader = res.body!.getReader();
@@ -993,30 +848,15 @@ const code = async (res: Response) =>
 	);
 }
 {
-	// An E2B sandbox with an empty wlp_session refuses the relay, and its turn gets nothing.
+	// An E2B sandbox with an empty wlp_session refuses the route's lease, and its turn gets nothing.
 	const handle = await relayGuest("u1", "");
-	const written: string[] = [];
-	(handle as unknown as { writeSecretFile: (p: string, c: string) => Promise<void> }).writeSecretFile = async (
-		_p,
-		c,
-	) => {
-		written.push(c);
-	};
-	const file = new TokenFile(
-		handle,
-		{ current: async () => ({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 }) } as never,
-		{ log: () => {} },
-	);
-	const error = await file.start().then(
+	const error = await openModelKeyRelay(handle, "", { provider: "openai", generation: "g", harness: "codex" }).then(
 		() => null,
 		(e: unknown) => e,
 	);
 	expect(
-		"an E2B sandbox with an empty wlp_session fails the turn and is never handed the token",
-		typeof handle.modelRelay === "function" &&
-			error instanceof TokenFileError &&
-			/names no session/.test(String(error)) &&
-			written.length === 0,
+		"an E2B sandbox with an empty wlp_session fails a key turn before any lease is opened",
+		error instanceof Error && /names no session/.test(String(error)),
 		String(error),
 	);
 }
@@ -1132,8 +972,7 @@ const code = async (res: Response) =>
 	expect("a redirect is not followed", moved.status === 307 && got.at(-1)!.url === "/v1/moved");
 
 	// Through the route: the client's accept-encoding goes on, a 200 with no type is passed on as the stream it is, a page is not.
-	const a = openRelayLease({ uid: "u1", sessionId: "wire", origin: "https://relay.example.com", ttlMs: 60_000 });
-	await a.hand({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 });
+	const a = planLease("u1", "wire", "https://relay.example.com");
 	const via = (path: string) =>
 		deps(((_input: string, init: RequestInit) =>
 			upstreamFetch(`${base}/v1/${path}`, init)) as unknown as typeof globalThis.fetch);
@@ -1181,17 +1020,15 @@ const code = async (res: Response) =>
 			},
 		};
 		const machine = machineLayer(link as never, {} as never);
-		const handle = (await machine.sandboxes.connect("box"))!;
-		await assert.rejects(
-			openModelKeyRelay(handle as never, "s", key),
-			/Update the runner to use Settings keys with Windlass on this machine/,
-		);
+		const handle = (await machine.sandboxes.connect("box")) as import("../server/src/sandbox/provider.js").TurnSandbox;
+		// Every supported runner has the plan relay; Settings keys need the connect's `modelRelay` (its Windlass reads the relay).
+		assert.equal(typeof handle.localPlanRelay, "function");
+		assert.equal(!!handle.modelKeyRelay, !!modelRelay && config.modelRelay.on);
 		assert.deepEqual(calls, []);
-		if (modelRelay) {
-			await (handle as import("../server/src/sandbox/provider.js").TurnSandbox).modelRelay!();
-			assert.deepEqual(calls, ["modelRelay"]);
-		}
 	}
+	console.log(
+		"PASS  a machine's sandbox always has the plan relay, and Settings keys where its connect says modelRelay",
+	);
 	for (const version of ["0.6.0", "0.7.0"]) {
 		const sandbox = {
 			ask: async () => ({ code: 0, stdout: "Windlass " + version }),
@@ -1204,24 +1041,26 @@ const code = async (res: Response) =>
 		openModelKeyRelay(sandbox as never, "s", { provider: "openai", generation: "g", harness: "codex" }),
 		TokenFileError,
 	);
+	// A plan's transit blob past its minute is never forwarded.
 	const expired = await modelRelayResponse(
 		call(foreignPlaceholder("u1", "expired-transit")),
 		deps(async () => assert.fail("expired token forwarded"), {
-			remote: async (uid, session, lease, request) =>
-				sealedRemote(
-					uid,
-					session,
-					lease,
-					request,
-					{ accessToken: REAL_A, expiresAt: Date.now() + 60_000 },
-					Date.now() - 1,
-				),
+			remote: async () => heldPlan,
+			credential: async (user, ref, nonce) => {
+				const realNow = Date.now;
+				Date.now = () => realNow() - 120_000;
+				try {
+					return sealCredentialTransit(user, ref, nonce, { secret: REAL_A, generation: PLAN.generation });
+				} finally {
+					Date.now = realNow;
+				}
+			},
 		}),
 	);
-	assert.equal(expired.status, 401);
+	assert.equal(expired.status, 503);
 }
 {
-	const input = { uid: "sweep", sessionId: "expired", origin: "https://relay.example.com" };
+	const input = { uid: "sweep", sessionId: "expired", origin: "https://relay.example.com", key: PLAN };
 	const expired = openRelayLease({ ...input, ttlMs: -1 });
 	const nonce = readPlaceholder(expired.placeholder, 0)!.nonce;
 	assert.ok(holdsLease(nonce));
@@ -1230,6 +1069,8 @@ const code = async (res: Response) =>
 	await next.close();
 }
 for (const provider of MODEL_PROVIDERS) await keyWireCheck(provider);
+await planWireCheck();
+await chatgptPlanWireCheck();
 async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 	const hosts = {
 		openai: "api.openai.com",
@@ -1262,7 +1103,7 @@ async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 	const auth = provider === "anthropic" ? "x-api-key" : provider === "google" ? "x-goog-api-key" : "authorization";
 	const credential = (value: string) => (auth === "authorization" ? "Bearer " + value : value);
 	const sql = new DatabaseSync(":memory:");
-	for (const statement of MODEL_PROVIDER_TABLES) sql.exec(statement);
+	for (const statement of CREDENTIAL_TABLES) sql.exec(statement);
 	sql
 		.prepare(
 			"INSERT INTO model_provider(provider, sealed, generation, last4, added_at, check_ok) VALUES (?, ?, ?, ?, ?, 1)",
@@ -1276,6 +1117,9 @@ async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 		);
 	const internal = {
 		key: [uid],
+		client: () => {
+			throw new Error("no actor client in this check");
+		},
 		vars: { tokenGen: 0 },
 		conn: { params: { token: issueServiceToken(modelKeyCaller(uid)) } },
 		db: {
@@ -1294,11 +1138,13 @@ async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 			?.tokens,
 		20,
 	);
-	assert.equal(await modelProviderActions.internalModelKeyGeneration(internal, provider), generation);
+	assert.equal(await credentialActions.internalCredentialGeneration(internal, { provider }), generation);
 	await assert.rejects(
-		modelProviderActions.internalModelKeyGeneration(
+		credentialActions.internalCredentialGeneration(
 			{ ...internal, conn: { params: { token: issueServiceToken() } } },
-			provider,
+			{
+				provider,
+			},
 		),
 	);
 	let mode: "ok" | "error" | "redirect" = "ok";
@@ -1364,10 +1210,10 @@ async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 			return upstreamFetch(base + url.pathname + url.search, init!);
 		},
 		{
-			key: async (user, p, nonce) => {
+			credential: async (user, ref, nonce) => {
 				assert.equal(user, uid);
-				assert.equal(p, provider);
-				return modelProviderActions.internalModelKey(internal, p, nonce);
+				assert.deepEqual(ref, { provider });
+				return credentialActions.internalCredential(internal, ref, nonce);
 			},
 		},
 	);
@@ -1435,7 +1281,7 @@ async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 			);
 			if (meta.run.remainingRequests === 3) {
 				const nonce = readPlaceholder(segment.placeholder)!.nonce;
-				assert.ok((await remoteLease(nonce, uid, sessionId, randomBytes(16).toString("hex"), true)).token);
+				assert.ok((await remoteLease(nonce, uid, sessionId, true)).token);
 			}
 			for (const status of expected) {
 				const res = await modelRelayResponse(
@@ -1462,7 +1308,7 @@ async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 		assert.equal((await send("/v1/chat/completions", "POST")).status, 403);
 		assert.equal((await send("/v1/models?client_version=0.171.0")).status, 200);
 		assert.equal(seen.at(-1), "/v1/models");
-		assert.ok((await remoteLease(signed.nonce, uid, sessionId, randomBytes(16).toString("hex"), true)).token);
+		assert.ok((await remoteLease(signed.nonce, uid, sessionId, true)).token);
 		assert.equal((await send("/v1/models")).status, 429);
 		controller.abort();
 		assert.equal((await send("/v1/models")).status, 401);
@@ -1704,10 +1550,10 @@ async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 		assert.ok(!halves.some(piece => text.includes(piece)));
 		const expired = await modelRelayResponse(endpoint(models), {
 			...d,
-			key: async (user, p, n) =>
+			credential: async (user, ref, n) =>
 				serverSealer().seal(
 					"transit",
-					JSON.stringify(["model-key", user, p, n]),
+					JSON.stringify(["model-key", user, ref.provider, n]),
 					JSON.stringify({ key, generation, exp: Date.now() - 1 }),
 				),
 		});
@@ -1716,7 +1562,7 @@ async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 		assert.equal((await modelRelayResponse(endpoint(models), d)).status, 401);
 		const owner = { ...internal, conn: { params: { token: issueUserToken({ uid, email: null, demo: false }, 0) } } };
 		await modelProviderActions.removeModelProvider(owner, provider);
-		assert.equal(await modelProviderActions.internalModelKeyGeneration(internal, provider), null);
+		assert.equal(await credentialActions.internalCredentialGeneration(internal, { provider }), null);
 		assert.equal((await modelRelayResponse(endpoint(models), d)).status, 401);
 		assert.equal(sent, before + 2);
 		assert.ok(!halves.some(piece => JSON.stringify(logs).includes(piece)), "key fragments in relay log");
@@ -1732,6 +1578,325 @@ async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 		assert.equal(await leaseToken(signed.nonce, uid, sessionId), null);
 	}
 	console.log("ok    " + provider + " hosted and machine key lease, routes, redaction and revocation");
+}
+
+/** A Claude plan: Claude Code's bearer placeholder becomes the plan's token as a bearer, for Claude Code only. */
+async function planWireCheck() {
+	const uid = "relay-plan",
+		sessionId = "session";
+	const token = "sk-ant-oat01-" + randomBytes(24).toString("hex");
+	let current = randomBytes(16).toString("hex");
+	const ref = { provider: "anthropic" as const, generation: current, plan: true as const };
+	const origin = "https://relay.example.com";
+	const e2b = await relayGuest(uid, sessionId);
+	e2b.ask = async () => ({ code: 0, stdout: "Windlass 0.7.1", stderr: "" });
+	// The plan's health (credentials/plan-health.ts): what the provider said of each answer goes to the user's actor.
+	let limited = false;
+	const reset = String(Math.floor(Date.now() / 1000) + 3600);
+	const up = upstream(() =>
+		limited
+			? Response.json(
+					{ type: "error", error: { type: "rate_limit_error", message: "limited" } },
+					{
+						status: 429,
+						headers: { "anthropic-ratelimit-unified-status": "rejected", "anthropic-ratelimit-unified-reset": reset },
+					},
+				)
+			: Response.json({ type: "message" }, { headers: { "anthropic-ratelimit-unified-5h-utilization": "0.3" } }),
+	);
+	const reports: Array<{ uid: string; ref: CredentialRef; seen: RelaySeen }> = [];
+	const d = deps(up.fetch, {
+		credential: async (user, saved, nonce) => {
+			assert.equal(user, uid);
+			assert.deepEqual(saved, { provider: "anthropic", plan: true });
+			return sealCredentialTransit(user, saved, nonce, { secret: token, generation: current });
+		},
+		observe: async (user, saved, seen) => void reports.push({ uid: user, ref: saved, seen }),
+	});
+	const send = (placeholder: string, path: string, headers: Record<string, string> = {}, method = "POST") =>
+		modelRelayResponse(
+			new Request(origin + "/model-relay" + path, {
+				method,
+				body: method === "POST" ? "{}" : undefined,
+				headers: {
+					authorization: "Bearer " + placeholder,
+					"anthropic-version": "2023-06-01",
+					...(method === "POST" && { "content-type": "application/json" }),
+					...headers,
+				},
+			}),
+			d,
+		);
+	const betas = { "anthropic-beta": "oauth-2025-04-20,claude-code-20250219,unknown-beta-2099-01-01" };
+
+	// An E2B or Daytona sandbox runs the plan's relay itself (plan-relay.ts): the token is opened for the turn and
+	// handed to it, and no platform lease is made. A generation that changed meanwhile starts nothing.
+	const local: string[] = [];
+	e2b.localPlanRelay = async (secret: string) => {
+		local.push(secret);
+		return {
+			placeholder: "wlp-plan." + "p".repeat(43),
+			env: { WINDLASS_MODEL_BASE_URL: "http://127.0.0.1:1" },
+			hand: async () => {},
+			close: async () => {},
+		};
+	};
+	const ownRelay = e2b;
+	const opener = () => openSavedCredential(uid, ref, d.credential);
+	const inSandbox = await openModelKeyRelay(
+		ownRelay,
+		sessionId,
+		{ ...ref, harness: "claude" },
+		undefined,
+		undefined,
+		opener,
+	);
+	assert.equal(inSandbox.env.WINDLASS_MODEL_BASE_URL, "http://127.0.0.1:1");
+	assert.deepEqual(local, [token]);
+	await assert.rejects(openModelKeyRelay(ownRelay, sessionId, { ...ref, harness: "claude" }), /secret opened/);
+	await assert.rejects(
+		openModelKeyRelay(ownRelay, sessionId, { ...ref, generation: "old", harness: "claude" }, undefined, undefined, () =>
+			openSavedCredential(uid, { ...ref, generation: "old" }, d.credential),
+		),
+		/changed, was removed/,
+	);
+	assert.deepEqual(local, [token]);
+	console.log("ok    claude-plan on a sandbox with its own relay: the token opened for the turn, at its generation");
+
+	// A sandbox without one (hosted Docker forwards to this route the same way): the route's own plan lease.
+	(e2b as { localPlanRelay?: unknown }).localPlanRelay = undefined;
+	const claude = await openModelKeyRelay(e2b, sessionId, { ...ref, harness: "claude" });
+	assert.equal(claude.env.WINDLASS_MODEL_BASE_URL, origin + "/model-relay");
+	assert.deepEqual(hostedKeyEnv("claude", ref, claude), {
+		ANTHROPIC_BASE_URL: origin + "/model-relay",
+		CLAUDE_CODE_OAUTH_TOKEN: claude.placeholder,
+	});
+	for (const path of ["/v1/messages?beta=true", "/v1/messages/count_tokens"]) {
+		const reply = await send(claude.placeholder, path, betas);
+		assert.equal(reply.status, 200, path);
+		await reply.text();
+		const seen = up.seen.at(-1)!;
+		assert.equal(seen.url, "https://api.anthropic.com" + path);
+		assert.equal(seen.authorization, "Bearer " + token, "the plan's token as the upstream bearer");
+		assert.equal(seen.headers.get("x-api-key"), null);
+		assert.equal(seen.headers.get("anthropic-version"), "2023-06-01");
+		assert.equal(seen.headers.get("anthropic-beta"), "oauth-2025-04-20,claude-code-20250219");
+	}
+	assert.equal(reports.length, 1, "successes are told at most every 15 seconds");
+	assert.deepEqual(reports[0]!.ref, ref);
+	assert.equal(reports[0]!.seen.status, 200);
+	assert.equal(reports[0]!.seen.headers["anthropic-ratelimit-unified-5h-utilization"], "0.3");
+	limited = true;
+	const refused = await send(claude.placeholder, "/v1/messages?beta=true", betas);
+	assert.equal(refused.status, 429);
+	await refused.text();
+	limited = false;
+	assert.equal(reports.at(-1)!.seen.status, 429);
+	assert.equal(reports.at(-1)!.seen.headers["anthropic-ratelimit-unified-reset"], reset);
+	assert.equal(reports.at(-1)!.seen.code, "rate_limit_error");
+	console.log("ok    claude-plan answers tell the plan's health: a success, then a limit with its reset");
+	const models = await send(claude.placeholder, "/v1/models", {}, "GET");
+	assert.equal(models.status, 200);
+	await models.text();
+	const sent = up.seen.length;
+	const hello = await send(claude.placeholder, "/api/hello", {}, "HEAD");
+	assert.equal(hello.status, 200, "Claude Code's HEAD /api/hello on a plan lease");
+	const asKey = await modelRelayResponse(
+		new Request(origin + "/model-relay/v1/messages", {
+			method: "POST",
+			body: "{}",
+			headers: { "x-api-key": claude.placeholder, "anthropic-version": "2023-06-01" },
+		}),
+		d,
+	);
+	assert.equal(asKey.status, 403, "a plan lease takes its placeholder as a bearer only");
+	assert.equal(up.seen.length, sent, "neither reaches the provider");
+	console.log("ok    claude-plan bearer swapped for the plan token, betas filtered, /api/hello allowed");
+
+	for (const harness of ["codex", "opencode", "windlass"] as const) {
+		const other = await openModelKeyRelay(e2b, sessionId, { ...ref, harness });
+		assert.equal((await send(other.placeholder, "/v1/messages", betas)).status, 403, harness);
+		assert.equal((await send(other.placeholder, "/v1/models", {}, "GET")).status, 403, harness);
+		assert.equal((await send(other.placeholder, "/api/hello", {}, "HEAD")).status, 403, harness);
+		await other.close();
+	}
+	assert.equal(up.seen.length, sent);
+	console.log("ok    claude-plan refused for codex, opencode and windlass leases");
+
+	// Hosted Docker: the relay forwards the plan's wire to the route with the platform placeholder as a bearer.
+	const localPlaceholder = "wlp-model." + randomBytes(16).toString("hex");
+	const previousUrl = config.modelRelay.url;
+	config.modelRelay.url = { origin, host: "relay.example.com" };
+	let forward!: ForwardedKeyLease;
+	const forwarded = await forwardKeyLease(uid, sessionId, { ...ref, harness: "claude" }, undefined, async value => {
+		forward = value;
+		return { placeholder: localPlaceholder, env: {}, close: async () => {} };
+	}).finally(() => {
+		config.modelRelay.url = previousUrl;
+	});
+	try {
+		assert.equal(forward.provider, "claude-plan");
+		assert.ok(!JSON.stringify(forward).includes(token));
+		const { windlassProvider } = createRequire(import.meta.url)("../sandbox/relay/windlass.cjs");
+		const relay = windlassProvider({
+			load: async () => ({ lease: localPlaceholder, forward, expiresAt: forward.expiresAt }),
+		});
+		const nonce = randomBytes(16).toString("hex");
+		const local = {
+			authorization: "Bearer " + localPlaceholder,
+			"anthropic-version": "2023-06-01",
+			"content-type": "application/json",
+			...betas,
+		};
+		assert.ok(await relay.authorize(relay.bearer(local), nonce));
+		const target = await relay.target("/v1/messages?beta=true", local, nonce);
+		assert.equal(target.hostname, "relay.example.com");
+		assert.equal(target.path, "/model-relay/v1/messages?beta=true");
+		assert.equal(target.headers.authorization, "Bearer " + forward.placeholder);
+		assert.equal(target.headers["x-api-key"], undefined);
+		const reply = await modelRelayResponse(
+			new Request(origin + target.path, { method: "POST", body: "{}", headers: target.headers }),
+			d,
+		);
+		assert.equal(reply.status, 200);
+		await reply.text();
+		assert.equal(up.seen.at(-1)!.authorization, "Bearer " + token);
+		assert.equal(up.seen.at(-1)!.headers.get("anthropic-beta"), "oauth-2025-04-20,claude-code-20250219");
+		assert.deepEqual(await relay.target("/v1/messages", { "x-api-key": localPlaceholder }, nonce), { refused: true });
+		console.log("ok    claude-plan forwarded from the Docker relay to the route");
+	} finally {
+		await forwarded.close();
+	}
+
+	// Reconnecting the plan replaces its generation: the turn's lease ends.
+	current = randomBytes(16).toString("hex");
+	const stale = await send(claude.placeholder, "/v1/messages", betas);
+	assert.equal(stale.status, 401);
+	assert.equal(((await stale.json()) as { error: { code: string } }).error.code, "relay_lease_ended");
+	assert.equal(up.seen.length, sent + 1);
+	await claude.close();
+	console.log("ok    claude-plan lease ends when the plan's generation changes");
+}
+
+/**
+ * A ChatGPT plan: Codex's bearer placeholder becomes the plan's CURRENT access token, which the user actor's
+ * sign-in holder answers per request (refreshing it when due), for Codex and Windlass only.
+ */
+async function chatgptPlanWireCheck() {
+	const uid = "relay-chatgpt-plan",
+		sessionId = "session";
+	let access = "chatgpt-access-" + randomBytes(24).toString("hex");
+	let current = randomBytes(16).toString("hex");
+	const ref = { provider: "openai" as const, generation: current, plan: true as const };
+	const origin = "https://relay.example.com";
+	const e2b = await relayGuest(uid, sessionId);
+	// Hosted Docker's way, and a sandbox without a relay of its own: the route's lease (E2B's own is e2b-provider-test's).
+	(e2b as { localPlanRelay?: unknown }).localPlanRelay = undefined;
+	// Its own helpers: `--plan-wire` runs it before the module's are made.
+	const up = upstream(() => new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } }));
+	const call = (placeholder: string, path = "/model-relay/v1/responses", init: RequestInit = {}) =>
+		new Request(origin + path, {
+			method: "POST",
+			body: init.method === "GET" ? undefined : "{}",
+			...init,
+			headers: {
+				authorization: `Bearer ${placeholder}`,
+				"content-type": "application/json",
+				accept: "text/event-stream",
+				"session-id": "s1",
+				cookie: "c=1",
+			},
+		});
+	let asked = 0;
+	const d = deps(up.fetch, {
+		credential: async (user, saved, nonce) => {
+			assert.deepEqual(saved, { provider: "openai", plan: true });
+			asked += 1;
+			return sealCredentialTransit(user, saved, nonce, {
+				secret: access,
+				generation: current,
+				expiresAt: Date.now() + 30 * 60_000,
+			});
+		},
+	});
+	const codex = await openModelKeyRelay(e2b, sessionId, { ...ref, harness: "codex" });
+	const env = hostedKeyEnv("codex", ref, codex);
+	assert.equal(env.WLP_CODEX_BASE_URL, origin + "/model-relay/v1");
+	assert.equal(env.WLP_SESSION_BEARER, codex.placeholder);
+	const send = async (path: string, method = "POST") => {
+		const reply = await modelRelayResponse(call(codex.placeholder, "/model-relay" + path, { method }), d);
+		await reply.text();
+		return reply.status;
+	};
+	assert.equal(await send("/v1/responses"), 200);
+	assert.equal(up.seen.at(-1)!.url, "https://api.openai.com/v1/responses");
+	assert.equal(up.seen.at(-1)!.authorization, "Bearer " + access, "the plan's access token as the upstream bearer");
+	assert.equal(up.seen.at(-1)!.headers.get("cookie"), null);
+	// The holder refreshed the sign-in: the next request carries the new access token, on the same lease.
+	const before = access;
+	access = "chatgpt-access-" + randomBytes(24).toString("hex");
+	assert.equal(await send("/v1/responses"), 200);
+	assert.equal(up.seen.at(-1)!.authorization, "Bearer " + access);
+	assert.notEqual(access, before);
+	assert.equal(asked, 2, "the token is asked for per request");
+	console.log("ok    chatgpt-plan bearer swapped for the plan's current access token, a refreshed one used next");
+
+	const seen = up.seen.length;
+	assert.equal(await send("/v1/models?client_version=0.171.0", "GET"), 200, "Codex's own catalog request");
+	assert.equal(up.seen.at(-1)!.url, "https://api.openai.com/v1/models");
+	assert.equal(
+		await send("/v1/models", "GET"),
+		403,
+		"codex-acp's bare listing is refused: it leaves the list unnarrowed",
+	);
+	assert.equal(await send("/v1/chat/completions"), 403);
+	assert.equal(up.seen.length, seen + 1);
+	for (const harness of ["claude", "opencode"] as const) {
+		const other = await openModelKeyRelay(e2b, sessionId, { ...ref, harness });
+		const reply = await modelRelayResponse(call(other.placeholder), d);
+		assert.equal(reply.status, 403, harness);
+		await other.close();
+	}
+	assert.equal(up.seen.length, seen + 1);
+	console.log("ok    chatgpt-plan: only Codex's routes, refused for Claude Code and OpenCode leases");
+
+	// Hosted Windlass on the same plan (hosted Docker's way): its two routes, the placeholder swapped for the current token.
+	(e2b as { ask: unknown }).ask = async () => ({ code: 0, stdout: "Windlass 0.7.1\n", stderr: "" });
+	const windlass = await openModelKeyRelay(e2b, sessionId, { ...ref, harness: "windlass" });
+	const windlassEnv = windlassPlanEnv(windlass, "/dev/shm/access-token-x.json");
+	assert.equal(windlassEnv.WINDLASS_MODEL_BASE_URL, origin + "/model-relay/v1");
+	assert.equal(windlassEnv.WINDLASS_PROVIDER, "chatgpt");
+	const sendWindlass = async (path: string, method = "POST") => {
+		const reply = await modelRelayResponse(call(windlass.placeholder, "/model-relay" + path, { method }), d);
+		await reply.text();
+		return reply.status;
+	};
+	assert.equal(await sendWindlass("/v1/models", "GET"), 200, "Windlass's model list");
+	assert.equal(up.seen.at(-1)!.url, "https://api.openai.com/v1/models");
+	assert.equal(up.seen.at(-1)!.authorization, "Bearer " + access);
+	access = "chatgpt-access-" + randomBytes(24).toString("hex");
+	assert.equal(await sendWindlass("/v1/responses"), 200);
+	assert.equal(up.seen.at(-1)!.authorization, "Bearer " + access, "a refreshed token is the next request's");
+	const windlassSeen = up.seen.length;
+	assert.equal(await sendWindlass("/v1/models?client_version=0.171.0", "GET"), 403, "Codex's catalog form");
+	assert.equal(await sendWindlass("/v1/chat/completions"), 403);
+	assert.equal(await sendWindlass("/v1/models"), 403, "a POST to the list");
+	assert.equal(up.seen.length, windlassSeen);
+	await windlass.close();
+	const closed = await modelRelayResponse(call(windlass.placeholder), d);
+	assert.equal(closed.status, 401);
+	assert.equal(((await closed.json()) as { error: { code: string } }).error.code, "relay_lease_ended");
+	console.log(
+		"ok    chatgpt-plan for Windlass: only GET /v1/models and POST /v1/responses, current token, relay_lease_ended once closed",
+	);
+
+	// Reconnecting or removing the ChatGPT plan replaces its generation; a refresh never does.
+	current = randomBytes(16).toString("hex");
+	const stale = await modelRelayResponse(call(codex.placeholder), d);
+	assert.equal(stale.status, 401);
+	assert.equal(((await stale.json()) as { error: { code: string } }).error.code, "relay_lease_ended");
+	await codex.close();
+	console.log("ok    chatgpt-plan lease ends when the plan's generation changes");
 }
 
 // ---- the E2B network ----------------------------------------------------------------------------
@@ -1759,7 +1924,7 @@ async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 		hosts({ WLP_E2B_NETWORK: "none" }).join(),
 	);
 	expect(
-		"with WLP_MODEL_RELAY=off: api.openai.com, no relay host, and the turn's token goes into the sandbox",
+		"with WLP_MODEL_RELAY=off: api.openai.com, and no relay host",
 		hosts({ WLP_MODEL_RELAY: "off" }).includes("api.openai.com") &&
 			!hosts({ WLP_MODEL_RELAY: "off" }).includes("relay.example.com") &&
 			readE2bSettings(env({ WLP_MODEL_RELAY: "off" })).modelRelayOrigin === null,
@@ -1780,21 +1945,17 @@ async function keyWireCheck(provider: (typeof MODEL_PROVIDERS)[number]) {
 				"off" in e2bModelRelay(old),
 		);
 	}
+	const restricted = readE2bNetwork(env({}));
+	expect(
+		"a Windlass sandbox (no agent of its own) may reach api.openai.com for its plan relay; an OpenCode sandbox may not",
+		withPlanHosts(restricted, undefined).hosts.includes("api.openai.com") &&
+			withPlanHosts(restricted, "").hosts.includes("api.openai.com") &&
+			!withPlanHosts(restricted, "opencode").hosts.includes("api.openai.com") &&
+			withPlanHosts(restricted, undefined).hosts.includes("relay.example.com"),
+		withPlanHosts(restricted, undefined).hosts.join(),
+	);
 	const settings = readE2bSettings(env({ WLP_E2B_WINDLASS_VERSION: "0.6.0" }));
 	const guest = await relayGuest("u1", "session", settings);
-	let content = "";
-	guest.writeSecretFile = async (_path, data) => {
-		content = data;
-	};
-	const file = new TokenFile(
-		guest,
-		{ current: async () => ({ accessToken: REAL_A, expiresAt: Date.now() + 3_600_000 }) } as never,
-		{ log() {} },
-	);
-	await file.start();
-	assert.ok(readPlaceholder(JSON.parse(content).accessToken));
-	assert.ok(!content.includes(REAL_A));
-	await file.stop();
 	const key = { provider: "openai", generation: "first" } as const;
 	await assert.rejects(
 		openModelKeyRelay(guest, "session", { ...key, harness: "windlass" }),

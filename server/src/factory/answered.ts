@@ -2,7 +2,6 @@ import type { ChoiceId } from "../contract.js";
 import { harnessName } from "../sandbox/harnesses.js";
 
 export const CHOICES: Record<ChoiceId, string> = {
-	use_machine_payer: "Use the offered machine and payer",
 	use_hosted: "Run on Hosted",
 	use_windlass: harnessName("windlass"),
 	use_claude: harnessName("claude"),
@@ -36,7 +35,6 @@ export const CHOICES: Record<ChoiceId, string> = {
 export const choice = (id: ChoiceId) => ({ id, label: CHOICES[id] });
 /** The same choices in at most 30 characters, for buttons with little room (Slack cuts a button at 75). */
 export const SHORT_CHOICES: Partial<Record<ChoiceId, string>> = {
-	use_machine_payer: "Use offered machine and payer",
 	run_single: "Approve as one implementer",
 	orchestrate_anyway: "Split into parts",
 	approve: "Approve",

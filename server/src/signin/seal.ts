@@ -11,15 +11,16 @@
  * purpose has a key of its own:
  *
  *   user      a user's sign-in, in that user's `user` actor
- *   attempt   a sign-in attempt between its start and its finish, in its `login` actor
+ *   attempt   a platform login attempt (its OAuth verifier or verified identity), in its `login` actor
  *   transit   an access token on its way from the `user` actor to the server that asked for it
  *   model-key a model provider API key, bound to its user and provider
+ *   model-plan a connected subscription plan's token, bound to its user and provider
  *   secret    the value of a repository's secret, in its user's `user` actor (repo-secrets.ts)
  *
  * What a blob is for and whose it is are authenticated with it (GCM's additional data: the purpose
  * and a subject, which is the uid, the attempt id, the uid and the asking server's nonce, or the uid
  * with a secret's repository and name). A blob opens only as what it was sealed as: one user's
- * sign-in put in another user's actor does not open there, nor does an attempt's material as a
+ * sign-in put in another user's actor does not open there, nor does an attempt's blob as a
  * sign-in, nor an answer to another request, nor one secret's value as another's.
  *
  * The key id is configured, or derived from a singleton secret under another label. It says which secret a
@@ -34,7 +35,7 @@ import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:cr
 import type { Keyring } from "../keyring.js";
 import { signInKeys } from "../config.js";
 
-const PURPOSES = ["user", "attempt", "transit", "secret", "model-key"] as const;
+const PURPOSES = ["user", "attempt", "transit", "secret", "model-key", "model-plan"] as const;
 export type SealPurpose = (typeof PURPOSES)[number];
 
 const VERSION = "wlps1";

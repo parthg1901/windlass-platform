@@ -1,11 +1,11 @@
 /**
- * The bar across the top: the wordmark, the app's places (Agents · Factory · Machines · Settings), where you are
+ * The bar across the top: the wordmark, the app's places (Agents · Factory · Machines · Connections · Settings), where you are
  * on a page further in, the docs, the theme toggle and the account, whose menu opens from its picture.
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useIdentity, type Identity } from "../lib/identity";
 import type { Section } from "../lib/nav";
-import { linkProps, useRoute } from "../lib/router";
+import { linkProps, useRoute, type Route } from "../lib/router";
 import type { Theme } from "../lib/theme";
 import { useApp } from "../state/app";
 import { useGithub } from "../state/github";
@@ -38,26 +38,22 @@ export function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle(): voi
 
 type Tone = "good" | "warn" | "quiet";
 
-/** One line of the account menu: a connection, how it stands, and the way to its Settings section. */
+/** One line of the account menu: a connection, how it stands, and the way to where it is connected. */
 function StatusRow({
 	name,
-	section,
+	to,
 	tone,
 	state,
 	onFollow,
 }: {
 	name: string;
-	section: "settings-models" | "settings-github";
+	to: Route;
 	tone: Tone;
 	state: string;
 	onFollow(): void;
 }) {
 	return (
-		<a
-			className={`menu-status menu-status-${tone}`}
-			{...linkProps({ name: "settings", section })}
-			onClickCapture={onFollow}
-		>
+		<a className={`menu-status menu-status-${tone}`} {...linkProps(to)} onClickCapture={onFollow}>
 			<span className="menu-status-name">{name}</span>
 			<span className="menu-status-state">
 				{tone === "good" ? <CheckIcon size={12} /> : tone === "warn" ? <WarnIcon size={12} /> : null}
@@ -163,10 +159,20 @@ function SignedInMenu() {
 					{client.kind === "mock" ? <p className="menu-note">Mock backend: nothing leaves this page.</p> : null}
 					<div className="menu-statuses">
 						{auth.profile.demo ? null : (
-							<StatusRow name="ChatGPT plan" section="settings-models" onFollow={close} {...chatgptRow(chatgpt)} />
+							<StatusRow
+								name="ChatGPT plan"
+								to={{ name: "connections", section: "plan-openai" }}
+								onFollow={close}
+								{...chatgptRow(chatgpt)}
+							/>
 						)}
 						{github.enabled ? (
-							<StatusRow name="GitHub" section="settings-github" onFollow={close} {...githubRow(github)} />
+							<StatusRow
+								name="GitHub"
+								to={{ name: "settings", section: "settings-github" }}
+								onFollow={close}
+								{...githubRow(github)}
+							/>
 						) : null}
 						{problem ? (
 							<p className="menu-note tone-bad" role="alert">
@@ -181,6 +187,9 @@ function SignedInMenu() {
 								Machines
 							</a>
 						) : null}
+						<a className="menu-action menu-action-phone" {...linkProps({ name: "connections" })} onClickCapture={close}>
+							Connections
+						</a>
 						<a className="menu-action" {...linkProps({ name: "usage" })} onClickCapture={close}>
 							Usage
 						</a>
@@ -206,7 +215,7 @@ function SignedInMenu() {
 
 /**
  * The app's places: Agents, the Factory where the deployment offers work items, Machines where it
- * offers them, and Settings, the account's. `current` is the section of the page you are on, on every
+ * offers them, Connections (what pays for each agent), and Settings, the account's. `current` is the section of the page you are on, on every
  * page; `asking`, how many work items ask their person something, said beside "Factory" when there are any.
  */
 export function ListTabs({ current, asking = 0 }: { current?: Section | null; asking?: number }) {
@@ -247,7 +256,14 @@ export function ListTabs({ current, asking = 0 }: { current?: Section | null; as
 					Machines
 				</a>
 			) : null}
-			{/* On a phone there is no room for it: it is in the account menu there. */}
+			{/* On a phone there is no room for these two: they are in the account menu there. */}
+			<a
+				className="topbar-tab topbar-tab-wide"
+				aria-current={current === "connections" ? "page" : undefined}
+				{...linkProps({ name: "connections" })}
+			>
+				Connections
+			</a>
 			<a
 				className="topbar-tab topbar-tab-wide"
 				aria-current={current === "account" ? "page" : undefined}

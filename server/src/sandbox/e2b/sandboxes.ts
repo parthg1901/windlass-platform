@@ -32,7 +32,6 @@ import {
 	SWEEP_SCRIPT,
 	type SandboxProcess,
 	type StartOptions,
-	type TurnModelRelay,
 	type TurnSandbox,
 	WORKSPACE,
 	assertEnvNames,
@@ -46,6 +45,7 @@ import {
 import { tokenFilePath, tokenFilePaths } from "../token-file.js";
 import { config } from "../../config.js";
 import { openRelayLease } from "../relay-leases.js";
+import { type LocalPlanRelayOptions, startPlanRelay } from "../plan-relay.js";
 import {
 	E2bBusyError,
 	type E2bClient,
@@ -72,6 +72,7 @@ import { describeUsage, estimatedCostUsd, pricePerSecond } from "./pricing.js";
 import {
 	type E2bNetwork,
 	withHosts,
+	withPlanHosts,
 	DNS_LOG,
 	DNS_LOG_BYTES,
 	blockedLookups,
@@ -99,6 +100,8 @@ export const META = {
 	network: "wlp_network",
 	size: "wlp_size",
 	environmentBuild: "wlp_environment_build",
+	/** The hosted agent a sandbox was made for (its template's), absent for Windlass: what it may reach follows it (`withPlanHosts`). */
+	harness: "wlp_harness",
 } as const;
 
 export function sandboxSize(metadata: Record<string, string>): HostedSize {
@@ -210,6 +213,7 @@ export type GuestCommand = Omit<E2bCommand, "pid">;
 /** A Windlass guest over a provider command stream. E2B and Daytona supply their own transport and idle hold. */
 export abstract class HostedGuest implements TurnSandbox {
 	readonly cwd = WORKSPACE;
+	private readonly turnLimitMs: number;
 	size: HostedSize = "small";
 	image?: string;
 	abstract holdForTurn(): Promise<() => Promise<void>>;
@@ -223,6 +227,7 @@ export abstract class HostedGuest implements TurnSandbox {
 		session?: string,
 	) {
 		markTurnSandbox(this);
+		this.turnLimitMs = relaySettings.turnLimitMs;
 		const relay = relaySettings.modelRelayOrigin;
 		if (relay !== null) {
 			if (!readsModelRelay(relaySettings.windlassVersion, SETTINGS_KEY_WINDLASS))
@@ -232,9 +237,8 @@ export abstract class HostedGuest implements TurnSandbox {
 					throw new Error(
 						"this sandbox names no session (its wlp_session is empty), so its turns cannot use the model relay",
 					);
-				return { uid, sessionId: session, origin: relay, ttlMs: relaySettings.turnLimitMs + 15 * 60_000 };
+				return { uid, sessionId: session, origin: relay };
 			};
-			this.modelRelay = async () => openRelayLease(leaseInput());
 			this.modelKeyRelay = async (sessionId, key, signal, takeRequest) => {
 				if (sessionId !== session) throw new Error("This model relay belongs to another session.");
 				return openRelayLease({
@@ -249,9 +253,17 @@ export abstract class HostedGuest implements TurnSandbox {
 		}
 	}
 
-	readonly modelRelay?: () => Promise<TurnModelRelay>;
 	readonly windlassKeyProblem?: string;
 	readonly modelKeyRelay?: TurnSandbox["modelKeyRelay"];
+
+	/** The relay runs as the transport user (`gitUser`), which `agent` cannot read or signal; it ends by itself after the turn's limit. */
+	localPlanRelay(token: string, options: LocalPlanRelayOptions) {
+		return startPlanRelay((argv, start) => this.start(argv, start), token, {
+			...options,
+			expiresAt: Date.now() + this.turnLimitMs + 60_000,
+			requestLimit: config.modelRelay.turnRequests,
+		});
+	}
 
 	run(command: string, options: ExecOptions = {}): Promise<ExecResult> {
 		return this.exec(["bash", "-c", command], options);
@@ -663,8 +675,8 @@ export class E2bProvider implements HostedSandboxProvider {
 		}
 		this.log(
 			settings.modelRelayOrigin
-				? `[wlp] e2b.model_relay: Windlass's model requests go through ${settings.modelRelayOrigin}/model-relay/v1, and sandboxes may reach that host instead of api.openai.com; they never hold the access token`
-				: `[wlp] e2b.model_relay: off (${settings.modelRelayOff ?? "not configured"}): each turn's access token is written into its sandbox`,
+				? `[wlp] e2b.model_relay: Settings-key requests go through ${settings.modelRelayOrigin}/model-relay; plan requests leave from a relay inside each sandbox, which never holds a credential the agent can read`
+				: `[wlp] e2b.model_relay: off (${settings.modelRelayOff ?? "not configured"}): Settings keys are unavailable; plan requests leave from a relay inside each sandbox`,
 		);
 	}
 
@@ -757,8 +769,8 @@ export class E2bProvider implements HostedSandboxProvider {
 	 * What one sandbox may reach: the deployment's network, and in `restricted` the hosts its session's
 	 * repositories allow (repository-network.ts). Hosts beyond MAX_HOSTS are left out and said in the log.
 	 */
-	private networkFor(which: string, extra: readonly string[] | undefined): E2bNetwork {
-		const { network, dropped } = withHosts(this.network, extra);
+	private networkFor(which: string, extra: readonly string[] | undefined, harness: string | undefined): E2bNetwork {
+		const { network, dropped } = withHosts(withPlanHosts(this.network, harness), extra);
 		if (dropped.length > 0)
 			this.log(
 				`[wlp] e2b.network.dropped ${which}: ${dropped.length} of the repository's hosts left out, beyond the ${network.hosts.length} a sandbox may have (${dropped.slice(0, 5).join(", ")}${dropped.length > 5 ? ", …" : ""})`,
@@ -777,7 +789,7 @@ export class E2bProvider implements HostedSandboxProvider {
 			if (info === undefined || info.state !== "running") return false;
 			const connection = await this.client.connect(id, this.settings.idleTimeoutMs);
 			if (connection === undefined) return false;
-			const network = this.networkFor(`id=${id}`, hosts);
+			const network = this.networkFor(`id=${id}`, hosts, info.metadata[META.harness]);
 			try {
 				await this.client.updateNetwork(id, networkConfig(network));
 				await this.guestNetwork(connection, network);
@@ -999,7 +1011,7 @@ export class E2bProvider implements HostedSandboxProvider {
 			throw new SandboxUserError(
 				`The sandbox "${profile.name}" is not available: ${profile.unavailableReason ?? "not supported here"}`,
 			);
-		const network = this.networkFor(`session=${input.sessionId}`, input.network);
+		const network = this.networkFor(`session=${input.sessionId}`, input.network, input.harness);
 		const config = networkConfig(network);
 		await this.assertRoom();
 		// The size asked for, or the largest the deployment has a template of below it (WLP_E2B_SIZES).
@@ -1019,6 +1031,7 @@ export class E2bProvider implements HostedSandboxProvider {
 			[META.session]: input.sessionId.slice(0, 200),
 			[META.profile]: input.profile,
 			[META.size]: size,
+			...(input.harness && { [META.harness]: input.harness }),
 			...(network.mode === "open" ? {} : { [META.network]: network.mode }),
 			...(selected?.metadata ?? {}),
 			...(build && { [META.environmentBuild]: "true" }),
@@ -1209,7 +1222,7 @@ export class E2bProvider implements HostedSandboxProvider {
 		}
 		const now = this.now();
 		const known = this.remember(info);
-		const network = this.networkFor(`id=${id}`, options.network);
+		const network = this.networkFor(`id=${id}`, options.network, info.metadata[META.harness]);
 		const handle = new E2bSandboxHandle(
 			this,
 			connection,

@@ -9,18 +9,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-for (const mode of ["manual", "import", "decline", "failed"])
+for (const mode of ["manual", "import", "decline"])
 	test(
-		mode === "failed"
-			? "a sign-in that fails does not stop setup: it says how to sign in later and prints the start command"
-			: mode === "decline"
-				? "declining every mounted credential falls through to regular login"
-				: mode === "import"
-					? "setup imports two API keys, declines a foreign refresh token and drops the mount"
-					: "setup pairs, skips Claude, accepts a hidden OpenCode key and prints the runnable Docker command",
+		mode === "decline"
+			? "declining every mounted credential falls through to regular login"
+			: mode === "import"
+				? "setup imports two API keys, declines a foreign refresh token and drops the mount"
+				: "setup pairs, signs in only OpenCode, accepts a hidden OpenCode key and prints the runnable Docker command",
 		async () => {
-			const failing = mode === "failed";
-			const importing = mode !== "manual" && !failing,
+			const importing = mode !== "manual",
 				accept = mode === "import";
 			const root = fileURLToPath(new URL("../", import.meta.url));
 			const dir = await mkdtemp(join(root, ".setup-check-"));
@@ -138,32 +135,23 @@ else process.exitCode=2;
 					],
 					{ env, stdio: ["pipe", "pipe", "pipe"] },
 				);
-				// A failing Codex sign-in: an answer that is no method. Its question may not come at all (the sign-in can fail before it).
-				const prompts = failing
-					? [
-							["Codex: sign in now?", "y"],
-							["Choose a method", "3", true],
-							["Claude Code: sign in now?", "n"],
-							["OpenCode: sign in now?", "n"],
-						]
-					: [
-							["Codex: sign in now?", "n"],
-							["Claude Code: sign in now?", "n"],
-							["OpenCode: sign in now?", ""],
-							...(importing
-								? [
-										["(opencode-go) API key: import?", accept ? "" : "n"],
-										["(opencode) API key: import?", accept ? "" : "n"],
-										["can't be shared safely", "n"],
-									]
-								: []),
-							...(!accept
-								? [
-										["OpenCode provider", "openai"],
-										["Enter the openai API key", "setup-fixture-secret"],
-									]
-								: []),
-						];
+				// Claude Code and Codex pay with the account's plans and keys: only OpenCode is asked to sign in.
+				const prompts = [
+					["OpenCode: sign in now?", ""],
+					...(importing
+						? [
+								["(opencode-go) API key: import?", accept ? "" : "n"],
+								["(opencode) API key: import?", accept ? "" : "n"],
+								["can't be shared safely", "n"],
+							]
+						: []),
+					...(!accept
+						? [
+								["OpenCode provider", "openai"],
+								["Enter the openai API key", "setup-fixture-secret"],
+							]
+						: []),
+				];
 				let output = "",
 					step = 0;
 				child.stdout.on("data", chunk => {
@@ -189,27 +177,7 @@ else process.exitCode=2;
 				}
 				assert.equal(code, 0, output.replaceAll("setup-fixture-secret", "[fixture]"));
 				assert.equal(step, prompts.length);
-				if (failing) {
-					assert.match(
-						output,
-						/Codex was not signed in: .+ Sign it in later with: docker exec -it windlass-runner windlass-runner login codex/,
-					);
-					assert.match(
-						output,
-						/Claude Code is not signed in\. Sign it in later with: docker exec -it windlass-runner windlass-runner login claude/,
-					);
-					assert.match(
-						output,
-						/OpenCode is not signed in\. Sign it in later with: docker exec -it windlass-runner windlass-runner login opencode/,
-					);
-					assert.ok(
-						output.includes(
-							runner + " run --platform " + origin + " --harness codex --harness claude --harness opencode",
-						),
-						"no start command: " + output.slice(-600),
-					);
-					return;
-				}
+				assert.doesNotMatch(output, /Claude Code: sign in now\?|Codex: sign in now\?/);
 				assert.ok(!output.includes("setup-fixture-secret"));
 				assert.match(output, /ABCD-EFGH/);
 				assert.deepEqual(asked, ["/runner/pair", "/runner/pair/poll"]);
@@ -296,8 +264,7 @@ else process.exitCode=2;
 					const full = report();
 					const { capabilities } = full;
 					assert.ok(Array.isArray(capabilities) && capabilities.every(value => typeof value === "string"));
-					assert.ok(capabilities.includes("model-relay"));
-					assert.ok(capabilities.includes("windlass-key-relay"));
+					assert.ok(capabilities.includes("harness-key-relay"));
 					assert.deepEqual(full, { image: published, harnesses: ["claude", "opencode", "codex"], capabilities });
 					execFileSync(process.execPath, [join(root, "runner/bundle.mjs"), pin, bundle, "claude=" + pin]);
 					assert.deepEqual(report(), { image: published, harnesses: ["claude"], capabilities });

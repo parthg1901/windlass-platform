@@ -72,43 +72,6 @@ for (const action of ["finish", "demo"] as const) {
 	});
 }
 
-test("expired, replaced and disconnected model attempts cannot commit credentials", async t => {
-	const { saveModelSignIn } = await import("../server/src/actors/user/signin.js");
-	const { user } = await import("../server/src/actors/user.js");
-	const sqlite = new DatabaseSync(":memory:");
-	t.after(() => sqlite.close());
-	sqlite.exec(`CREATE TABLE model_attempt (attempt_id TEXT, generation INTEGER, expires INTEGER, id INTEGER);
-		CREATE TABLE token_generation (id INTEGER PRIMARY KEY, gen INTEGER);
-		CREATE TABLE signin (id INTEGER PRIMARY KEY, sealed TEXT, generation INTEGER, short_noted INTEGER, updated_at INTEGER);
-		INSERT INTO token_generation VALUES (1,0)`);
-	type Db = Parameters<typeof saveModelSignIn>[0];
-	const db = {
-		execute: async (sql: string, ...args: SQLInputValue[]) => sqlite.prepare(sql).all(...args),
-		transaction: async (run: (tx: Db) => Promise<void>) => {
-			sqlite.exec("BEGIN");
-			try {
-				await run(db);
-				sqlite.exec("COMMIT");
-			} catch (error) {
-				sqlite.exec("ROLLBACK");
-				throw error;
-			}
-		},
-	} as Db;
-	const row = { sealed: "model-credential", generation: 1, shortNoted: false };
-	await db.execute("INSERT INTO model_attempt VALUES ('old',0,0,1)");
-	await assert.rejects(saveModelSignIn(db, row, "old"));
-	await user.config.actions!.expireModelAttempt({ db, scheduledFire: { id: "expiry" } } as never);
-	assert.equal((await db.execute("SELECT * FROM model_attempt")).length, 0);
-	await db.execute("INSERT INTO model_attempt VALUES ('new',0,?,1)", Date.now() + 60_000);
-	await assert.rejects(saveModelSignIn(db, row, "old"));
-	assert.equal((await db.execute("SELECT * FROM signin")).length, 0);
-	await saveModelSignIn(db, row, "new");
-	assert.equal((await db.execute("SELECT * FROM model_attempt")).length, 0);
-	await assert.rejects(saveModelSignIn(db, { ...row, sealed: "late" }, "new"));
-	assert.equal((await db.execute("SELECT sealed FROM signin"))[0].sealed, row.sealed);
-});
-
 test("an existing session cannot rewrite the stored admission email", async () => {
 	const { user } = await import("../server/src/actors/user.js");
 	const { issueUserToken } = await import("../server/src/tokens.js");

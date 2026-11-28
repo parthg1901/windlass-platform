@@ -1,0 +1,27 @@
+{
+  "name": "@windlassai/cli",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Connect your own plans and machines to Windlass from a terminal.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "windlassai": "dist/windlassai.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "0.28.2",
+    "typescript": "^5.6.0"
+  }
+}

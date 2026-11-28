@@ -25,6 +25,11 @@ import {
 	largerHostedSize,
 	type HostedSize,
 	outOfMemoryWords,
+	type CredentialRef,
+	type ModelList,
+	isPlanProvider,
+	type PlanProvider,
+	type RelaySeen,
 } from "../../contract.js";
 import { billing } from "../../billing/config.js";
 import { GithubError, githubApp, type InstallationToken } from "../../github/app.js";
@@ -56,14 +61,15 @@ import { VerificationLog, groupReviewPaths } from "../../verified.js";
 import { turnTokens } from "../../factory/budget.js";
 import { reportedModelUsage, usesPlatformModel } from "../../usage.js";
 import { PlatformChecks } from "../../sandbox/platform-checks.js";
-import { type Handoff, itemActor, secretsActor, userActor } from "../internal.js";
+import { type Handoff, itemActor, modelKeyActor, secretsActor, userActor } from "../internal.js";
+import { openSavedCredential } from "../../credentials/transit.js";
 import { attachmentStore, uploadShots } from "../../sandbox/attach.js";
 import { REPORT_TAKEN, askPerson, requestSecret, secretRequestNotice } from "../../agent-publish.js";
 import { RULES } from "../../factory/blueprint.js";
 import { DATA_DIR } from "../../sandbox/provider.js";
 import { planReviewOf } from "../../factory/autonomy.js";
 import { reviewerTask } from "../../factory/reviewer-task.js";
-import { accountKey, type AccountLocation } from "../provider-accounts.js";
+import { accountKey, accountLocation, type AccountLocation } from "../provider-accounts.js";
 import { resetTime, type LimitEvent, type UsageObservation } from "../../provider-usage.js";
 import {
 	type ProviderRefusal,
@@ -112,7 +118,17 @@ import { runnerLink, layerOf, machineOf } from "./runner.js";
 import { publish } from "./summary.js";
 import { platformNotes, saveBackup, dropWorkspace } from "./workspace.js";
 import { shellQuote } from "../../util.js";
-import { tail, TurnProblem, githubConnection, ReviewRefused, GitAccessRefused, itemPrompt, within } from "./common.js";
+import {
+	tail,
+	TurnProblem,
+	githubConnection,
+	ReviewRefused,
+	GitAccessRefused,
+	itemPrompt,
+	within,
+	PlanWaitError,
+} from "./common.js";
+import { BudgetWatch, budgetStopNote } from "./budget-watch.js";
 import { readSecrets } from "./secrets.js";
 import { usesScreenshotImage } from "./setup.js";
 import { metered, takeHold, removeSandbox, noteSandbox, closeMeter, useOf, meterAfterTurn, armIdle } from "./meter.js";
@@ -135,6 +151,8 @@ type Handling = ReturnType<typeof untrustedTurn>;
 export type ItemTurnEnd = {
 	outcome: TurnOutcome;
 	itemSignIn: TurnCredential["itemSignIn"];
+	/** What the turn ran on and who paid (null where it never got that far): for its cost. */
+	credential: TurnCredential | null;
 	stepLimit?: number;
 	verified: Verified | null;
 	used: SandboxHandle | null;
@@ -153,6 +171,7 @@ export interface TurnHooks {
 		model: string,
 		signal?: AbortSignal,
 		pinned?: TurnCredential,
+		keyOnce?: boolean,
 	): Promise<TurnCredential>;
 	takeTurnRequest(c: Ctx, meta: SessionMeta, run: TurnRun, active: ActiveTurn): Promise<boolean>;
 	itemTurnStarted(
@@ -208,6 +227,7 @@ export interface TurnScope {
 	readonly account: AccountLocation;
 	generation: string | null;
 	itemSignIn: TurnCredential["itemSignIn"];
+	credential: TurnCredential | null;
 	// Coalesce successive readings by window while an actor write is in flight.
 	readonly pendingLimits: Map<string, LimitEvent>;
 	writingLimits: Promise<void> | null;
@@ -215,6 +235,8 @@ export interface TurnScope {
 	events: number;
 	/** False once the turn is closed: late callbacks from the agent are ignored. */
 	open: boolean;
+	/** An item's turn with a budget: its spend so far, measured to stop it there (budget-watch.ts). */
+	watch: BudgetWatch | null;
 	used: SandboxHandle | null;
 	/** While `openSandbox` runs: an error then is the sandbox's, not the agent's (`sandboxFailed`). */
 	opening: boolean;
@@ -349,11 +371,13 @@ export function newTurnScope(
 		account,
 		generation: null,
 		itemSignIn,
+		credential: run?.credential ?? null,
 		pendingLimits,
 		writingLimits: null,
 		acpTimeline,
 		events: 0,
 		open: true,
+		watch: null,
 		used: null,
 		opening: false,
 		turnEndsAt,
@@ -434,9 +458,10 @@ function itemSignInRefusal(
 	credential: TurnCredential,
 ) {
 	const machine = machineHarness(meta.harness);
-	if (!machine || !facts.report) return null;
+	// A plan or a key pays: the machine's own sign-in is not asked for.
+	if (!machine || !facts.report || credential.key) return null;
 	if (!offered) return `This machine does not offer ${machine.name}.`;
-	const effective = withSettingsKeys(offered, credential.key ? [credential.key.provider] : []);
+	const effective = withSettingsKeys(offered, []);
 	return (
 		itemSignInMessage(machine, facts.name, effective.signIn) ??
 		itemSignInChanged(machine, facts.name, credential.itemSignIn ?? meta.origin?.signIn, effective.method)
@@ -527,6 +552,29 @@ export async function noteTurnMemory(
 	} catch (error) {
 		c.log.warn({ msg: "could not read the sandbox's memory at the turn's end", error: String(error) });
 	}
+}
+
+/**
+ * Pay with held an item's turn for its plan after the queue had let it start (the plan was limited meanwhile): the item
+ * waits for the plan's reset as after a usage-limit refusal (blueprint.ts `askProviderRefusal`), and asks where none is known.
+ */
+function planWait(meta: SessionMeta, item: ActiveTurn["item"], wait: PlanWaitError): never {
+	if (item) {
+		const { text, fetchBase, untrusted } = item.row;
+		item.providerRefusal = {
+			kind: "usage_limit",
+			message: wait.message,
+			...(wait.retryAt !== null && { resetsAt: wait.retryAt }),
+			placeName: placeNameOf(meta),
+			retry: { text, fetchBase, ...(untrusted.length && { untrusted }) },
+		};
+	}
+	throw new TurnProblem(wait.message);
+}
+
+/** Where the session runs, as an item's refusal names it. */
+export function placeNameOf(meta: Pick<SessionMeta, "place" | "machineName">): string | undefined {
+	return meta.place.kind === "hosted" ? "hosted" : (meta.machineName ?? undefined);
 }
 
 function refuseItemPolicy(item: ActiveTurn["item"], reason: string): never {
@@ -666,6 +714,18 @@ export async function startTurn(c: Ctx, t: TurnScope): Promise<void> {
 	}, limitMs);
 }
 
+/** The turn used its item's budget while it ran (budget-watch.ts): it stops as a person's Stop would, its work kept. */
+function stopAtBudget(c: Ctx, t: TurnScope, running: number, figure: string): void {
+	const { meta, active } = t;
+	if (!t.open || active.closed || active.stopping || !active.item) return;
+	active.item.budgetStopped = true;
+	note(c, active.number, "warn", budgetStopNote(harnessName(meta.harness)));
+	console.log(
+		`[wlp] factory.budget_stop session=${meta.sessionId} turn=${active.number} figure=${figure} used=${running}`,
+	);
+	abortTurn(c, meta, active);
+}
+
 /** Picks the turn's model credential and refuses, before secrets or the sandbox, what the turn must not run. */
 export async function takeCredential(
 	c: Ctx,
@@ -674,6 +734,7 @@ export async function takeCredential(
 	const { meta, active, signal, run } = t;
 	const layer = (t.layer = await layerOf(c, meta));
 	// A person's turn is checked when it is sent; nobody sends an item's. Refused before the sandbox opens: the item asks, with the login hint.
+	// Only a machine agent's turn reads what the runner offers; Windlass's does not.
 	const facts =
 		meta.place.kind === "machine" && machineHarness(meta.harness)
 			? await runnerLink(c, meta.place.machineId).facts()
@@ -681,12 +742,26 @@ export async function takeCredential(
 	const offered = facts?.report?.harnesses?.find(h => h.id === meta.harness);
 	const credential =
 		active.credential ??
-		(await t.hooks.turnCredential(c, meta, offered, meta.model, signal, run?.credential).catch(error => {
-			if (!(error instanceof UserError) || error.code !== "harness_signed_out") throw error;
+		(await t.hooks.turnCredential(c, meta, offered, meta.model, signal, run?.credential, false).catch(error => {
+			if (error instanceof PlanWaitError) return planWait(meta, active.item, error);
+			if (!(error instanceof UserError) || !["harness_signed_out", "chatgpt_required"].includes(String(error.code)))
+				throw error;
 			return refuseItemPolicy(active.item, error.message);
 		}));
 	const { key } = credential;
 	t.itemSignIn = credential.itemSignIn ?? meta.origin?.signIn;
+	t.credential = credential;
+	// The blueprint's budget for this turn: its spend is watched from here, to stop it there (#100a).
+	const budget = active.item?.row.budget;
+	if (budget && active.item && !t.watch)
+		t.watch = new BudgetWatch({
+			budget,
+			harness: meta.harness ?? "windlass",
+			credential,
+			itemSignIn: t.itemSignIn,
+			earlier: run?.usage ?? null,
+			onOver: (running, figure) => stopAtBudget(c, t, running, figure),
+		});
 	if (run) {
 		run.credential = credential;
 		if (key && meta.place.kind === "hosted") run.remainingRequests ??= config.modelRelay.turnRequests;
@@ -755,8 +830,17 @@ export async function checkHarness(
 ): Promise<Pick<OpenedTurn, "harness" | "caps" | "profile" | "platformTool">> {
 	const { meta, active, account, reviewer, critic, checkout, turn, effort } = t;
 	const { key } = credential;
-	// What the turn is handed goes by what the session's harness can do, asked of this sandbox's.
-	account.provider = key?.provider;
+	// What the turn is handed goes by what the session's harness can do, asked of this sandbox's. Windlass's ChatGPT
+	// models count against the ChatGPT plan's limits wherever they run, also where no plan was pinned (provider-accounts.ts).
+	Object.assign(
+		account,
+		accountLocation({
+			...account,
+			provider: usesPlatformModel(meta.harness, credential.model) ? undefined : key?.provider,
+		}),
+	);
+	// A plan's limits are its own, apart from the key of the same provider (provider-accounts.ts).
+	if (account.provider && key?.plan) account.plan = true;
 	t.generation =
 		key?.generation ??
 		(await userActor(c, meta.uid)
@@ -913,7 +997,25 @@ export async function turnTools(c: Ctx, t: TurnScope, opened: OpenedTurn): Promi
 	const { sandbox, credential, takeRequest, caps, platformTool, summary } = opened;
 	const { model, key } = credential;
 	const common: RunTurnInput = {
-		...(key && { modelKey: { sessionId: meta.sessionId, key, takeRequest } }),
+		...(key && {
+			modelKey: {
+				sessionId: meta.sessionId,
+				key,
+				takeRequest,
+				openSecret: () =>
+					openSavedCredential(meta.uid, key, (uid, ref, nonce) =>
+						modelKeyActor(c, uid).internalCredential(ref, nonce, meta.place.kind === "machine"),
+					),
+				// A plan's relay in the sandbox tells what the provider said of the plan's health (credentials/plan-health.ts).
+				...(key.plan &&
+					isPlanProvider(key.provider) && {
+						onSeen: (seen: RelaySeen) =>
+							void modelKeyActor(c, meta.uid)
+								.internalObservePlan(key.provider as PlanProvider, key.generation, seen)
+								.catch(() => c.log.warn({ msg: "Could not record the plan's health" })),
+					}),
+			},
+		}),
 		prompt: t.text,
 		mode,
 		planMode: active.planMode,
@@ -941,6 +1043,7 @@ export async function turnTools(c: Ctx, t: TurnScope, opened: OpenedTurn): Promi
 			if (!t.open) return;
 			prompted(c, t);
 			if (update.sessionUpdate === "usage_update" && update.rateLimit) recordLimit(c, t, update.rateLimit);
+			if (update.sessionUpdate === "usage_update") t.watch?.reported(update.cost);
 			if (caps.events === "acp") t.acpTimeline.update(update);
 			const title = generatedSessionTitle(
 				update,
@@ -1595,8 +1698,10 @@ function windlassInputOf(
 		browser,
 		repoTools,
 		platformTool,
-		credential: { key },
+		credential,
 	} = l;
+	// Receipted against the Settings key it names; the ChatGPT plan's tokens count against the daily allowance, as before.
+	const key = usesPlatformModel(meta.harness, credential.model) ? undefined : credential.key;
 	return {
 		...launchInput(t, l),
 		// Windlass gets the secrets that keep to their scope in this sandbox, the repository's and the account's, with the names its commands are and are not to have; every saved value is taken out of what it says.
@@ -1661,6 +1766,8 @@ function windlassInputOf(
 		script: meta.demo ? layer.windlass.demoScript(t.text, turn) : undefined,
 		onEvent: event => {
 			if (!t.open) return;
+			const used = t.watch && reportedModelUsage(event);
+			if (used) t.watch?.used(used);
 			// Reads and model output can contain raw notes. Only accounting events belong in the timeline.
 			if (setup?.draft) {
 				const usage = reportedModelUsage(event, true);
@@ -1856,6 +1963,7 @@ export async function windDown(c: Ctx, t: TurnScope): Promise<void> {
 	if (c.vars.startClock === t.clock) c.vars.startClock = null;
 	t.acpTimeline.flush();
 	t.open = false;
+	t.watch?.close();
 	clearTimeout(t.limit);
 	// From here on the turn takes no message, no answer and no stop of a call, and has no question.
 	sealTurn(c, meta, active);
@@ -1965,15 +2073,13 @@ function turnOutcome(
 					.replace(/^[a-z]/, letter => letter.toUpperCase())
 			: "";
 		const reported = summary?.outcome as TurnOutcome | undefined;
-		if (failure?.reason === "auth_required" && account.provider) {
+		if (failure?.reason === "auth_required" && account.provider && !account.plan) {
 			outcome = "error";
 			message = `Check your ${account.provider} key in Settings. ${said}`.trim();
 		} else if (failure?.reason === "auth_required") {
 			// No sign-in, one that could not be refreshed, or an access token the provider rejected: the remedy is the same.
 			outcome = "error";
 			message = `ChatGPT did not accept the saved sign-in. ${SIGN_IN_REMEDY}`;
-			// The next prompt asks the sandbox layer about the sign-in instead of trusting an earlier answer.
-			c.vars.signedInUntil = 0;
 		} else if (failure?.reason === "session_not_found") {
 			outcome = "error";
 			meta.windlassSessionId = null;
@@ -2022,10 +2128,19 @@ async function noteProviderOutcome(
 	const limitReading = limitObservation(refusal, Date.now());
 	if (limitReading) await observe(c, t, limitReading);
 	else if (outcome === "succeeded") await observe(c, t, { kind: "success", at: Date.now(), startedAt });
+	// Claude Code's refusal names no reset; the plan's relay read it from the provider's headers (checklist L2).
+	if (refusal && limitReading && refusal.resetsAt === undefined && account.plan && isPlanProvider(account.provider)) {
+		const plan = await userActor(c, meta.uid)
+			.internalPlanStatus(account.provider)
+			.catch(() => null);
+		if (plan?.health === "limited" && plan.resetKnown && plan.limitedUntil !== null)
+			refusal.resetsAt = plan.limitedUntil;
+	}
 	if (refusal) {
 		// Windlass describes a handed-in token to its host. Use the sandbox layer's remedy for its owner.
 		if (!result?.acp && result?.failure?.reason === "auth_required" && message) {
-			if (account.provider || refusal.message.includes("WINDLASS_ACCESS_TOKEN_FILE")) refusal.message = message;
+			if ((account.provider && !account.plan) || refusal.message.includes("WINDLASS_ACCESS_TOKEN_FILE"))
+				refusal.message = message;
 			else if (!refusal.message.includes(SIGN_IN_REMEDY)) refusal.message += ` ${SIGN_IN_REMEDY}`;
 		}
 		const redactor = active.secrets?.redactor;
@@ -2036,7 +2151,7 @@ async function noteProviderOutcome(
 			active.item.providerRefusal = {
 				...safe,
 				accountKey: t.generation === null ? undefined : accountKey(account, t.generation),
-				placeName: meta.place.kind === "hosted" ? "hosted" : (meta.machineName ?? undefined),
+				placeName: placeNameOf(meta),
 				retry: {
 					text: redactor?.text(text) ?? text,
 					fetchBase,
@@ -2086,6 +2201,28 @@ async function closeReviewerSandbox(c: Ctx, t: TurnScope, layer: SandboxLayer, s
 	}
 }
 
+/**
+ * A hosted turn paid by a plan whose provider lists no models (a Claude plan) keeps what its agent offered at the
+ * session's start on the plan, for the pickers (credentials/plans.ts `recordAgentModels`). Best effort: a list that
+ * does not arrive leaves the plan as it was.
+ */
+async function keepPlanModels(
+	c: Ctx,
+	meta: SessionMeta,
+	key: CredentialRef | undefined,
+	models: ModelList | null | undefined,
+): Promise<void> {
+	if (!key?.plan || meta.place.kind !== "hosted" || !models?.models.length) return;
+	try {
+		await modelKeyActor(c, meta.uid).internalPlanModels(
+			key,
+			models.models.map(m => m.id),
+		);
+	} catch (error) {
+		c.log.warn({ msg: "could not keep the models the plan's agent reported", error: describeError(error) });
+	}
+}
+
 /** Records the turn's outcome, saves its workspace, appends `turn.ended` and returns the session to idle, whatever goes wrong. */
 export async function closeTurn(
 	c: Ctx,
@@ -2107,6 +2244,7 @@ export async function closeTurn(
 		}
 		const decided = turnOutcome(c, t, caps, summary);
 		const { outcome, stepLimit } = decided;
+		await keepPlanModels(c, meta, run?.credential?.key, result?.acp?.models);
 		const message = await noteProviderOutcome(c, t, outcome, decided.message);
 		if (result?.windlassSessionId && (result.acp || outcome !== "error"))
 			meta.windlassSessionId = result.windlassSessionId;
@@ -2178,6 +2316,7 @@ export async function closeTurn(
 			await t.hooks.itemTurnEnded(c, meta, active.item, {
 				outcome,
 				itemSignIn: t.itemSignIn,
+				credential: t.credential,
 				stepLimit,
 				verified,
 				used,

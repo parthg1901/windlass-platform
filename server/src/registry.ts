@@ -7,6 +7,7 @@ import { setup } from "rivetkit";
 import { agentSession, SHUTDOWN_GRACE_MS } from "./actors/agent-session.js";
 import { machine } from "./actors/machine.js";
 import { machinePairing, pairingDirectory } from "./actors/machine-pairing.js";
+import { connectCodes } from "./actors/connect-codes.js";
 import { githubAccount } from "./actors/github-account.js";
 import { githubInbox, githubHooks } from "./actors/github-inbox.js";
 import { githubRepository } from "./actors/github-repository.js";
@@ -32,6 +33,7 @@ export const registry = setup({
 		machine,
 		machinePairing,
 		pairingDirectory,
+		connectCodes,
 		workItem,
 		githubInbox,
 		githubAccount,

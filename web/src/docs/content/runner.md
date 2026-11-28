@@ -29,13 +29,14 @@ The runner takes one command. With none, it runs `run`.
 | Command | What it does |
 | --- | --- |
 | `run` | Runs the runner's service. This is the default. |
-| `setup` | Sets the machine up in your terminal, one step at a time: pairs it, signs its agents in, asks for its profiles, network and limits, then starts the runner in the background and waits until it is online. See [Setup](#setup) and [Add a machine](/docs/machines#1-start-the-runner). With `--harness`, it asks line by line to sign in each agent given, then prints the command that starts the runner instead. |
+| `setup` | Sets the machine up in your terminal, one step at a time: pairs it, signs OpenCode in, asks for its profiles, network and limits, then starts the runner in the background and waits until it is online. See [Setup](#setup) and [Add a machine](/docs/machines#1-start-the-runner). `npx @windlassai/cli connect --machine` runs it for you with its defaults, and pairs the machine from a page you approve in the browser (see [Connect it with one command](/docs/machines#connect-it-with-one-command)). With `--harness`, it asks line by line to sign OpenCode in where it is given, then prints the command that starts the runner instead. |
 | `pair` | Makes a new pairing code, for example after the code expired or after the machine was removed. |
-| `status` | Says whether the runner is connected, its network mode, the limits in force, and for each pairing each enabled agent’s sign-in status, its sandboxes and its data volume. |
+| `status` | Says whether the runner is connected, its network mode, the limits in force, and for each pairing OpenCode's sign-in status, its sandboxes and its data volume. |
 | `log` | Prints the runner's own record of what it was asked to do, for the last 14 days. |
 | `prune` | Removes all containers and data volumes of this runner's pairings. |
-| `login claude`, `login opencode`, `login codex` | Signs that agent in on this machine, in your terminal. The machine must be paired first. With `opencode`, `--provider ID` skips the list of providers. See [Sign agents in](/docs/machines#sign-agents-in) and [Codex sign-in](#codex-sign-in). |
-| `logout claude`, `logout opencode`, `logout codex` | Signs that agent out, for this pairing and every earlier one. |
+| `login opencode` | Signs OpenCode in on this machine, in your terminal. The machine must be paired first. `--provider ID` skips the list of providers. See [Sign OpenCode in](/docs/machines#sign-opencode-in). Claude Code and Codex need no sign-in on the machine: they pay with your plan or key ([What pays on your machine](/docs/machines#what-pays-on-your-machine)). |
+| `login claude` | Keeps a Claude Code login on this machine only, in place of your plan from Windlass there. `--token-stdin` reads one setup token from standard input; `npx @windlassai/cli connect claude --this-machine` uses it. See [Claude Code's own login on this machine](/docs/machines#claude-codes-own-login-on-this-machine). `logout claude` removes it. |
+| `logout opencode` | Signs OpenCode out, for this pairing and every earlier one. |
 
 ### Setup
 
@@ -49,20 +50,16 @@ docker run -it --rm --log-driver none -v /var/run/docker.sock:/var/run/docker.so
 | Form | What it does |
 | --- | --- |
 | `setup` | Every step. Your earlier answers are the defaults. |
-| `setup --quick` | Only what is missing: a pairing, a name, an agent that is not signed in, a step never answered. |
+| `setup --quick` | Only what is missing: a pairing, a name, OpenCode not signed in, a step never answered. |
 | `setup name`, `setup agents`, `setup profile`, `setup network`, `setup limits` | That step alone, then the summary and the start. The machine must be paired. |
-| `setup claude`, `setup codex`, `setup opencode` | Signs that agent in, and adds it to the agents the machine offers. |
-| `setup --no-tui` | The same steps as numbered lines: Enter takes the default, `b` goes back and `q` cancels. Setup uses lines by itself when it has no terminal; then it takes the defaults and signs no agent in. |
+| `setup opencode` | Signs OpenCode in, and adds it to the agents the machine offers. |
+| `setup --no-tui` | The same steps as numbered lines: Enter takes the default, `b` goes back and `q` cancels. Setup uses lines by itself when it has no terminal; then it takes the defaults and signs nothing in. |
 
 Setup keeps its answers in `setup.json` in the volume. The options of [Run options](#run-options) given to `setup` become its defaults, and those it does not ask about, such as `--slot-cpus`, are passed on to the runner it starts. With `--harness`, `setup` is the line-by-line setup from before, and prints the start command instead of running it.
 
-### Codex sign-in
+### Codex
 
-Enable Codex during `windlass-runner setup`, or start the runner with `--harness codex`. Run `windlass-runner login codex` in the machine’s terminal and choose how to sign in: **1) ChatGPT (device code)**, which opens a code to enter at OpenAI's verification page and uses your ChatGPT plan, or **2) OpenAI API key**, entered at a hidden prompt and billed to the API account. Work items run Codex only with a ChatGPT sign-in for now.
-
-The machine’s relay holds the credential. Commands in a session can use its relay to make model requests. On the hardened Docker profile, **Container access** runs commands as `agent` in the session’s container under the machine’s egress setting; the container is the boundary. On the Windlass sandbox profile, once the machine passes its Codex probe, Codex offers **Read-only** and **Workspace access** (the default). In both, commands run in Codex’s own sandbox without network. Read-only changes no files, and Workspace access changes files only in the workspace. Codex may ask to run a command outside its sandbox or to edit outside it, and on this profile every such request is refused, even one you would allow. The timeline notes each refusal. Container access and Auto review are not offered there, because that profile’s container is loosened so that a sandbox can run inside it. Choose **Plan mode** to request a plan before changes.
-
-Run `windlass-runner logout codex` to end access through the machine. The Machines page shows the sign-in state and the terminal command.
+Enable Codex during `windlass-runner setup`, or start the runner with `--harness codex`. It needs no sign-in on the machine: it pays with your ChatGPT plan or your OpenAI key, as **Connections → Pay with** says. A plan's token goes to a relay on the machine for each turn, never into the session. Commands in a session can use that relay to make model requests while the turn runs. On the hardened Docker profile, **Container access** runs commands as `agent` in the session’s container under the machine’s egress setting; the container is the boundary. On the Windlass sandbox profile, once the machine passes its Codex probe, Codex offers **Read-only** and **Workspace access** (the default). In both, commands run in Codex’s own sandbox without network. Read-only changes no files, and Workspace access changes files only in the workspace. Codex may ask to run a command outside its sandbox or to edit outside it, and on this profile every such request is refused, even one you would allow. The timeline notes each refusal. Container access and Auto review are not offered there, because that profile’s container is loosened so that a sandbox can run inside it. Choose **Plan mode** to request a plan before changes.
 
 ### Status
 
@@ -79,7 +76,7 @@ Running sandbox limit: no limit
 Kept sandbox limit: no limit
 ```
 
-After that it lists each pairing with the sign-in of each agent the runner has, marked **(offered)** where the runner offers it, then its sandboxes and its data volume.
+After that it lists each pairing with each agent the runner has and OpenCode's sign-in, marked **(offered)** where the runner offers it, then its sandboxes and its data volume.
 
 ### Log
 
@@ -98,7 +95,7 @@ docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock \
 docker start windlass-runner
 ```
 
-> **Careful** `prune` removes the agents' files on this machine, and the agents' sign-in volumes too. It cannot be undone.
+> **Careful** `prune` removes the agents' files on this machine, and OpenCode's sign-in volume too. It cannot be undone.
 
 ## Run options
 
@@ -126,7 +123,7 @@ These options go after the runner image, with the `run` command or with no comma
 | `--allow-profile ID` | `docker-hardened` | Which Docker profiles agents may use here. Repeat it for both. |
 | `--harness claude` | Off | Offers Claude Code on this machine. Needs a runner built with the Claude Code image. |
 | `--harness opencode` | Off | Offers OpenCode on this machine. Needs a runner built with the OpenCode image. Repeat `--harness` to offer more than one agent. |
-| `--harness codex` | Off | Offers Codex on this machine. Uses your personal login on this machine. See [Codex sign-in](#codex-sign-in). |
+| `--harness codex` | Off | Offers Codex on this machine. Needs a runner built with the Codex image. See [Codex](#codex). |
 | `--screenshots` | Off | Lets work-item sandboxes here take screenshots. Needs a runner built with the screenshots image. |
 
 The runner saves `--name`, `--egress`, `--egress-allow`, `--egress-domains` and `--allow-profile` for this pairing, and uses them again when it restarts without them. `--harness` and `--screenshots` are not saved: give them each time you start the runner.
@@ -162,7 +159,7 @@ Pass a variable with `-e`, for example `-e WLP_RUNNER_CPUS=2`, before the image 
 
 | Message | What to do |
 | --- | --- |
-| "The pairing code expired, so restart the container or run `windlass-runner pair` to get a new code." | Restart the container, or run `pair`, and enter the new code. Setup says "re-run the setup command to get a new code." instead. |
+| "The pairing code expired or was denied, so restart the container or run `windlass-runner pair` to get a new code." | Restart the container, or run `pair`, and enter the new code. Setup says "re-run the setup command to get a new code." instead. |
 | "This runner needs signed runner connections enabled on the platform. Ask the operator to enable them, then pair again." | The platform does not sign runner connections yet. Ask whoever runs it to turn them on, then pair again. |
 | "The platform does not know this machine's key. Run `windlass-runner pair` to add the machine again." | The machine was removed, or its key was lost. Pair it again. |
 | "Another runner with this machine's key is connected. If you copied the key, stop the other runner; if you did not, remove the machine on the Machines page." | Stop the other runner, or remove the machine. |
@@ -182,16 +179,14 @@ Pass a variable with `-e`, for example `-e WLP_RUNNER_CPUS=2`, before the image 
 | "Choose --harness claude, --harness opencode or --harness codex." | Those are the agents a runner can offer. |
 | "Use --harness opencode with a runner built with the pinned OpenCode image." | This runner image has no OpenCode. Use the image from the Machines page. Claude Code says the same for `--harness claude`. |
 | "The runner is already using this state. Use login <agent> in the running runner." | The line-by-line setup cannot run beside the runner. Use `login` in the running container, remove it first, or run `setup` without `--harness`. |
-| "Use setup, setup --quick, or setup with one of: name, agents, claude, codex, opencode, profile, network, limits." | Give one of those steps, or none. |
+| "Use setup, setup --quick, or setup with one of: name, agents, opencode, profile, network, limits." | Give one of those steps, or none. |
 | "Pair this machine first: run setup." | A single step needs a paired machine. Run `setup` with no step. |
 | "The runner is not online after 3 minutes …" or "The runner stopped. Read why with: docker logs windlass-runner" | Setup started the runner, but it did not report **Online**. Read `docker logs windlass-runner`. |
 | "Invalid setup.json. Repair or remove that file in the runner state volume." | Remove `setup.json` from the volume; setup then asks every step again. |
 | "Mount the Docker socket and runner state for setup." | Copy the setup command from the Machines page: it mounts both. |
-| "Pair this machine before signing in to Claude Code." | Pair the machine, then run `login` again. OpenCode says the same. |
+| "Pair this machine before signing in to OpenCode." | Pair the machine, then run `login opencode` again. |
 | "Attach a terminal to sign in interactively." | Run `login` with `docker exec -it`, so it has a terminal. |
 | "Use an interactive terminal for device sign-in." | The ChatGPT sign-in of OpenCode needs `docker exec -it`. |
-| "Setup did not finish. You can paste a token made on another computer." | Claude's sign-in did not end. Run `claude setup-token` on any computer and paste the token it prints. |
-| "Expected one Claude setup token of at most 512 characters." | Paste the token only, on one line. |
 | "Enter a … API key of up to 4096 characters." | Paste the key only, on one line. |
 | "Use --provider with login opencode." | `--provider` works only with `login opencode`. |
 | "No matching provider. Enter another search or an exact id." | Search with another word, or type the ID. |

@@ -820,3 +820,91 @@
 .picker-effort .effort-bars {
 	flex: none;
 }
+
+/* A connection's state (components/ui/StatusTag.tsx): a dot and a few words; tinted as a pill where it asks for attention. */
+.ui-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 20px;
+	font-size: var(--text-12);
+	font-weight: var(--weight-medium);
+	line-height: 1.3;
+	white-space: nowrap;
+	color: var(--ink-dim);
+}
+.ui-status-dot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--ink-faint);
+}
+.ui-status-good {
+	color: var(--ink);
+}
+.ui-status-good .ui-status-dot {
+	background: var(--ok);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 22%, transparent);
+}
+.ui-status-warn {
+	color: var(--warn);
+}
+.ui-status-warn .ui-status-dot {
+	background: var(--warn);
+}
+.ui-status-bad {
+	color: var(--bad);
+}
+.ui-status-bad .ui-status-dot {
+	background: var(--bad);
+}
+.ui-status-off .ui-status-dot {
+	background: transparent;
+	box-shadow: inset 0 0 0 1.5px var(--ink-faint);
+}
+.ui-status-quiet {
+	font-weight: var(--weight-regular);
+	color: var(--ink-faint);
+}
+.ui-status-pill {
+	padding: 0 8px 0 7px;
+	border-radius: var(--radius-pill);
+	background: var(--bg-active);
+}
+.ui-status-pill.ui-status-warn {
+	background: var(--warn-wash);
+}
+.ui-status-pill.ui-status-bad {
+	background: var(--bad-wash);
+}
+.ui-status-pill.ui-status-good {
+	background: var(--ok-wash);
+}
+
+.ui-waiting {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: var(--text-13);
+	color: var(--ink-dim);
+}
+.ui-waiting-dot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--accent);
+	animation: ui-waiting-pulse 1.6s var(--ease) infinite;
+}
+@keyframes ui-waiting-pulse {
+	50% {
+		opacity: 0.3;
+		transform: scale(0.8);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.ui-waiting-dot {
+		animation: none;
+	}
+}

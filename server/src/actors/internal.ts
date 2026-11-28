@@ -22,7 +22,6 @@ import type {
 	ItemView,
 	ModelList,
 	PartScreenshots,
-	ModelProvider,
 	RepositoryAutonomy,
 	RepositoryCheck,
 	RepositorySetup,
@@ -296,6 +295,19 @@ export interface UserInternal {
 		generation: string,
 		observation: import("../provider-usage.js").UsageObservation,
 	): Promise<void>;
+	internalPlanStatus(
+		provider: import("../contract.js").PlanProvider,
+	): Promise<import("../contract.js").ModelPlanStatus | null>;
+	/**
+	 * Pay with at a turn's start (user-payer.ts): what pays, or why the turn waits; null where the rule does not decide.
+	 * `machine`: the turn runs on the user's machine, whose runner hands a plan's token to a relay there (`plan-relay`).
+	 */
+	internalTurnPayer(input: {
+		sessionId: string;
+		model: string;
+		keyOnce?: boolean;
+		machine?: boolean;
+	}): Promise<import("./user-payer.js").PayerAnswer | null>;
 
 	/** `key`: the repository's `repoKey` (GitHub's bare id still reads as its key). */
 	internalRepositoryAutonomy(key: string | GithubId): Promise<RepositoryAutonomy>;
@@ -650,15 +662,44 @@ export function modelKeyActor(
 	c: HasClient,
 	uid: string,
 ): {
-	internalModelKeys(): Promise<import("../sandbox/provider.js").ModelKeyLease[]>;
-	internalCredentialSource(
-		machineId: string,
-		harness: string,
-	): Promise<import("../contract.js").CredentialSource | null>;
-	internalModelKeyGeneration(provider: ModelProvider): Promise<string | null>;
-	internalModelKey(provider: ModelProvider, nonce: string): Promise<string | null>;
+	internalModelKeys(): Promise<import("../contract.js").CredentialRef[]>;
+	/** The saved generation of a key, or with `plan` of the connected plan; null when none is usable. */
+	internalCredentialGeneration(
+		ref: Omit<import("../contract.js").CredentialRef, "generation">,
+		onMachine?: boolean,
+	): Promise<string | null>;
+	/** The secret behind `ref`, sealed for the relay's request `nonce` (`openCredentialTransit`). `onMachine`: `planAllowed`. */
+	internalCredential(
+		ref: Omit<import("../contract.js").CredentialRef, "generation">,
+		nonce: string,
+		onMachine?: boolean,
+	): Promise<string | null>;
+	/** The models the agent of a turn paid by the plan `ref` reported, kept for that plan while it is at that generation. */
+	internalPlanModels(ref: import("../contract.js").CredentialRef, ids: string[]): Promise<boolean>;
+	/** What a relay saw the provider say of a plan's health, kept while the plan is at `generation` (credentials/plan-health.ts). */
+	internalObservePlan(
+		provider: import("../contract.js").PlanProvider,
+		generation: string,
+		seen: import("../contract.js").RelaySeen,
+	): Promise<void>;
 } {
 	return c.client().user.get([uid], { params: { token: issueServiceToken(modelKeyCaller(uid)) } });
+}
+
+export const planConnectCaller = (uid: string) => `plan-connect/${uid}`;
+
+/** The `user` actor as the connect route reaches it to hand over a plan's token (connect-route.ts). */
+export function planConnectActor(
+	c: HasClient,
+	uid: string,
+): {
+	internalConnectPlan(
+		provider: import("../contract.js").PlanProvider,
+		digest: string,
+		sealed: string,
+	): Promise<import("../contract.js").ModelPlanStatus>;
+} {
+	return c.client().user.get([uid], { params: { token: issueServiceToken(planConnectCaller(uid)) } });
 }
 
 /** What the service token of a session that asks for its repository's secrets is made for. */

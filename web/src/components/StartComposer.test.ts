@@ -474,6 +474,11 @@ describe("each picker of the start composer", () => {
 			pop().querySelector('[aria-label="Switch agent"] [aria-label="Claude Code"]')?.getAttribute("aria-disabled") ===
 			"true";
 		expect(claudeDisabled()).toBe(true);
+		// A disabled agent says why and leads straight to its Connections cell.
+		const connect = pop().querySelector<HTMLElement>(".picker-connect")!;
+		expect(connect.textContent).toContain("not connected for Hosted");
+		const link = [...connect.querySelectorAll("a")].find(a => a.textContent === "Connect Claude Code");
+		expect(link?.getAttribute("href")).toMatch(/^\/connections(\?mock=[^#]*)?#claude-hosted$/);
 		const user = client.user(ada);
 		const save = () => user.saveModelProvider({ provider: "anthropic", key: "sk-ant-api03-" + "x".repeat(32) });
 		await save();
@@ -491,7 +496,8 @@ describe("each picker of the start composer", () => {
 		switchAgent("OpenCode");
 		expect(pop().querySelector('[data-value="opencode:default"]')).toBeTruthy();
 		expect(pop().querySelector('[data-value="opencode:anthropic/claude-sonnet-4"]')).toBeTruthy();
-		expect(pop().textContent).toContain("Hosted agents always use your Settings keys.");
+		expect(pop().textContent).toContain("Hosted agents use the plans and keys on Connections.");
+		expect(pop().querySelector(".picker-connect")?.textContent).not.toContain("Claude Code");
 		switchAgent("Claude Code");
 		pick("claude:sonnet");
 		write("Run the hosted task");

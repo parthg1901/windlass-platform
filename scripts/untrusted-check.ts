@@ -114,11 +114,6 @@ function standIn(promptMeta: string[] | null) {
 	return { handle: sandbox as unknown as SandboxHandle, frames };
 }
 
-const tokens = {
-	current: async () => {
-		throw new Error("a scripted turn takes no token");
-	},
-} as never;
 const host = { version: async () => "0.6.0", problem: async () => null };
 const script = {
 	responses: [
@@ -132,7 +127,7 @@ const script = {
 async function turn(promptMeta: string[] | null, input: Partial<RunTurnInput>) {
 	const { handle, frames } = standIn(promptMeta);
 	let told = 0;
-	const result = await new SandboxWindlass(tokens, host).runTurn(handle, {
+	const result = await new SandboxWindlass(host).runTurn(handle, {
 		prompt: "Fix the build.",
 		script,
 		maxSteps: 60,

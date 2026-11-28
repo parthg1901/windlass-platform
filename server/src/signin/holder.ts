@@ -31,6 +31,7 @@
  * rather than waited for.
  */
 
+import { randomUUID } from "node:crypto";
 import { type AccessToken, type ChatgptAccount, SandboxUserError } from "../sandbox/api.js";
 import { NOT_SIGNED_IN, TOKEN_VALID_FOR_MS, windlassDuration } from "../sandbox/handoff.js";
 import type { SignInCommands, TokenAnswer } from "./commands.js";
@@ -42,8 +43,8 @@ import { errorText } from "../util.js";
 export interface StoredSignIn {
 	/** The sign-in, sealed for this user; null when there is none (never signed in, or forgotten). */
 	sealed: string | null;
-	/** Counts the times the sign-in itself changed (adopted or forgotten): not its refreshes. */
-	generation: number;
+	/** Changes when the sign-in itself does (adopted or forgotten), never at a refresh: a turn pins it (credentials/plans.ts). */
+	generation: string;
 	/** Whether it was already said that the service issues tokens shorter than the platform asks for. */
 	shortNoted: boolean;
 }
@@ -52,7 +53,7 @@ export interface SignInStore {
 	/** Null when nothing was ever saved. */
 	load(): Promise<StoredSignIn | null>;
 	/** Resolves when the store has it. */
-	save(row: StoredSignIn, pendingId?: string): Promise<void>;
+	save(row: StoredSignIn): Promise<void>;
 }
 
 export interface SignInHolderOptions {
@@ -73,7 +74,7 @@ export interface SignInHolderOptions {
 export const SIGN_IN_UNREADABLE =
 	"Your saved ChatGPT sign-in can no longer be read by this server. Sign in with ChatGPT again, then send the prompt once more.";
 
-const NOTHING: StoredSignIn = { sealed: null, generation: 0, shortNoted: false };
+const NOTHING: StoredSignIn = { sealed: null, generation: "", shortNoted: false };
 
 /** A token as it is kept for the user's other requests, and until when. */
 interface Kept {
@@ -154,23 +155,25 @@ export class SignInHolder {
 	 * Replaces the user's sign-in with the one in `sealed`, a finished sign-in sealed for this user.
 	 * Tokens of the earlier sign-in are not handed out again.
 	 */
-	async adopt(sealed: string, pendingId?: string): Promise<void> {
+	async adopt(sealed: string): Promise<void> {
 		// Looked at before anything is touched: what is not a finished sign-in sealed for this user changes nothing.
 		let material: SignInMaterial;
 		try {
-			material = signInOnly(parse(this.options.sealer.open("user", this.uid, sealed)));
+			material = parse(this.options.sealer.open("user", this.uid, sealed));
 		} catch (error) {
 			throw new Error(`the sign-in handed over for user ${this.uid} was refused: ${errorText(error)}`);
 		}
+		await this.adoptMaterial(material);
+	}
+
+	/** Replaces the user's sign-in with `material`, already opened: the connect command's upload (credentials/index.ts). */
+	async adoptMaterial(given: SignInMaterial): Promise<void> {
+		const material = signInOnly(cleanMaterial(given.files));
 		const account = accountOf(material);
 		if (account === null) throw new SandboxUserError("This sign-in is not finished yet.");
 		this.running?.abort();
 		await this.exclusive(async () => {
-			const row = (await this.options.store.load()) ?? NOTHING;
-			await this.options.store.save(
-				{ sealed: this.seal(material), generation: row.generation + 1, shortNoted: false },
-				pendingId,
-			);
+			await this.options.store.save({ sealed: this.seal(material), generation: randomUUID(), shortNoted: false });
 			this.unsaved = null;
 			this.kept = null;
 		});
@@ -187,7 +190,7 @@ export class SignInHolder {
 				this.unsaved = null;
 				const row = (await this.options.store.load()) ?? NOTHING;
 				if (row.sealed !== null)
-					await this.options.store.save({ sealed: null, generation: row.generation + 1, shortNoted: false });
+					await this.options.store.save({ sealed: null, generation: randomUUID(), shortNoted: false });
 			} finally {
 				this.kept = null;
 			}

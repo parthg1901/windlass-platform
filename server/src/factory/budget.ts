@@ -13,15 +13,27 @@
  *   machine    the user's own computer: bounded only by what its runner reports it can run (its slots), which
  *              nothing here can raise; the runner queues turns past them
  *
- * An item's own budget is one cost-weighted token figure (and, hosted, its sandbox time). When it is used
- * up the item asks its person for more; it never throws away work.
+ * An item's own budget is in dollars of work: every turn at API prices, whoever pays (a key's turns at what they
+ * cost, a plan's at what the same tokens would cost on a key). A plan's "% used" is the whole account's, other use
+ * moves it too, so it is never an item's measure. A cost-weighted token figure holds only while some turn could not be
+ * priced (and, hosted, its sandbox time holds too). When it is used up the item asks its person for more; it never
+ * throws away work.
  *
  * The numbers are `FACTORY_DEFAULTS`, the defaults of the WLP_FACTORY_* settings config.ts reads. The day's
  * allowance and the kept sandboxes are usage.ts's own settings.
  */
 
 import { MINUTE, providerWait } from "../provider-usage.js";
-import type { HarnessId, ItemAgent, ProviderAccount, SandboxPlace, TurnUsage, UsageNumbers } from "../contract.js";
+import type {
+	CostRates,
+	HarnessId,
+	ItemAgent,
+	ProviderAccount,
+	SandboxPlace,
+	TurnUsage,
+	UsageNumbers,
+} from "../contract.js";
+import { addTurn, itemCost, noUsage, type TurnMeter } from "./cost.js";
 import { itemTokensOf, machineHarness, type SignInMethod } from "../sandbox/harnesses.js";
 import { nextUtcDay, spellSeconds, type UsageEntry } from "../usage.js";
 import type {
@@ -40,7 +52,7 @@ export const FACTORY_DEFAULTS: FactoryLimits = {
 	githubItemsPerDay: 20,
 	attachments: { bytes: 2 * 1024 * 1024, perItem: 40, accountBytes: 1_073_741_824, days: 180 },
 	hostedRunning: 3,
-	item: { tokens: 2_000_000, hostedSeconds: 2 * 3600 },
+	item: { tokens: 2_000_000, hostedSeconds: 2 * 3600, usd: 5 },
 };
 
 /**
@@ -201,14 +213,35 @@ export function spellTokens(tokens: number): string {
 	return String(Math.round(tokens));
 }
 
+/** "$1.23", "$4". */
+export function spellUsd(amount: number): string {
+	const cents = Math.round(amount * 100);
+	return cents % 100 === 0 ? `$${cents / 100}` : `$${(cents / 100).toFixed(2)}`;
+}
+
 const BUDGET_WORDS: Record<keyof ItemBudget, (spent: ItemSpend, budget: number) => string> = {
 	tokens: (_spent, budget) => `Used its ${spellTokens(budget)}-token budget.`,
 	hostedSeconds: (spent, budget) =>
 		`This item's hosted sandbox has run for ${spellSeconds(spent.hostedSeconds)} of its ${spellSeconds(budget)}.`,
+	// "of work": on a plan it is the value of what the plan carried, not a charge.
+	usd: (spent, budget) => `Used ${spellUsd(spent.usd ?? 0)} of work of its ${spellUsd(budget)} budget.`,
 };
 
-/** The figures of a budget: tokens everywhere, hosted sandbox time only where the sandbox is hosted. */
-export const BUDGET_FIGURES = ["tokens", "hostedSeconds"] as const satisfies ReadonlyArray<keyof ItemBudget>;
+/** The figures of a budget, in the order a stop names them. */
+export const BUDGET_FIGURES = ["usd", "tokens", "hostedSeconds"] as const satisfies ReadonlyArray<keyof ItemBudget>;
+
+/**
+ * Which figures hold an item now: dollars of work wherever the item has a dollar budget, tokens too while some turn
+ * could not be priced, and tokens alone for an item without a dollar budget (filed before it was kept, a feature's own
+ * allowance).
+ */
+export function budgetUnits(
+	budget: Pick<ItemBudget, "usd">,
+	spent: Pick<ItemSpend, "usdUnknown">,
+): Record<keyof ItemBudget, boolean> {
+	const usd = budget.usd !== undefined;
+	return { usd, tokens: !usd || !!spent.usdUnknown, hostedSeconds: true };
+}
 
 /**
  * The first of an item's budgets it has used up, with the sentence a person reads; null while every
@@ -219,11 +252,83 @@ export function budgetStop(
 	spent: ItemSpend,
 	place: SandboxPlace,
 ): { cause: StopCause & keyof ItemBudget; sentence: string } | null {
+	const units = budgetUnits(budget, spent);
 	for (const cause of BUDGET_FIGURES) {
-		if (cause === "hostedSeconds" && place.kind !== "hosted") continue;
-		if (spent[cause] >= budget[cause]) return { cause, sentence: BUDGET_WORDS[cause](spent, budget[cause]) };
+		if (!units[cause] || (cause === "hostedSeconds" && place.kind !== "hosted")) continue;
+		const cap = budget[cause];
+		if (cap !== undefined && (spent[cause] ?? 0) >= cap) return { cause, sentence: BUDGET_WORDS[cause](spent, cap) };
 	}
 	return null;
+}
+
+/**
+ * What a part of a feature is given in dollars: the item's, in the proportion of its planned tokens to an item's (the
+ * planner budgets in tokens only). None where the item's budget has none.
+ */
+export function partShare(single: ItemBudget, tokens: number): Pick<ItemBudget, "usd"> {
+	const ratio = single.tokens > 0 ? Math.min(1, tokens / single.tokens) : 1;
+	return single.usd === undefined ? {} : { usd: Math.max(0.01, Math.round(single.usd * ratio * 100) / 100) };
+}
+
+/**
+ * A turn's model dollars at `models`' prices, whoever paid: a key's turn at what it cost, a plan's at what it would have
+ * on a key. Null where they could not be priced (no catalog, an unknown model, a turn that reported nothing).
+ */
+export function turnUsd(meter: TurnMeter | undefined, models: CostRates["models"]): number | null | undefined {
+	if (!meter) return undefined;
+	const usage = noUsage();
+	addTurn(usage, meter);
+	const cost = itemCost(usage, { models, source: null, sandbox: null });
+	return cost.unknown ? null : cost.workUsd;
+}
+
+/** The figures a running turn can be stopped at, in the order they hold an item. */
+export const TURN_FIGURES = ["usd", "tokens"] as const;
+export type TurnFigure = (typeof TURN_FIGURES)[number];
+
+/** How far past its budget a running turn goes before it is stopped: a share of the item's whole budget in that figure. */
+export const TURN_BUDGET_GRACE = 0.05;
+
+/** Where a running turn is stopped, and how much of that figure it may use: dollars of work, or weighted tokens. */
+export interface TurnBudget {
+	figure: TurnFigure;
+	stopAt: number;
+}
+
+/**
+ * Where an item's turn is stopped while it runs (#100a): the figure that holds the item and how much of it the turn may
+ * use, what was left plus a small grace (`TURN_BUDGET_GRACE`), so that a turn about to finish is not cut off for a few
+ * cents. Decided with the turn (change.ts `nextTurn`) and handed to its session with the delivery. Undefined where
+ * nothing measurable holds it.
+ */
+export function turnBudget(budget: ItemBudget, spent: ItemSpend): TurnBudget | undefined {
+	const units = budgetUnits(budget, spent);
+	const figure = TURN_FIGURES.find(figure => units[figure] && budget[figure] !== undefined);
+	if (!figure) return undefined;
+	const cap = budget[figure] ?? 0;
+	const left = Math.max(0, cap - (spent[figure] ?? 0)) + cap * TURN_BUDGET_GRACE;
+	return { figure, stopAt: figure === "tokens" ? Math.round(left) : left };
+}
+
+/** What is known live of a running turn's use: its dollars of work, and its weighted tokens where they come as it works. */
+export interface RunningSeen {
+	usd?: number | null;
+	tokens?: number | null;
+}
+
+/**
+ * Whether a running turn reached where it stops, with what it used of that figure; null while it is within it. Unknown
+ * use (a price not known, an agent that reports its tokens only at the end) never stops a turn. On a stop the session
+ * stops the turn as a person's Stop would, and the item asks its budget question.
+ */
+export function crossedStop(
+	budget: TurnBudget | undefined,
+	seen: RunningSeen,
+): { figure: TurnFigure; running: number } | null {
+	if (!budget) return null;
+	const running = seen[budget.figure];
+	if (typeof running !== "number" || !Number.isFinite(running) || running < budget.stopAt) return null;
+	return { figure: budget.figure, running };
 }
 
 // ---------------------------------------------------------------------------------------------

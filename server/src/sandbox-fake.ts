@@ -90,17 +90,17 @@
  * damages an object's file to play a bucket that lost or spoiled it; restarting the server loses the
  * sandboxes and keeps the directory.
  *
- * Sign-in: paste `<redirectPrefix>?code=<name>` to sign in as `<name>@example.com`; `code=refused`
- * is refused. The steps, the sealed attempt and the user's sign-in in the `user` actor are the real
- * ones (server/src/signin/): only Windlass is stood in for (`FakeSignInCommands`), so what a sign-in
- * holds here is a made-up `auth.json` with obviously fake tokens.
+ * Sign-in: a check uploads `fakeSignInFiles(<name>)` through the connect route to sign in as
+ * `<name>@example.com`. The user's sign-in in the `user` actor is the real one (server/src/signin/):
+ * only Windlass is stood in for (`FakeSignInCommands`), so what a sign-in holds here is a made-up
+ * `auth.json` with obviously fake tokens.
  *
  * Access tokens: a turn without a script asks the layer's token source for its user's access token
  * first, as the real layer does, and is handed one (a line `[wlp] token.handed` says so; the token is
  * obviously fake and goes nowhere). A demo turn asks for none. The account's name decides the answer:
- * `code=expired` signs in an account whose sign-in can no longer be refreshed ("auth_required": sign
- * in again), `code=offline` one whose token cannot be had this time ("token_unavailable"), and
- * `code=brief` one whose saved token has only a minute left, so the first request refreshes it. The
+ * "expired" signs in an account whose sign-in can no longer be refreshed ("auth_required": sign
+ * in again), "offline" one whose token cannot be had this time ("token_unavailable"), and
+ * "brief" one whose saved token has only a minute left, so the first request refreshes it. The
  * stand-in fails as Windlass does, by the kind of error the real commands make from Windlass's code: a
  * `SandboxUserError` for a sign-in that is missing (`signed_out`) or refused (`invalid_grant`), and a
  * `SignInRefreshError` with the code `network_error` for a sign-in service that cannot be reached.
@@ -122,7 +122,6 @@ import { definitionReads, isReservedServerName } from "./personal-servers.js";
 import { WINDLASS_CONFIG_FILE } from "./windlass-config.js";
 import {
 	type AccessTokens,
-	type ChatgptAccount,
 	type CreateSandboxInput,
 	type ExecOptions,
 	type ExecResult,
@@ -152,11 +151,11 @@ import {
 	tokenSourceFailure,
 } from "./sandbox/handoff.js";
 import type { SignInCommands, TokenAnswer } from "./signin/commands.js";
+import type { MemorySignInDirectory } from "./signin/directory.js";
 import { actorSignIns, memorySignIns } from "./signin/facade.js";
 import type { SignInMaterial } from "./signin/material.js";
 
 const WORKSPACE = "/workspace";
-const REDIRECT_PREFIX = "http://127.0.0.1:1455/auth/callback";
 /** What the stand-in for `windlass --models` lists for every account: the efforts differ by model, as a plan's do. */
 const FAKE_PLAN: ListedModels = {
 	models: [
@@ -1885,49 +1884,6 @@ class FakeSignInCommands implements SignInCommands {
 	/** How many times the (imaginary) `windlass login token --json --valid-for 20m` ran. */
 	asked = 0;
 	private issued = 0;
-	/** Test issuer's grants by code, supplied by the server running the check. */
-	private readonly grants = new Map<string, { sub?: string; email: string | null }>(
-		Object.entries(JSON.parse(process.env.WLP_FAKE_SIGNIN_GRANTS ?? "{}")),
-	);
-
-	async start(): Promise<{ url: string; redirectPrefix: string; material: SignInMaterial }> {
-		const state = randomBytes(8).toString("hex");
-		return {
-			url: `https://auth.openai.com/oauth/authorize?fake=1&state=${state}`,
-			redirectPrefix: REDIRECT_PREFIX,
-			material: { files: { "auth-pending.json": JSON.stringify({ fake: true, state }) } },
-		};
-	}
-
-	async finish(
-		material: SignInMaterial,
-		pastedUrl: string,
-	): Promise<{ account: ChatgptAccount; material: SignInMaterial }> {
-		if (material.files["auth-pending.json"] === undefined)
-			throw new SandboxUserError("This sign-in attempt is not known. Start again.");
-		if (!pastedUrl.startsWith(REDIRECT_PREFIX)) {
-			throw new SandboxUserError(`That is not the address the sign-in ends on. It starts with ${REDIRECT_PREFIX}`);
-		}
-		let code: string | null = null;
-		try {
-			code = new URL(pastedUrl).searchParams.get("code");
-		} catch {
-			code = null;
-		}
-		if (!code) throw new SandboxUserError("The address has no sign-in code in it. Copy the whole address.");
-		if (code === "refused") throw new SandboxUserError("OpenAI refused the sign-in. Start again.");
-		if (code === "explode")
-			throw new Error("fake layer: docker run failed with /var/run/docker.sock: permission denied");
-		const grant = this.grants.get(code) ?? { email: `${code}@example.com` };
-		const saved = this.issue(
-			{ sub: grant.sub ?? `fake|${code}`, email: grant.email },
-			code === "brief" ? 60_000 : 60 * 60 * 1000,
-		);
-		return {
-			account: { ...saved.account, accessExpiresAt: saved.expiresAt },
-			material: { files: { "auth.json": JSON.stringify(saved) } },
-		};
-	}
 
 	async token(material: SignInMaterial): Promise<TokenAnswer> {
 		const text = material.files["auth.json"];
@@ -1980,6 +1936,21 @@ class FakeSignInCommands implements SignInCommands {
 	}
 }
 
+/**
+ * A stand-in sign-in for `code`: what a check hands the connect route the way `npx @windlassai/cli connect codex`
+ * would (scripts/chatgpt-connect.ts). "brief" lasts a minute; "expired" and "offline" fail to refresh.
+ */
+export function fakeSignInFiles(code: string): { "auth.json": string } {
+	const id = randomBytes(6).toString("hex");
+	const saved: FakeCredentials = {
+		account: { sub: `fake|${code}`, email: `${code}@example.com` },
+		accessToken: `FAKE-ACCESS-TOKEN-${id}-not-a-real-token`,
+		refreshToken: `FAKE-REFRESH-TOKEN-${id}-not-a-real-token`,
+		expiresAt: Date.now() + (code === "brief" ? 60_000 : 60 * 60 * 1000),
+	};
+	return { "auth.json": JSON.stringify(saved) };
+}
+
 /** The stand-in for Windlass's sign-in commands: what the server's sign-in machinery runs with WLP_SANDBOX=fake (signin/index.ts). */
 export function createFakeSignInCommands(): SignInCommands {
 	return new FakeSignInCommands();
@@ -1989,14 +1960,16 @@ export function createFakeSignInCommands(): SignInCommands {
  * `signIns: "memory"` keeps the users' sign-ins in this process instead of in the server's actors: for
  * a check that uses the layer by itself, with no server beside it.
  */
-export function createFakeSandboxLayer(options: { signIns?: "actors" | "memory" } = {}): SandboxLayer {
+export function createFakeSandboxLayer(
+	options: { signIns?: "actors" | "memory" } = {},
+): SandboxLayer & { signIns: MemorySignInDirectory | null } {
 	// A directory that stands in for the bucket: Windlass's sessions then live in the sandboxes, and are copied there.
 	const bucket = fakeBucket();
 	// The sign-in steps and the token source are the real ones, over the stand-in for Windlass above.
-	const { logins, tokens } =
+	const { logins, tokens, directory } =
 		options.signIns === "memory"
 			? memorySignIns({ commands: createFakeSignInCommands(), rows: new Map() })
-			: actorSignIns();
+			: { ...actorSignIns(), directory: null };
 	const raw = Number.parseInt(process.env.WLP_FAKE_DELAY_MS ?? "", 10);
 	const eventDelayMs = Number.isFinite(raw) && raw >= 0 ? raw : 15;
 	const setting = (name: string) => {
@@ -2013,6 +1986,7 @@ export function createFakeSandboxLayer(options: { signIns?: "actors" | "memory" 
 		windlass: new FakeWindlass(sandboxes, eventDelayMs, tokens),
 		logins,
 		tokens,
+		signIns: directory,
 		backups: bucket === null ? null : new SandboxSessionBackups(bucket, { maxBytes: backupConfig().maxBytes }),
 	};
 }

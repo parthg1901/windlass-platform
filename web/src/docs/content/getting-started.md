@@ -10,7 +10,18 @@ To keep an existing account, open **Settings → Account** while signed in and c
 
 Your provider identity selects your account. An unlinked identity creates a new account if admitted, including when its verified email matches another user. If you have lost your existing session, ask the operator to link your provider identity to your original UID before signing in.
 
-You can connect a ChatGPT plan from [Settings → Model providers](/docs/settings#model-providers) to run agents with your plan.
+You can connect a ChatGPT or Claude plan, or API keys, on [Connections](/docs/settings#connections) to run agents with them.
+
+### First-run setup
+
+The first time you sign in, Home walks you through four steps:
+
+1. **GitHub**: install the Windlass GitHub App on the repositories you choose.
+2. **Repository**: pick one to start with.
+3. **Agents**: for Claude Code and Codex, choose **Use my plan** (chosen for you where the platform offers plans), **API key**, or **Run on my computer**, which pairs a machine of yours. More agents and keys are on Connections.
+4. **First item**: pick a starter task (the repository's oldest open issues labelled "bug", or a small safe change such as adding a test) or write your own, and choose **Start item**. It runs as a Quick work item and ends in a pull request.
+
+The setup opens while your account has no agents and no work items and GitHub or an agent is not connected yet. **Set up later** closes it; Home then offers **Resume setup**, which opens it where you left it. This browser remembers the step you reached. It does not open again once you have run anything.
 
 ### The demo
 

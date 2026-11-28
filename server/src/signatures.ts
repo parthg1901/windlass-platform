@@ -9,6 +9,7 @@ const purposes = [
 	"pairing-budget",
 	"attach-ticket",
 	"model-relay",
+	"connect-code",
 ] as const;
 type Purpose = (typeof purposes)[number];
 const keys = new Map(

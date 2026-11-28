@@ -29,7 +29,7 @@ import {
 	MOST_MS,
 } from "../factory/feedback.js";
 import { isAddressed } from "../github/events.js";
-import type { FeedbackBatch, FeedbackEntry } from "../contract.js";
+import type { FeedbackBatch, FeedbackEntry, HostedSplit } from "../contract.js";
 import { GithubProblem } from "../github/repos.js";
 import { verdictWords } from "../factory/verdict.js";
 import { mergeCandidate, requiredCiBranches } from "../factory/autonomy.js";
@@ -100,8 +100,11 @@ import {
 	type PartScreenshots,
 	type PlanSubtask,
 	type SessionSummary,
+	type WorkType,
 } from "../contract.js";
 import { itemAgent, ledgerSeconds, retryAt } from "../factory/budget.js";
+import { addHosted, mergeUsage } from "../factory/cost.js";
+import { partsRetryUsage } from "../factory/usage-summary.js";
 import type { ReviewDelivery } from "./session-inbox.js";
 import { actor, UserError } from "rivetkit";
 import { db, type RawAccess } from "rivetkit/db";
@@ -180,6 +183,8 @@ import type { DefaultBuilder, ItemFacts } from "./user-items.js";
 /** What the item knows around the blueprint's `FactoryItem`. */
 export interface ItemMeta {
 	taskKind?: TaskKind;
+	/** What the work's latest changes are, for the Usage summary (factory/usage-summary.ts). */
+	workType?: WorkType;
 	flaky?: boolean;
 	ciCodeFailure?: boolean;
 	mergedDifferentHead?: true;
@@ -219,9 +224,10 @@ export interface ItemMeta {
 	verdict: ItemSummary["verdict"];
 	/**
 	 * The hosted sandbox seconds of the item's session over its whole life, and the ledger's holds already
-	 * in it: the ledger keeps only its last days, so the item adds each hold once as it sees it.
+	 * in it: the ledger keeps only its last days, so the item adds each hold once as it sees it. `hosted` is what
+	 * billing made of those seconds as each was first seen (usage.ts `hostedSplit`); absent where no plan applied.
 	 */
-	ledger: { seconds: number; holds: string[] };
+	ledger: { seconds: number; holds: string[]; hosted?: HostedSplit };
 }
 
 /** What `user` passes when it creates a `workItem`. */
@@ -393,6 +399,13 @@ function summaryOf({ item, meta }: Stored): ItemSummary {
 		review: secondReview(item, meta),
 		budget: item.budget,
 		spent: item.spent,
+		...(item.jobs?.length && {
+			// A part queued before its spend was recorded has none yet.
+			partsUsage: mergeUsage(item.jobs.map(job => job.spent?.usage)),
+			partsRetryUsage: partsRetryUsage(item.jobs),
+		}),
+		...(meta.workType && { workType: meta.workType }),
+		...(item.startedAt !== undefined && { startedAt: item.startedAt }),
 		agent: itemAgent(item),
 		sessionId: meta.sessionId,
 		createdAt: meta.createdAt,
@@ -779,7 +792,10 @@ async function takeSessionFact(c: Ctx, stored: Stored, fact: Fact): Promise<void
 				tokens: fact.spend?.tokens ?? 0,
 				...(fact.spend?.rawTokens !== undefined && { rawTokens: fact.spend.rawTokens }),
 				hostedSeconds,
+				...(stored.meta.ledger.hosted && { hosted: stored.meta.ledger.hosted }),
 				...(fact.spend?.agent && { agent: fact.spend.agent }),
+				...(fact.spend?.meter && { meter: fact.spend.meter }),
+				...(fact.spend?.usd !== undefined && { usd: fact.spend.usd }),
 			},
 		});
 	} else {
@@ -848,8 +864,10 @@ async function take(
 	if (fact.kind === "pr_read" && fact.state === "merged" && fact.prHead && fact.prHead !== before.head)
 		stored.meta.mergedDifferentHead = true;
 	if (fact.kind === "published") delete stored.meta.ciCodeFailure;
-	if (fact.kind === "turn_ended" && fact.changes && currentKey(before) === fact.key)
+	if (fact.kind === "turn_ended" && fact.changes && currentKey(before) === fact.key) {
 		stored.meta.taskKind = fact.taskKind;
+		stored.meta.workType = fact.workType;
+	}
 	if (fact.kind === "ci_read" && fact.reading.kind === "read" && fact.head === fact.reading.head) {
 		const failed = fact.reading.runs.filter(r => r.state === "failed");
 		const retry = outcome.effects.find(e => e.kind === "rerun_ci") ?? before.ciReruns?.[rerunKey(fact)];
@@ -2283,9 +2301,12 @@ function lifetimeSeconds(meta: ItemMeta, facts: ItemFacts): number {
 	const fresh = facts.entries.filter(entry => !seen.has(entry.hold));
 	// Every hold ever counted is kept: an older answer that comes back after a newer one would otherwise drop a hold, which the
 	// next answer would count again. An item's life holds few of them (its hosted budget, in holds of minutes).
+	let hosted = meta.ledger.hosted;
+	for (const entry of fresh) if (entry.hosted) hosted = addHosted(hosted, entry.hosted);
 	meta.ledger = {
 		seconds: meta.ledger.seconds + ledgerSeconds(fresh, sessionsOf(meta)),
 		holds: [...meta.ledger.holds, ...fresh.map(entry => entry.hold)],
+		...(hosted && { hosted }),
 	};
 	return meta.ledger.seconds;
 }
@@ -2296,8 +2317,9 @@ async function factsOf(c: Ctx, meta: ItemMeta): Promise<ItemFacts> {
 	const stored = c.vars.stored;
 	if (stored?.item.place.kind === "hosted") {
 		const seconds = lifetimeSeconds(stored.meta, facts) + childSeconds(stored.item);
+		const { hosted } = stored.meta.ledger;
 		if (seconds > stored.item.spent.hostedSeconds)
-			await take(c, { kind: "spent", at: Date.now(), hostedSeconds: seconds });
+			await take(c, { kind: "spent", at: Date.now(), hostedSeconds: seconds, ...(hosted && { hosted }) });
 	}
 	return facts;
 }
@@ -3285,7 +3307,6 @@ async function perform(c: Ctx, row: EffectRow): Promise<boolean | "deferred"> {
 					at: Date.now(),
 					sentence: result.wait,
 					reviewer: result.reviewer,
-					offerPayer: result.offerPayer,
 				});
 			else {
 				const session = result.session;
@@ -3778,7 +3799,7 @@ async function perform(c: Ctx, row: EffectRow): Promise<boolean | "deferred"> {
 				const hostedModels = Object.fromEntries(
 					(["claude", "opencode"] as const).map(id => [
 						id,
-						hostedCatalog(id, inventory.hostedKeys ?? [])?.models.map(m => m.id),
+						hostedCatalog(id, inventory.hostedCredentials ?? [])?.models.map(m => m.id),
 					]),
 				);
 				const places = inventory.machines.map(({ machineId, repositorySecrets, ...description }) => ({
@@ -3835,7 +3856,7 @@ async function perform(c: Ctx, row: EffectRow): Promise<boolean | "deferred"> {
 						parent: parentName,
 						screenshotsEnabled: inventory.screenshotsEnabled,
 						repositoryScreenshots: inventory.repositoryScreenshots,
-						hostedKeys: inventory.hostedKeys?.map(k => k.provider),
+						hostedCredentials: inventory.hostedCredentials?.map(k => (k.plan ? `${k.provider} plan` : k.provider)),
 						hostedModels,
 						keyProfiles: inventory.keyProfiles,
 						hostedEgress: inventory.hostedEgress,
@@ -3864,6 +3885,7 @@ async function perform(c: Ctx, row: EffectRow): Promise<boolean | "deferred"> {
 					...(effect.unsandboxed && { unsandboxed: true }),
 					...(effect.fresh && { fresh: effect.fresh }),
 					...(effect.asksLeft !== undefined && { asksLeft: effect.asksLeft }),
+					...(effect.budget && { budget: effect.budget }),
 				})
 				.catch(onGone);
 			return true;
@@ -4262,7 +4284,11 @@ export function readyRefused(error: unknown): string | null {
 	return null;
 }
 
-const MAX_RAISE = { tokens: 1_000_000_000, hostedSeconds: 7 * 86_400 } as const;
+const MAX_RAISE = {
+	tokens: 1_000_000_000,
+	hostedSeconds: 7 * 86_400,
+	usd: 100_000,
+} as const;
 
 /** The fact of a person's action, checked; throws a UserError for one that cannot be taken. */
 function factOf(action: ItemAction, by: string, at: number): Fact {

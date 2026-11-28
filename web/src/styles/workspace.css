@@ -17,6 +17,10 @@
 .ws-folded {
 	grid-template-columns: 0px minmax(0, 1fr);
 }
+/* No rail (the first-run setup on Home): the main side has the width. */
+.ws-bare {
+	grid-template-columns: minmax(0, 1fr);
+}
 
 /* ---- the rail ----------------------------------------------------------------------------------- */
 

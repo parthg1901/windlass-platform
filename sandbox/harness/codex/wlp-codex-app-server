@@ -17,7 +17,8 @@ const { once } = require('node:events');
 const fs = require('node:fs');
 const codex = '/usr/local/bin/codex';
 const home = '/opt/wlp-codex/home';
-const USER_LAYER = ['config.toml', 'managed_config.toml', 'requirements.toml', 'rules', 'hooks.json', 'hooks', 'AGENTS.md', 'AGENTS.override.md', '.env'];
+// auth.json too: a turn pays through the platform's relay (wlp-codex-acp's provider), never with a login of Codex's.
+const USER_LAYER = ['config.toml', 'managed_config.toml', 'requirements.toml', 'rules', 'hooks.json', 'hooks', 'AGENTS.md', 'AGENTS.override.md', '.env', 'auth.json'];
 const WRITES = new Set(['config/batchWrite', 'config/value/write', 'config/write']);
 const PLATFORM = 'windlass_platform';
 const args = process.argv.slice(2);

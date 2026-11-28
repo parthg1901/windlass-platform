@@ -36,8 +36,10 @@ async function start(machine: MockMachineState, failDefaults = false): Promise<v
 	await vi.advanceTimersByTimeAsync(1000);
 	const auth: AuthResult = await finished;
 	const account = client.user(auth);
-	const plan = await account.startChatgpt();
-	await account.finishChatgpt(plan.redirectPrefix + "?code=plan&state=" + new URL(plan.url).searchParams.get("state"));
+	// The mock connects the plan a few seconds after its code is approved, as the connect command would.
+	const approved = account.approvePlanConnect("KQ2M-8XF4", "openai");
+	await vi.advanceTimersByTimeAsync(4000);
+	await approved;
 	saveAuth("mock", auth);
 	const user = client.user.bind(client);
 	(client as { user: (auth: AuthResult) => UserApi }).user = who => {

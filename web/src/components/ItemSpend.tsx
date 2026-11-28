@@ -29,8 +29,8 @@ export function ItemSpend({ spent, budget, fields, agent }: Props) {
 						</div>
 					);
 				}
-				const used = spent[field.key];
-				const cap = budget[field.key];
+				const used = spent[field.key] ?? 0;
+				const cap = budget[field.key] ?? 0;
 				const reached = used >= cap;
 				return (
 					<div key={field.key}>
@@ -39,7 +39,7 @@ export function ItemSpend({ spent, budget, fields, agent }: Props) {
 							{field.spelled(used)}{" "}
 							<span className="tone-faint">
 								of {field.spelled(cap)}
-								{field.key === "tokens" && " budget"}
+								{field.key === "tokens" || field.key === "usd" ? " budget" : null}
 							</span>
 						</dd>
 						<dd className="item-cost-meter">

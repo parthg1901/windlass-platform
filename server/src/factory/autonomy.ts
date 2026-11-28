@@ -1,7 +1,7 @@
 import type { FeaturePlan, ItemBudget } from "../contract.js";
 import { featureBranch, subtaskBranch } from "../github/feature.js";
 import { childItemId } from "./feature-ids.js";
-import { sharedPaths, validatePlan } from "./feature-plan.js";
+import { SMALL_PLAN_LIMIT, sharedPaths, validatePlan } from "./feature-plan.js";
 import type { FactoryItem, HandoffReview } from "./types.js";
 import { thirdParty } from "./untrusted.js";
 
@@ -16,10 +16,6 @@ export function requiredCiBranches(item: FactoryItem, waitForCiOnEachPart: boole
 		}
 	return branches;
 }
-
-// Three ordinary item allowances bound both the number of work packages and the total exposure,
-// including the feature's own planning, summary and review allowance.
-const SMALL_PLAN_LIMIT = 3;
 
 export function smallPlanProblem(plan: FeaturePlan, single: ItemBudget, repos: string[] = []): string | null {
 	if (plan.status !== "proposed") return "Only a proposed plan can be approved automatically.";

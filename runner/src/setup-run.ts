@@ -6,10 +6,8 @@ import { validMachineName } from "../../server/src/runner/control.js";
 import { docker } from "../../server/src/sandbox/docker.js";
 import { parseStoreSize } from "../../server/src/sandbox/store-limits.js";
 import { pair } from "./control.js";
-import { codexLogin, changeCodexLogin } from "./codex-login.js";
 import { Executor, retirePairingRelays } from "./docker-executor.js";
 import { domainList } from "./egress-policy.js";
-import { changeClaudeLogin, claudeSignIn } from "./harness-login.js";
 import { resolveMachineName } from "./machine-name.js";
 import { importOpenCode } from "./opencode-import.js";
 import { changeProviderLogin, installedProvider, storeProvider, terminalQuestion } from "./opencode-login.js";
@@ -17,6 +15,7 @@ import { requestLoginReport } from "./pair-command.js";
 import { harnessImage, prepareImages, type MachineHarness } from "./policy.js";
 import { laterLogin, setupImageAndMounts, shellCommand } from "./setup.js";
 import { HARNESSES, fromFlags, validChoices, type SetupChoices } from "./setup-choices.js";
+import { EventPrompter } from "./setup-events.js";
 import { LinePrompter } from "./setup-lines.js";
 import { TuiPrompter } from "./setup-tui.js";
 import { SECTIONS, runWizard, type Mode, type PairEvent, type Section, type WizardEffects } from "./setup-wizard.js";
@@ -45,8 +44,8 @@ export async function signInForSetup(
 	signal: AbortSignal,
 	importFile?: string,
 ) {
-	if (agent === "codex") return changeCodexLogin(machine, true, signal);
-	if (agent === "claude") return changeClaudeLogin(machine, true, signal);
+	// Claude Code and Codex pay with the account's plans and keys: setup signs neither in.
+	if (agent !== "opencode") return;
 	const login = (provider?: string) => changeProviderLogin(machine, true, signal, provider);
 	if (
 		importFile &&
@@ -104,11 +103,14 @@ export async function setupWizard(sections: string[], values: Values): Promise<v
 	if (sections.length > 1 || (sections[0] !== undefined && !(SECTIONS as readonly string[]).includes(sections[0])))
 		throw new RunnerError(`Use setup, setup --quick, or setup with one of: ${SECTIONS.join(", ")}.`);
 	if (sections.length && values.quick) throw new RunnerError("Use --quick with setup alone.");
+	if ((sections.length || values.quick) && values.connect) throw new RunnerError("Use --connect with setup alone.");
 	const mode: Mode = sections.length
 		? { kind: "section", section: sections[0] as Section }
 		: values.quick
 			? { kind: "quick" }
-			: { kind: "full" };
+			: values.connect
+				? { kind: "connect" }
+				: { kind: "full" };
 	const launch = await setupImageAndMounts();
 	const platform = typeof values.platform === "string" ? origin(values.platform) : undefined;
 	const loaded = savedChoices();
@@ -213,13 +215,9 @@ export async function setupWizard(sections: string[], values: Values): Promise<v
 			}
 		},
 		async signInState(agent) {
+			if (agent !== "opencode") return "unknown";
 			try {
-				const m = machine();
-				if (agent === "codex") return codexLogin(m) ? "signed-in" : "signed-out";
-				if (agent === "opencode") return (await installedProvider(m)) ? "signed-in" : "signed-out";
-				// Docker Desktop cannot stat the file in a stopped container, so setup also runs the check.
-				const state = await claudeSignIn(m, { start: true });
-				return state === "token" ? "signed-in" : state === "none" ? "signed-out" : "unknown";
+				return (await installedProvider(machine())) ? "signed-in" : "signed-out";
 			} catch {
 				return "unknown";
 			}
@@ -301,7 +299,7 @@ export async function setupWizard(sections: string[], values: Values): Promise<v
 	};
 
 	const tui = !!process.stdin.isTTY && !!process.stdout.isTTY && !values["no-tui"];
-	const prompter = tui ? new TuiPrompter() : new LinePrompter();
+	const prompter = mode.kind === "connect" ? new EventPrompter() : tui ? new TuiPrompter() : new LinePrompter();
 	const result = await runWizard(prompter, fx, mode, { platform });
 	if (result.outcome !== "done") process.exitCode = 1;
 	if (result.message && result.outcome === "done") prompter.log("info", result.message);

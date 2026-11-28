@@ -151,7 +151,7 @@ async function main(): Promise<void> {
 	);
 	const { config } = await import("../server/src/config.js");
 	const { platformConnectionResponse } = await import("../server/src/platform-info.js");
-	const { startupProblem, warnAboutConnectionTokens } = await import("../server/src/startup.js");
+	const { planUsersWarning, startupProblem, warnAboutConnectionTokens } = await import("../server/src/startup.js");
 
 	const logged: string[] = [];
 	const tokens = (ttlMs = HOUR, endpoint = engine.url, adminToken = ADMIN) =>
@@ -628,6 +628,20 @@ async function main(): Promise<void> {
 		expect(
 			"an address without an admin token is an engine that asks for none: it starts",
 			startupProblem({ ...fake, browsers: browsers("https://engine.example", false) }) === null,
+		);
+
+		const nobody = planUsersWarning({ plans: new Set() });
+		expect(
+			"WLP_PLAN_USERS naming nobody is said at startup, with its effect, in one line",
+			nobody !== null &&
+				nobody.includes("WLP_PLAN_USERS") &&
+				nobody.includes("refused for everyone") &&
+				!nobody.includes("\n"),
+			nobody ?? "",
+		);
+		expect(
+			"WLP_PLAN_USERS naming users, or everyone: nothing is said",
+			planUsersWarning({ plans: new Set(["u_a"]) }) === null && planUsersWarning({ plans: "all" }) === null,
 		);
 
 		const printed: string[] = [];

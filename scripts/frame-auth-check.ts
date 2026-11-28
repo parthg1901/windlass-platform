@@ -11,6 +11,7 @@ import { createInterface } from "node:readline";
 import { performance } from "node:perf_hooks";
 import { ServerChannel, RunnerChannel, type ChannelSocket } from "../server/src/runner/channel.js";
 import { controlProof, parseRunnerFrame, parseServerFrame, sessionProof } from "../server/src/runner/control.js";
+import { OLD_RUNNER } from "../server/src/runner/protocol.js";
 import {
 	certify,
 	machineStatement,
@@ -456,11 +457,7 @@ async function oldRunner() {
 					signature: signMachine(controlProof(who.uid, who.machineId, String(challenge.nonce))),
 				}),
 			});
-			assert.equal(
-				frames[0]?.message,
-				"This runner is too old for this platform. Update it with the command on the Machines page.",
-				"old runner was not told to update",
-			);
+			assert.equal(frames[0]?.message, OLD_RUNNER, "old runner was not told to update");
 			assert.ok(
 				warnings.some(w => w.kind === "outdated"),
 				"missing Machines update warning",

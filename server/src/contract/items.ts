@@ -79,6 +79,11 @@ export type WaitReason =
 export interface Wait {
 	/** The sign-in whose cooldown holds this item, when known. */
 	accountKey?: string;
+	/**
+	 * A connected plan holds it (Pay with): at its limit (`limited`) or at its parallel-turn cap. `keyNow`: a saved key
+	 * could pay now (the user actor's `useKeyNow`).
+	 */
+	plan?: { provider: import("./connect.js").PlanProvider; limited: boolean; keyNow: boolean };
 	reason: WaitReason;
 	/** "Waiting for one of your 5 factory turns; 5 are running (…)." */
 	sentence: string;
@@ -157,10 +162,16 @@ export interface ItemTask {
 	base: string;
 }
 
-/** Token budgets use cost-weighted input. The time limit applies to hosted sandboxes only. */
+/**
+ * An item's budget (factory/budget.ts `budgetStop`): `usd` is the value of its model work at API prices, whoever pays
+ * (a key's turns at what they cost, a plan's at what the same tokens would cost on a key). `tokens` (cost-weighted) holds
+ * only while some turn could not be priced. The time limit applies to hosted sandboxes only.
+ * Items filed before the dollar figure was kept have only tokens and hosted time.
+ */
 export interface ItemBudget {
 	tokens: number;
 	hostedSeconds: number;
+	usd?: number;
 }
 
 /** Raw tokens count cached input at full weight; use tokens when rawTokens is absent. Active time excludes waits. */
@@ -168,6 +179,12 @@ export interface ItemSpend extends ItemBudget {
 	rawTokens?: number;
 	turns: number;
 	activeSeconds: number;
+	/** A turn could not be priced: its dollars are not in `usd`, so the token budget holds too. */
+	usdUnknown?: boolean;
+	/** What the item's own turns used, by model, payer and sandbox size: what its cost is priced from (factory/cost.ts). */
+	usage?: import("./cost.js").SpendUsage;
+	/** The part of `usage` spent retrying: turns of a run the person started again, and turns fixing a failed CI. */
+	retryUsage?: import("./cost.js").SpendUsage;
 }
 
 /** A subtask's budget in a feature's plan: one token figure. At dispatch its token share also determines its share of hosted time. */
@@ -217,7 +234,6 @@ export type QuestionKind =
 
 /** Stored response IDs. Retry starts a new run. Again retries the failed step. */
 export type ChoiceId =
-	| "use_machine_payer"
 	| "use_hosted"
 	| "use_windlass"
 	| "use_claude"
@@ -475,6 +491,14 @@ export interface ItemSummary {
 	} | null;
 	budget: ItemBudget;
 	spent: ItemSpend;
+	/** A feature's: what all its parts used, retries among them. Its own turns are in `spent.usage`. */
+	partsUsage?: import("./cost.js").SpendUsage;
+	/** A feature's: the part of `partsUsage` spent retrying (factory/usage-summary.ts `partsRetryUsage`). */
+	partsRetryUsage?: import("./cost.js").SpendUsage;
+	/** What its changes are, from the paths its latest turn with changes left changed (factory/usage-summary.ts `workType`). Absent before any. */
+	workType?: WorkType;
+	/** When its first run began. Absent on a draft. */
+	startedAt?: number;
 	/** The item's agent session, among the user's sessions. */
 	sessionId: string;
 	createdAt: number;
@@ -597,6 +621,9 @@ export interface ItemView extends ItemSummary {
 }
 
 export type ItemMode = "single" | "orchestrate";
+
+/** What an item's changes are: only docs, only tests, only dependency manifests and lockfiles, any other code, or the rest (config, CI, assets). */
+export type WorkType = "docs" | "tests" | "deps" | "feature" | "other";
 
 export interface PlacementNeeds {
 	hostedSize?: HostedSize;

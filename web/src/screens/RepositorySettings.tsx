@@ -262,7 +262,6 @@ export function RepositorySettings({ page }: { page: RepositoryPage }) {
 		account: account.settings?.defaults,
 		repository: view?.defaults,
 		item: { place: "hosted" },
-		machines: null,
 	}).profile;
 	const secretsProfile = info?.profiles.some(p => p.id === hostedProfile && p.available) ? hostedProfile : null;
 	const anything =

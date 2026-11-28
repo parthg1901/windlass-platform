@@ -6,7 +6,7 @@
 import { modelRefusal, turnEffort } from "../../../server/src/account-models.js";
 import { cleanDefaults, DefaultsProblem } from "../../../server/src/repository-defaults";
 import { changedPlace, changesPlace, placeProblem, savedPlace } from "../../../server/src/factory/default-place";
-import { machinePayers } from "../lib/run";
+import { PAY_WITH_HARNESSES, payWithPatchOf, PayWithProblem } from "../../../server/src/pay-with.js";
 import { withoutUnofferedModels } from "../../../server/src/factory/resolve-run.js";
 import type { AccountDefaultsPatch, RepositoryDefaultsPatch } from "@contract";
 import { shiftMonths } from "../../../server/src/billing/meter.js";
@@ -18,7 +18,8 @@ import {
 	hostedCatalog,
 	hostedKeyMessage,
 	hostedProfiles,
-	hostedProvider,
+	hostedPayer,
+	type HostedCredential,
 	initialHarnessModels,
 	sessionCapabilities,
 } from "../../../server/src/sandbox/harnesses.js";
@@ -74,9 +75,16 @@ import {
 	MODEL_CHECKS_PER_MINUTE,
 	isModelProvider,
 	MODEL_PROVIDERS,
+	PLAN_ASK,
+	PLAN_LIMITED,
 	validModelKey,
 	type ModelProvider,
 	type ModelProviderStatus,
+	type ModelPlanStatus,
+	type PayWithChoice,
+	type PayWithPatch,
+	type StarterIssue,
+	type PlanProvider,
 	type AccountSecrets,
 	type AccountSettings,
 	type AuthResult,
@@ -134,6 +142,7 @@ import {
 	type UsageNumbers,
 	listedSessions,
 	type UsageView,
+	type CostRates,
 	type UserProfile,
 	type WindlassEvent,
 	type WorkspaceFile,
@@ -203,8 +212,33 @@ import {
 } from "../../../server/src/personal-server-definition.js";
 import { sandboxTime } from "../lib/format";
 import { dayOf, reportedModelUsage, usesPlatformModel } from "../../../server/src/usage";
-import { createMockItems, MOCK_FACTORY_LIMITS, type MockItemsState } from "./mock-items";
+import { createMockItems, MOCK_FACTORY_LIMITS, MOCK_MODEL_PRICES, type MockItemsState } from "./mock-items";
 import { HOUR, MINUTE } from "./mock-time";
+import { addTurn, noUsage, turnMeter } from "../../../server/src/factory/cost.js";
+
+/** Work items' model turns today: a few on a Settings key, more on the ChatGPT plan. */
+const MOCK_MODELS_TODAY = (() => {
+	const usage = noUsage();
+	const turn = (model: string, plan: boolean, inputTokens: number) =>
+		addTurn(
+			usage,
+			turnMeter({
+				harness: "windlass",
+				model,
+				key: { provider: plan ? "openai" : "anthropic", generation: "mock", ...(plan && { plan: true }) },
+				usage: {
+					inputTokens,
+					cachedInputTokens: Math.round(inputTokens * 0.85),
+					outputTokens: 9_000,
+					reasoningTokens: 0,
+				},
+				size: "standard",
+			}),
+		);
+	for (const tokens of [180_000, 240_000, 95_000]) turn("anthropic/claude-sonnet-4-5", false, tokens);
+	for (const tokens of [310_000, 120_000]) turn("gpt-5.3-codex", true, tokens);
+	return usage;
+})();
 
 /** The mock GitHub picture: drawn here, so nothing leaves the page. */
 const MOCK_AVATAR =
@@ -245,6 +279,11 @@ export interface MockOptions {
 	machine?: MockMachineState;
 	/** True starts the user with a checked Settings key for each model provider (`?keys=1`). */
 	keys?: boolean;
+	/**
+	 * How the relays last saw the user's connected plans (`?plans=limited|invalid`): "limited" at their limit for the
+	 * next hour, "invalid" refused twice. Default "ok".
+	 */
+	plans?: "ok" | "limited" | "invalid";
 	/** How the agent on the user's machine finds that machine when its page opens (`MockMachineSession`). Default "answering". */
 	machineSession?: MockMachineSession;
 	/** How the user's work items and API tokens stand when the page loads (mock-items.ts, `MockItemsState`). Default "all". */
@@ -259,6 +298,11 @@ export interface MockOptions {
 	resume?: boolean;
 	/** False plays a deployment with screenshots turned off (WLP_FACTORY_SCREENSHOTS=off): platform info says so. Default true. */
 	screenshots?: boolean;
+	/**
+	 * True plays a new account (`?fresh=1`): GitHub not connected, no agent, key or plan, no sessions. With
+	 * `items: "none"` and `machine: "none"` (main.tsx sets both) it is the account the first-run setup opens for.
+	 */
+	fresh?: boolean;
 }
 
 /**
@@ -430,8 +474,8 @@ const MOCK_OPENCODE_MODES = [
 ];
 
 /** What the mock's runners say they are, and what its platform asks of them. */
-const MOCK_RUNNER_VERSION = "0.3.3";
-const MOCK_MIN_RUNNER_VERSION = "0.2.0";
+const MOCK_RUNNER_VERSION = "0.3.13";
+const MOCK_MIN_RUNNER_VERSION = "0.3.13";
 const MOCK_RUNNER_IMAGE =
 	"registry.example.com/windlass-runner@sha256:6b1f0c2d9e4a8b7c3f5e1d0a9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b";
 
@@ -674,7 +718,6 @@ export function mockStandInModels(source: Exclude<ModelList["source"], "account"
 	}));
 	return { source, models, defaultModel: "gpt-6.1-sol", fetchedAt: null };
 }
-const REDIRECT_PREFIX = "http://127.0.0.1:1455/auth/callback";
 
 /** The server's refusal of a prompt to a work item's agent (`prompt` in agent-session.ts), word for word. */
 export const ITEM_SESSION_PROMPT =
@@ -1043,11 +1086,19 @@ function takenUnder<Answer>(
 	return first.answer;
 }
 
+/** The mock checks a connect code's shape only: any well-formed code stands for a terminal waiting on it. */
+function mockConnectCode(userCode: string): void {
+	if (!/^[0-9A-HJKMNP-TV-Z]{4}-?[0-9A-HJKMNP-TV-Z]{4}$/i.test(userCode.trim()))
+		throw new PlatformError("user", "That is not a connect code. It looks like KQ2M-8XF4.", { reason: "bad_input" });
+}
+
 type SavedDefaults = AccountDefaults & { updatedAt: number };
 
 interface World {
 	offers: Map<GithubId, OfferRow[]>;
 	planConnected: boolean;
+	/** When the ChatGPT plan was last connected by code (0 for one remembered from an earlier visit). */
+	planAddedAt: number;
 	guideChecks: Map<GithubId, RepositoryView["guideCheck"]>;
 	knowledge: Map<GithubId, RepositoryView["knowledge"]>;
 	readiness: Map<GithubId, { at: number; finished: boolean; weekly: boolean }>;
@@ -1078,6 +1129,7 @@ interface World {
 	/** What the user keeps for their account, whatever the repository. A secret's value is not kept at all. */
 	account: {
 		providers: Map<ModelProvider, ModelProviderStatus>;
+		plans: Map<PlanProvider, ModelPlanStatus>;
 		checks: { minute: number; used: number };
 		defaults: SavedDefaults | null;
 		servers: Map<string, { definition: Record<string, unknown>; unasked: boolean; updatedAt: number }>;
@@ -1088,6 +1140,8 @@ interface World {
 	modelTokens: Map<number, number>;
 	/** The agents that were created with a key, by that key: what was asked for, and the agent's id. */
 	created: Map<string, Taken<string>>;
+	/** The Pay-with choices saved on the Connections page, by agent (server/src/pay-with.ts). */
+	payWith: Map<HarnessId, PayWithChoice>;
 }
 
 interface Step {
@@ -1198,7 +1252,6 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 
 	const worlds = new Map<string, World>();
 	let attempt: { owner?: string; provider: LoginProvider; state: string; expiresAt: number } | null = null;
-	const modelAttempts = new Map<string, { state: string; expiresAt: number }>();
 	let disposed = false;
 	const timers = new Set<ReturnType<typeof setTimeout>>();
 
@@ -1225,7 +1278,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		hosted: auth => ({
 			hostedSizes: options.sizes === "one" ? undefined : MOCK_SIZES.map(s => s.id),
 			hostedRates: Object.fromEntries(MOCK_SIZES.map(s => [s.id, s.usdPerHour])),
-			hostedKeys: [...worldOf(auth).account.providers.values()],
+			hostedCredentials: hostedCredentialsOf(worldOf(auth)),
 			hostedProfiles: profiles.filter(p => p.available).map(p => p.id),
 			keyProfiles: profiles.filter(p => p.available && p.platformKeys).map(p => p.id),
 		}),
@@ -1233,6 +1286,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		long: options.long,
 		reviewer: options.reviewer,
 		blocked: options.blocked,
+		plans: options.plans,
 		now: () => realNow(),
 		latency,
 		later,
@@ -1253,7 +1307,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				? machinesOf(auth)
 						.list.find(one => one.machineId === machineId)
 						?.harnesses?.find(entry => entry.id === harness)?.options
-				: hostedCatalog(harness, [...worldOf(auth).account.providers.values()]);
+				: hostedCatalog(harness, hostedCredentialsOf(worldOf(auth)));
 			return initialHarnessModels(options);
 		},
 		discardSession: (auth, id) => userApi(auth).deleteSession(id),
@@ -1293,7 +1347,6 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				deployment: { hostedSize: "standard" },
 				account: withoutUnofferedModels(accountDefaultsOf(worldOf(auth)), models),
 				repository: withoutUnofferedModels(defaultsOf(worldOf(auth), repositoryId), models),
-				machinePayers: machinePayers(machineState === "off" ? [] : machinesView(auth)),
 			};
 		},
 		checks: (auth, repositoryId) => checksOf(worldOf(auth), repositoryId).checks.length,
@@ -1330,6 +1383,68 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		}
 	}
 
+	/** Each plan agent's Pay-with choice, the defaults where none was saved, as the server's `readPayWith`. */
+	function payWithOf(world: World): PayWithChoice[] {
+		return PAY_WITH_HARNESSES.map(
+			harness =>
+				structuredClone(world.payWith.get(harness)) ?? {
+					harness,
+					payWith: "plan-then-key",
+					whenLimited: null,
+					updatedAt: null,
+				},
+		);
+	}
+
+	/** A plan's health as the relays saw it, by `options.plans`: usable, at its limit for the next hour, or refused twice. */
+	function planHealth(): Pick<ModelPlanStatus, "health" | "limitedUntil" | "resetKnown" | "windows" | "healthAt"> {
+		const at = realNow();
+		if (options.plans === "invalid")
+			return { health: "invalid", limitedUntil: null, resetKnown: false, windows: [], healthAt: at - MINUTE };
+		if (options.plans === "limited") {
+			const reset = at + 60 * MINUTE;
+			return {
+				health: "limited",
+				limitedUntil: reset,
+				resetKnown: true,
+				windows: [{ kind: "5h", usedPct: 100, resetsAt: reset, observedAt: at - MINUTE, source: "header" }],
+				healthAt: at - MINUTE,
+			};
+		}
+		return { health: "ok", limitedUntil: null, resetKnown: false, windows: [], healthAt: null };
+	}
+
+	/** The account's plans: those connected by code, and its ChatGPT sign-in as the ChatGPT plan. */
+	function plansOf(world: World): ModelPlanStatus[] {
+		const plans = [...world.account.plans.values()].map(plan => ({ ...plan, ...planHealth() }));
+		if (!world.planConnected || world.profile.demo) return plans;
+		return [
+			...plans,
+			{
+				provider: "openai",
+				account: `${world.profile.email ?? "you@example.com"} · Plus`,
+				addedAt: world.planAddedAt,
+				checkedAt: realNow() - 5 * MINUTE,
+				ok: true,
+				models: ["gpt-5.5-codex", "gpt-5.5-codex-mini"],
+				...planHealth(),
+			},
+		];
+	}
+
+	/** What hosted agents can pay with: the saved keys and the connected plans, as the server's `hostedCredentials`. */
+	function hostedCredentialsOf(world: World): HostedCredential[] {
+		return [
+			...world.account.providers.values(),
+			...plansOf(world).map(p => ({
+				provider: p.provider,
+				plan: true as const,
+				checkedAt: p.checkedAt,
+				models: p.models,
+			})),
+		];
+	}
+
 	function worldOf(auth: AuthResult): World {
 		const [scheme, kind, uid, email, gen = ""] = auth.token.split(":");
 		if (
@@ -1349,6 +1464,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				knowledge: new Map(),
 				readiness: new Map(),
 				planConnected: recall("wlp.mock.plan." + uid) === "1",
+				planAddedAt: 0,
 				profile: { uid, email: email || null, demo: kind === "demo" },
 				sessions: new Map(),
 				feeds: new Set(),
@@ -1362,10 +1478,11 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				secrets: new Map(),
 				defaults: new Map(),
 				autonomy: new Map(),
-				screenshotsEnabled: new Map(MOCK_SCREENSHOTS.map(id => [id, realNow() - 3 * 24 * HOUR])),
+				screenshotsEnabled: new Map(options.fresh ? [] : MOCK_SCREENSHOTS.map(id => [id, realNow() - 3 * 24 * HOUR])),
 				names: new Map(),
 				account: {
 					providers: new Map(),
+					plans: new Map(),
 					checks: { minute: 0, used: 0 },
 					defaults: null,
 					servers: new Map(),
@@ -1374,13 +1491,15 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				spent: new Map(Object.entries(MOCK_SPENT)),
 				modelTokens: new Map(),
 				created: new Map(),
+				payWith: new Map(),
 			};
-			// The seeded user starts connected; the demo user connects by hand. A choice made since is kept.
+			// The seeded user starts connected; the demo user and a new account connect by hand. A choice made since is kept.
 			const kept = recall(`wlp.mock.github.${uid}`);
-			if (githubOn && (kept === "1" || (kept === null && kind === "user"))) world.github = connectionFor(world.profile);
+			if (githubOn && (kept === "1" || (kept === null && kind === "user" && !options.fresh)))
+				world.github = connectionFor(world.profile);
 			worlds.set(uid, world);
 			if (options.keys && kind === "user") seedKeys(world);
-			seed(world);
+			if (!options.fresh) seed(world);
 			// The items, each with its agent session, are there with the agents (`seedItemSession`).
 			items.prepare(auth);
 		}
@@ -1816,6 +1935,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 			...numbers,
 			factoryLimits: MOCK_FACTORY_LIMITS,
 			usedModelTokens: world.modelTokens.get(dayOf(numbers.at)) ?? 0,
+			modelsToday: MOCK_MODELS_TODAY,
 			today,
 			days: [
 				...MOCK_HISTORY.map((seconds, index) => ({
@@ -5004,6 +5124,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		list: MachineSummary[];
 		/** The codes this user looked up, normalised, with the machine confirming one made. */
 		claims: Map<string, string | null>;
+		/** The codes this user denied: their pairings ended, so no one can look them up again. */
+		denied: Set<string>;
 		/** When this user looked a code up, for the limit of five in ten minutes. */
 		lookups: number[];
 		/** For `stale`: whether the user's connection dropped yet, after which the list can no longer be read. */
@@ -5025,7 +5147,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		const world = worldOf(auth);
 		let set = machineSets.get(world.profile.uid);
 		if (!set) {
-			set = { list: seedMachines(machineState), claims: new Map(), lookups: [], dropped: "no" };
+			set = { list: seedMachines(machineState), claims: new Map(), denied: new Set(), lookups: [], dropped: "no" };
 			machineSets.set(world.profile.uid, set);
 		}
 		return set;
@@ -5037,11 +5159,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		return machinesOf(auth).list.map(machine => ({
 			...machine,
 			harnesses: machine.harnesses?.map(({ options, ...entry }) =>
-				listedHarness(
-					options ? { ...entry, optionsDigest: String(options.checkedAt) } : entry,
-					[...world.account.providers.keys()],
-					entry.source,
-				),
+				listedHarness(options ? { ...entry, optionsDigest: String(options.checkedAt) } : entry, [
+					...world.account.providers.keys(),
+				]),
 			),
 			warnings: machine.warnings.map(warning => ({ ...warning })),
 			sandboxes: machine.sandboxes.map(sandbox => {
@@ -5175,8 +5295,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 			id: "codex",
 			image: MOCK_CLAUDE.image,
 			adapter: "codex-acp 2.9.0",
-			signIn: "token",
-			method: "api-key",
+			// No login of its own: the account's key pays (Connections → Pay with).
+			signIn: "none",
 			modes: ["agent-full-access"],
 			options: {
 				defaultModel: MOCK_CODEX_MODELS.defaultModel,
@@ -5278,7 +5398,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 						...MOCK_CLAUDE,
 						id: "codex" as const,
 						adapter: "codex-acp 2.9.0",
-						method: "chatgpt" as const,
+						signIn: "none" as const,
 						modes: ["agent-full-access"],
 						options: { ...options(MOCK_CODEX_MODELS), modes: codexModes("docker-hardened") },
 					},
@@ -5339,7 +5459,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 					nas({
 						status: "offline",
 						since: at - 12 * MINUTE,
-						runnerVersion: "0.1.0",
+						runnerVersion: "0.3.12",
 						slots: undefined,
 						warnings: [{ kind: "outdated" }],
 					}),
@@ -5485,15 +5605,17 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				{ reason: "too_many_claims" },
 			);
 		set.lookups.push(at);
-		if (!/^[0-9A-HJKMNP-TV-Z]{8}$/.test(clean) || clean === "ZZZZZZZZ")
-			throw new PlatformError(
-				"user",
-				"No machine is waiting with that code. A code lasts ten minutes: check the one the runner printed last.",
-				{ reason: "pairing_not_found" },
-			);
+		if (!/^[0-9A-HJKMNP-TV-Z]{8}$/.test(clean) || clean === "ZZZZZZZZ" || set.denied.has(clean)) throw noPairing();
 		set.claims.set(clean, null);
 		return clean;
 	}
+
+	const noPairing = () =>
+		new PlatformError(
+			"user",
+			"No machine is waiting with that code. A code lasts ten minutes: check the one the runner printed last.",
+			{ reason: "pairing_not_found" },
+		);
 
 	/** The calls of the Machines page. A machine paired here waits for its runner, which connects a few seconds later. */
 	function machineCalls(
@@ -5504,10 +5626,11 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		| "machineCatalog"
 		| "claimMachine"
 		| "confirmMachine"
+		| "denyMachine"
 		| "removeMachine"
+		| "removeMachineClaudeLogin"
 		| "setMachineDetails"
 		| "setMachineSecrets"
-		| "setCredentialSource"
 	> {
 		return {
 			async machineCatalog({ machineId, id, digest }) {
@@ -5589,12 +5712,37 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				});
 				return machinesView(auth).find(one => one.machineId === machineId) as MachineSummary;
 			},
+			async denyMachine({ code }) {
+				machinesOn();
+				await latency(320);
+				const set = machinesOf(auth);
+				const clean = pairingCode(code);
+				if (!set.claims.has(clean)) throw noPairing();
+				// Once its machine is paired, denying it changes nothing.
+				if (set.claims.get(clean)) return;
+				set.claims.delete(clean);
+				set.denied.add(clean);
+			},
 			async removeMachine({ machineId }) {
 				machinesOn();
 				await latency(380);
 				machineOf(auth, machineId);
 				const set = machinesOf(auth);
 				set.list = set.list.filter(one => one.machineId !== machineId);
+				machinesChanged(auth);
+				return machinesView(auth);
+			},
+			async removeMachineClaudeLogin({ machineId }) {
+				machinesOn();
+				await latency(600);
+				const machine = machineOf(auth, machineId);
+				if (machine.status !== "online")
+					throw new PlatformError("user", "The machine is offline. Start its runner, then switch back.", {
+						reason: "machine_not_connected",
+					});
+				machine.harnesses = machine.harnesses?.map(entry =>
+					entry.id === "claude" ? { ...entry, signIn: "none" as const } : entry,
+				);
 				machinesChanged(auth);
 				return machinesView(auth);
 			},
@@ -5613,15 +5761,6 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				machinesOn();
 				await latency(240);
 				machineOf(auth, machineId).sendSecrets = send;
-				machinesChanged(auth);
-				return machinesView(auth);
-			},
-			async setCredentialSource({ machineId, harness, source }) {
-				machinesOn();
-				await latency(240);
-				const entry = machineOf(auth, machineId).harnesses?.find(one => one.id === harness);
-				if (!entry) throw new PlatformError("user", "Unknown agent.", { reason: "bad_input" });
-				entry.source = source;
 				machinesChanged(auth);
 				return machinesView(auth);
 			},
@@ -5702,37 +5841,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 					? { connected: false, email: null, accessExpiresAt: null }
 					: { connected: true, email: profile.email, accessExpiresAt: now() + 52 * MINUTE };
 			},
-			async startChatgpt() {
-				const { uid, demo } = world().profile;
-				if (demo) throw new PlatformError("user", "The demo uses a scripted model.");
-				const state = hex(16),
-					expiresAt = now() + 10 * MINUTE;
-				modelAttempts.set(uid, { state, expiresAt });
-				return {
-					url: origin + "/mock/authorize?" + new URLSearchParams({ state }),
-					redirectPrefix: REDIRECT_PREFIX,
-					expiresAt,
-				};
-			},
-			async finishChatgpt(callback) {
-				const { uid } = world().profile;
-				const pending = modelAttempts.get(uid);
-				const url = new URL(callback);
-				if (
-					!pending ||
-					pending.expiresAt < now() ||
-					url.origin + url.pathname !== REDIRECT_PREFIX ||
-					url.searchParams.get("state") !== pending.state ||
-					!url.searchParams.get("code")
-				)
-					throw new PlatformError("user", "Start the ChatGPT connection again.");
-				modelAttempts.delete(uid);
-				world().planConnected = true;
-				keep("wlp.mock.plan." + uid, "1");
-			},
 			async forgetChatgpt() {
 				const { uid } = world().profile;
-				modelAttempts.delete(uid);
 				world().planConnected = false;
 				keep("wlp.mock.plan." + uid, "0");
 			},
@@ -5766,10 +5876,10 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				const harness: HarnessId = input.harness ?? "windlass";
 				const options =
 					!machine && harness !== "windlass"
-						? hostedCatalog(harness, [...world().account.providers.values()])
+						? hostedCatalog(harness, hostedCredentialsOf(world()))
 						: machine?.harnesses?.find(entry => entry.id === harness)?.options;
 				if (harness !== "windlass") {
-					if (!machine && !hostedProvider(harness, input.model, [...world().account.providers.keys()]))
+					if (!machine && !hostedPayer(harness, input.model, hostedCredentialsOf(world())))
 						throw new PlatformError("user", hostedKeyMessage(harness), { reason: "harness_signed_out" });
 					if (machine ? input.profile !== "docker-hardened" : !profile.platformKeys)
 						throw new PlatformError(
@@ -6480,6 +6590,67 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				world().account.providers.delete(provider);
 				machinesChanged(auth);
 			},
+			async modelPlans() {
+				return { allowed: true, plans: structuredClone(plansOf(world())) };
+			},
+			// The mock has no terminal: approving a code connects the named plan a few seconds later, as the command would.
+			async approvePlanConnect(userCode, provider) {
+				await latency(200);
+				mockConnectCode(userCode);
+				const mine = world();
+				setTimeout(() => {
+					const at = now();
+					if (provider === "openai") {
+						mine.planConnected = true;
+						mine.planAddedAt = at;
+						keep("wlp.mock.plan." + mine.profile.uid, "1");
+					} else {
+						mine.account.plans.set("anthropic", {
+							provider: "anthropic",
+							account: "you@example.com · Max",
+							addedAt: at,
+							checkedAt: at,
+							ok: true,
+							health: "ok",
+							limitedUntil: null,
+							resetKnown: false,
+							windows: [],
+							healthAt: null,
+						});
+					}
+					machinesChanged(auth);
+				}, 3_000);
+			},
+			async denyPlanConnect(userCode) {
+				await latency(200);
+				mockConnectCode(userCode);
+			},
+			async removeModelPlan(provider) {
+				if (provider === "openai") await userApi(auth).forgetChatgpt();
+				else world().account.plans.delete(provider);
+				machinesChanged(auth);
+			},
+			async recheckModelPlan(provider) {
+				await latency(400);
+				return structuredClone(plansOf(world()).find(p => p.provider === provider) ?? null);
+			},
+			async payWith() {
+				await latency(160);
+				return payWithOf(world());
+			},
+			async savePayWith(input) {
+				await latency(240);
+				let patch: PayWithPatch;
+				try {
+					patch = payWithPatchOf(input);
+				} catch (problem) {
+					if (problem instanceof PayWithProblem)
+						throw new PlatformError("user", problem.message, { reason: "bad_input" });
+					throw problem;
+				}
+				world().payWith.set(patch.harness, { ...patch, updatedAt: now() });
+				return payWithOf(world());
+			},
 			async accountSecrets(profile: SandboxProfileId): Promise<AccountSecrets> {
 				await latency(200);
 				return accountSecretsOf(world(), profile);
@@ -6608,6 +6779,20 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				).sort((a, b) => rank(a) - rank(b) || a.pushedHoursAgo - b.pushedHoursAgo);
 				return { repositories: matching.map(describeRepository), more: false, incomplete: false };
 			},
+			async githubStarterIssues(repositoryId: GithubId): Promise<StarterIssue[]> {
+				await latency(380);
+				requireGithub(world());
+				const found = GITHUB_REPOSITORIES.find(repository => repository.id === repositoryId);
+				if (!found) return [];
+				const url = `${GITHUB.url}/${found.owner}/${found.name}/issues/`;
+				// Only the first repository has open bugs, so the generic starter tasks show for the others.
+				return found.id === GITHUB_REPOSITORIES[0]!.id
+					? [
+							{ number: 142, title: "Tide table shows yesterday after midnight UTC", url: `${url}142` },
+							{ number: 157, title: "Harbor map pins overlap on small screens", url: `${url}157` },
+						]
+					: [];
+			},
 			async githubBranches(repositoryId: GithubId): Promise<GithubBranchList> {
 				await latency(320);
 				requireGithub(world());
@@ -6626,6 +6811,13 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 			async usage(): Promise<UsageView> {
 				await latency(320);
 				return usageView(world());
+			},
+			async costRates(): Promise<CostRates> {
+				await latency(200);
+				return {
+					...structuredClone(MOCK_MODEL_PRICES),
+					sandbox: Object.fromEntries(MOCK_SIZES.map(size => [size.id, size.usdPerHour])),
+				};
 			},
 			async billing(): Promise<BillingView> {
 				await latency(200);
@@ -6853,6 +7045,26 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 					setSummary(world, session, { updatedAt: now() });
 					return take({ turn, steered: true });
 				}
+				// As the server's Pay with (`?plans=limited`): hosted Claude Code on a limited plan asks, where a key could pay instead.
+				if (
+					session.summary.place.kind === "hosted" &&
+					session.summary.harness === "claude" &&
+					options.plans === "limited" &&
+					input.payWith !== "key" &&
+					world.account.plans.has("anthropic")
+				) {
+					const until = planHealth().limitedUntil!;
+					const time = new Date(until).toISOString().slice(11, 16);
+					if (world.account.providers.get("anthropic")?.ok)
+						throw new PlatformError(
+							"user",
+							`Your Claude plan is limited until ${time} UTC. Wait for it, or pay for this turn with your Anthropic key.`,
+							{ reason: PLAN_ASK },
+						);
+					throw new PlatformError("user", `Your Claude plan is limited until ${time} UTC. Send this again then.`, {
+						reason: PLAN_LIMITED,
+					});
+				}
 				// The ceiling is on hosted sandboxes (`FactoryLimits.hostedRunning`): the person's own and their items' on the platform's sandboxes; nothing on the user's machines is counted or refused.
 				const hosted = session.summary.place.kind === "hosted";
 				const running = [...world.sessions.values()].filter(
@@ -6873,17 +7085,16 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 					const machine =
 						place.kind === "machine" ? machinesView(auth).find(one => one.machineId === place.machineId) : undefined;
 					const offered = machine?.harnesses?.find(one => one.id === harness);
-					if (
-						hosted &&
-						!hostedProvider(harness, input.model ?? session.summary.model, [...world.account.providers.keys()])
-					)
+					if (hosted && !hostedPayer(harness, input.model ?? session.summary.model, hostedCredentialsOf(world)))
 						throw new PlatformError("user", hostedKeyMessage(harness), { reason: "harness_signed_out" });
 					if (!hosted && unreachable === null && !offered)
 						throw new PlatformError("user", `This machine does not offer ${name}.`, { reason: "bad_input" });
 					if (unreachable === null && offered?.signIn === "none")
 						throw new PlatformError(
 							"user",
-							`${name} on “${machine?.name ?? "your machine"}” is not signed in. Run windlass-runner login ${harness} there.`,
+							offered.paysWith
+								? `Nothing can pay for ${name} on “${machine?.name ?? "your machine"}” yet. Connect a plan or add a key on Connections.`
+								: `${name} on “${machine?.name ?? "your machine"}” is not signed in. Run windlass-runner login ${harness} there.`,
 							{ reason: "harness_signed_out" },
 						);
 					const listed = session.summary.harnessModels ?? null;

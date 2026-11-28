@@ -35,8 +35,8 @@ settings, the rate limits) that is not a whole number in its range stops the ser
 | `RIVET_ADMIN_TOKEN` | the engine's admin token, a secret: the server issues the short-lived tokens browsers connect with. Needs `WLP_PUBLIC_ENDPOINT`. Unset, as with the local engine: browsers are handed no token |
 | `WLP_TOKEN_ENDPOINT` | optional private route to the same engine for issuing those tokens (default `WLP_PUBLIC_ENDPOINT`); no query string or fragment |
 | `WLP_CONNECTION_TOKEN_TTL_MS` | how long such a token lasts (default one hour; from one minute to 24 hours) |
-| `WLP_CLIENT_IP_HEADER` | the header a trusted ingress writes with the client's address; unset, no per-address limit applies ([operating.md, "Public HTTP rate limits"](operating.md#public-http-rate-limits)) |
-| `WLP_API_ADDRESS_PER_MINUTE`, `WLP_API_TOKEN_PER_MINUTE`, `WLP_API_FAILURES_PER_MINUTE`, `WLP_WEBHOOK_REFUSALS_PER_MINUTE`, `WLP_RUNNER_POLLS_PER_MINUTE`, `WLP_RUNNER_CONNECTIONS_PER_MINUTE` | the public HTTP rate limits (defaults 240, 60, 12, 30, 240 and 120 a minute; each from 1 to 1,000,000). [operating.md](operating.md#public-http-rate-limits) says what each covers |
+| `WLP_CLIENT_IP_HEADER` | the header a trusted ingress writes with the client's address; unset, no per-address limit applies ([operating.md, "Public HTTP rate limits"](operating.md#public-http-rate-limits)). Set it behind a trusted ingress: without it, plan connect requests from every address share one budget |
+| `WLP_API_ADDRESS_PER_MINUTE`, `WLP_API_TOKEN_PER_MINUTE`, `WLP_API_FAILURES_PER_MINUTE`, `WLP_WEBHOOK_REFUSALS_PER_MINUTE`, `WLP_RUNNER_POLLS_PER_MINUTE`, `WLP_RUNNER_CONNECTIONS_PER_MINUTE`, `WLP_CONNECT_PER_MINUTE`, `WLP_CONNECT_POLLS_PER_MINUTE` | the public HTTP rate limits (defaults 240, 60, 12, 30, 240, 120, 30 and 240 a minute; each from 1 to 1,000,000). [operating.md](operating.md#public-http-rate-limits) says what each covers |
 
 ## Sign-ins
 
@@ -86,6 +86,15 @@ settings, the rate limits) that is not a whole number in its range stops the ser
 | `WLP_DAILY_SANDBOX_SECONDS` | how many seconds a user's sandboxes may run in one UTC day, all of them together (default 7200, two hours; at least 60), or `unlimited` ([architecture.md, "Usage and limits"](architecture.md#usage-and-limits)) |
 | `WLP_MAX_KEPT_SANDBOXES` | how many of the platform's own (hosted) sandboxes a user may keep at the same time, running or paused; sandboxes on the user's machines are not counted, and have only the limits their owners set on the runner (default 5; at least 1), or `unlimited` |
 | `WLP_USAGE_HOLD_SECONDS` | how much of the day's allowance a running sandbox reserves at a time, and so how often its session reports (default 300, from 5 to 3600). A shorter time is for the checks |
+
+## Subscription plans
+
+A Claude plan or a ChatGPT plan that a user connects with `npx @windlassai/cli connect claude` or `connect codex` ([model-relay.md](model-relay.md)).
+
+| Variable | Effect |
+|---|---|
+| `WLP_PLAN_USERS` | who may connect a Claude plan and run hosted turns on a plan: user ids (`u_...`), comma-separated, or `*` for everyone. Unset or empty: nobody, and the server says so at startup. Hosted Windlass's own models run on the ChatGPT plan, so hosted Windlass on them is refused too, and users are told to run on their machine or pick a Settings key's model. Removing a user stops their plan-paid turns at the next turn, and a running turn's relay within a minute. On a user's machine, the ChatGPT plan is not behind this setting |
+| `WLP_PLAN_PARALLEL_TURNS` | the most hosted turns one connected plan pays for at once (default 3, 1 to 20); past it an item waits and a person is asked, as at the plan's limit |
 
 ## Plans and billing
 
@@ -225,13 +234,14 @@ Operators can set [per-user limits](#per-user-limits), including a daily token c
 |---|---|
 | `WLP_ITEMS` | `1`: every user of the deployment may file work items ([work-items.md](work-items.md#turning-work-items-on)); default off. The `WLP_FACTORY_HOSTED_RUNNING` ceiling holds either way |
 | `WLP_FACTORY_HOSTED_RUNNING` | how many hosted sandboxes a user may have at work at once, their own agents and their work items' together (default 3, from 1 to 100). A work item's turn past it waits; a prompt of the user's own is refused with the reason. Sandboxes on the user's machines never count |
-| `WLP_FACTORY_ITEM_TOKENS`, `WLP_FACTORY_ITEM_HOSTED_SECONDS` | a new work item's budget: cost-weighted tokens, cached input counted at a tenth (default 2,000,000), and seconds of hosted sandbox time (default 7200). A feature's budget is its approved subtasks' and one item's for its own turns |
+| `WLP_FACTORY_ITEM_USD`, `WLP_FACTORY_ITEM_TOKENS`, `WLP_FACTORY_ITEM_HOSTED_SECONDS` | a new work item's budget: dollars of work, every turn at API prices whoever pays, a plan's turns at what the same tokens would cost on a key (default 5); cost-weighted tokens while a turn can't be priced, cached input counted at a tenth (default 2,000,000); and seconds of hosted sandbox time (default 7200). A feature's budget is its approved subtasks' and one item's for its own turns |
 | `WLP_FACTORY_GITHUB_ITEMS_PER_DAY` | how many items a user may file from GitHub, GitLab, Linear and Jira issues and Slack requests together in a UTC day, drafts among them (default 20) |
 | `WLP_FACTORY_ORCHESTRATE` | `0`: hide the Orchestrate control and refuse new orchestrated filings (default on) |
 | `WLP_FACTORY_REVIEWER` | `on`: give new top-level items a second review on their builder’s place, agent and profile. A feature is reviewed as a whole. Default off. |
 | `WLP_FACTORY_CROSS_REPO` | `1` enables Plan-first features spanning two connected repositories, subject to the account’s plan. Default off. |
 | `WLP_FACTORY_SCREENSHOTS` | `off`: no work item of the deployment takes screenshots, whatever its repository's setting says. Sessions get the base image or template, never the screenshots one (also a builder that reconnects to a sandbox made before), agents are not offered screenshots in their reports, plans see no machine with screenshots, and a repository's setting cannot be turned on (one saved on can still be turned off). `on` or unset: each repository's setting decides (default on) |
 | `WLP_FACTORY_ATTACHMENT_BYTES`, `WLP_FACTORY_ATTACHMENTS_PER_ITEM`, `WLP_FACTORY_ATTACHMENT_ACCOUNT_BYTES`, `WLP_FACTORY_ATTACHMENT_DAYS` | screenshots on work items: bytes per screenshot (default 2 MiB), screenshots per item (40), bytes per account (1 GiB), and days they are kept after the item ended (180) |
+| `WLP_MODEL_PRICES_URL` | the public model catalog items' dollar cost and budget price tokens from, whoever pays (default `https://models.dev/api.json`). Read once a day by each server, at most 32 MiB within 20 seconds; a failed read keeps the prices read before and is tried again in an hour. `off`: none is read, turns show "cost unknown" unless their agent reported its own cost, and items are held to tokens. Hosted sandbox time is what billing included or charged as extra; with billing off it is estimated from the rate card (`WLP_HOSTED_RATE_CARD_FILE`) |
 
 ## Web app
 

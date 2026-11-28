@@ -7,6 +7,20 @@ import type { SessionMeta, Ctx } from "./state.js";
 /** A failure of a turn whose message is fit to show as it is. */
 export class TurnProblem extends Error {}
 
+/**
+ * An item's turn Pay with holds back for its plan (user-payer.ts): the item waits for `retryAt` (its plan's reset),
+ * as after a usage-limit refusal. A person's prompt is answered with `PLAN_LIMITED` instead.
+ */
+export class PlanWaitError extends Error {
+	constructor(
+		message: string,
+		readonly retryAt: number | null,
+		readonly plan?: import("../../contract.js").PlanProvider,
+	) {
+		super(message);
+	}
+}
+
 /** A confirmed checkout or policy failure. Transport and provider failures use the interruption budget. */
 export class ReviewRefused extends TurnProblem {}
 

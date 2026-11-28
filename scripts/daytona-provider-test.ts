@@ -17,8 +17,8 @@ import {
 import { META } from "../server/src/sandbox/e2b/sandboxes.js";
 import { HostedSandboxes } from "../server/src/sandbox/hosted.js";
 import { DATA_DIR, shellQuote } from "../server/src/sandbox/provider.js";
-import { leaseToken, readPlaceholder } from "../server/src/sandbox/relay-leases.js";
-import { TokenFile } from "../server/src/sandbox/token-file.js";
+import { GUEST_NODE } from "../server/src/sandbox/plan-relay.js";
+import { turnTokenFilePath, writePlanPlaceholder } from "../server/src/sandbox/token-file.js";
 
 type CreateSandbox = Parameters<DaytonaClient["create"]>[0];
 
@@ -116,6 +116,7 @@ const openPty: OpenPty = async ({ onData }) => {
 					cwd: disk,
 					command: frame.command
 						.replaceAll("/tmp/wlp-transport-process-", disk + "/transport-")
+						.replaceAll(GUEST_NODE, process.execPath)
 						.replaceAll(DATA_DIR, disk)
 						.replaceAll("/workspace/", disk + "/"),
 				};
@@ -199,32 +200,12 @@ try {
 	await release();
 	assert.equal(fake.activity, 2);
 	await guest.writeTextFile("nested/file", "disk contents");
-	const token = "stand-in-real-access-token";
-	const file = new TokenFile(
-		guest,
-		{ current: async () => ({ accessToken: token, expiresAt: Date.now() + 3_600_000 }) },
-		{ log() {} },
-	);
-	let nonce = "";
-	try {
-		await file.start();
-		const stored = JSON.parse(await guest.readTextFile(file.path));
-		const placeholder = readPlaceholder(stored.accessToken);
-		assert.equal(placeholder?.sessionId, "test");
-		nonce = placeholder!.nonce;
-		const leased = await leaseToken(nonce, "alice", "test");
-		assert.ok(leased && leased !== "limit" && leased.kind === "access" && leased.accessToken === token);
-		assert.notEqual(stored.accessToken, token);
-		assert.equal((await stat(resolve(disk, file.path.split("/").at(-1)!))).mode & 0o777, 0o600);
-		assert.ok(!inputs.join("").includes(token) && !inputs.join("").includes(Buffer.from(token).toString("base64")));
-	} finally {
-		await file.stop();
-	}
-	assert.equal(await leaseToken(nonce, "alice", "test"), null);
-	await assert.rejects(
-		new TokenFile(guest, { current: async () => ({ accessToken: token, expiresAt: Date.now() + 1e6 }) }).resume(null),
-		/requires a turn relay/,
-	);
+	// Windlass here pays with the ChatGPT plan: the sandbox gets only a placeholder file.
+	const file = { path: turnTokenFilePath(guest) };
+	await writePlanPlaceholder(guest, file.path, "wlp-plan." + "p".repeat(43), Date.now() + 3_600_000);
+	const stored = JSON.parse(await guest.readTextFile(file.path));
+	assert.equal(stored.accessToken, "wlp-plan." + "p".repeat(43));
+	assert.equal((await stat(resolve(disk, file.path.split("/").at(-1)!))).mode & 0o777, 0o600);
 	let out = "",
 		err = "",
 		gotLine!: () => void;
@@ -257,6 +238,27 @@ try {
 	assert.equal((await guest.run("sleep 10", { timeoutMs: 500 })).timedOut, true);
 	assert.equal((await guest.run("true", { gitUser: true })).exitCode, 0);
 	assert.ok(launchers.some(line => line.includes("-u nobody --")));
+	// A Claude plan's relay: as the transport user, its program and token on standard input, gone at the turn's end.
+	const planToken = "sk-ant-oat01-FAKE-DAYTONA-PLAN-" + "q".repeat(30);
+	const launched = launchers.length,
+		sent = inputs.length;
+	const relay = await guest.localPlanRelay!(planToken, { wire: "claude-plan", harness: "claude" });
+	assert.equal(launchers.length, launched + 1);
+	assert.match(launchers.at(-1)!, /-u nobody --/);
+	const request = JSON.parse(inputs[sent]!);
+	assert.ok(!JSON.stringify(request).includes(planToken));
+	assert.ok(request.command.includes("git-run"));
+	assert.ok(!launchers.join("").includes(planToken));
+	const base = new URL(relay.env.WINDLASS_MODEL_BASE_URL!);
+	assert.equal(base.hostname, "127.0.0.1");
+	const hello = (bearer: string) =>
+		fetch(new URL("/api/hello", base), { method: "HEAD", headers: { authorization: `Bearer ${bearer}` } }).then(
+			r => r.status,
+		);
+	assert.equal(await hello(relay.placeholder), 200);
+	assert.equal(await hello(planToken), 401);
+	await relay.close();
+	await assert.rejects(hello(relay.placeholder));
 	await boxes.suspend(id);
 	assert.equal(await boxes.state(id), "paused");
 	assert.equal((await boxes.list("alice"))[0]?.state, "paused");

@@ -10,6 +10,7 @@ Run one command from the repository root.
 - `cd runner && npx tsc --noEmit -p .` checks runner code and imported server types.
 - `cd server && npx tsx ../scripts/runner-protocol-check.ts` covers reconnect, replay and invalid frames.
 - `cd server && npx tsx ../scripts/runner-control-check.ts` covers control-socket refusals and the second-runner rule.
+- `cd server && npx tsx ../scripts/runner-signin-check.ts` covers the Claude sign-in check, `login claude --token-stdin` and `forget-claude-login`.
 - `cd server && RUNNER_E2E_ONLY='^a fresh Claude session' npx tsx ../scripts/runner-e2e.ts inventory` checks the catalog advertised before the first turn.
 - `cd server && npx tsx ../scripts/sizing-check.ts` checks slot sizing.
 - `cd server && npx tsx ../scripts/machine-backup-check.ts` checks the session copies kept on the machine; `--docker=claude` runs the real Docker transfer.
@@ -20,7 +21,7 @@ Run one command from the repository root.
 
 CLI and state:
 
-- `./main.ts` is the owner CLI: `run`, `setup`, `pair`, `login`, `logout`, `status`, `prune`, `log` and more. The running service holds the state lock.
+- `./main.ts` is the owner CLI: `run`, `setup`, `pair`, `login`, `logout`, `status`, `prune`, `log` and more. The running service holds the state lock. `login opencode` signs OpenCode in; `login claude` keeps a Claude Code login on this machine only, which wins over the account's plans and keys for that machine (`--token-stdin` takes a piped token: the CLI's `connect claude --this-machine`); Codex has no login here.
 - `./state.ts` reads and writes runner state under `WLP_RUNNER_STATE_DIR` and defines `RunnerError` and `Refusal`.
 - `./pair-command.ts` lets a local `pair` or `login` command ask the running service over a private socket.
 - `./machine-name.ts` resolves the machine's display name; `./audit.ts` writes and shows the operation log with sanitised sentences.
@@ -36,7 +37,7 @@ Docker and sandboxes:
 
 - `./docker-executor.ts` executes a pairing's sandbox operations through Docker, serialising lifecycle changes and touching only pairing-owned resources.
 - `./policy.ts` pins images, labels and allowed profiles (`MachineHarness`, `Profile`).
-- `./machine-harnesses.ts` holds one record per machine harness (`MACHINE_HARNESSES`): profile refusals, sign-in, turn credentials, denied hosts and relay ports. Read it instead of comparing harness ids.
+- `./machine-harnesses.ts` holds one record per machine harness (`MACHINE_HARNESSES`): profile refusals, sign-in, turn credentials, denied hosts and relay ports. Read it instead of comparing harness ids. Codex has only a key relay (`sandbox/relay/server.cjs`, `WLP_HARNESS_KEYS`); its turns pay with a plan (`planEnv`) or a Settings key.
 - `./sizing.ts` turns flags and host resources into slot capacity and store limits.
 - `./warm-spares.ts` builds and claims pre-created sandboxes (`WarmSpares`, `SpareSpec`).
 - `./memory-events.ts` reads a container's cgroup memory events to detect out-of-memory.
@@ -50,29 +51,32 @@ Egress:
 
 Harness sign-in and relays:
 
-- `./claude-relay.ts` provisions harness relays and projects placeholder credentials into sessions.
-- `./harness-login.ts` owns the login volume lock, Claude sign-in state and pasted tokens; `./claude-output.ts` scrubs setup-token text from output.
-- `./codex-login.ts`, `./opencode-login.ts`, `./opencode-import.ts` and `./opencode-providers.ts` handle Codex and OpenCode sign-in and providers.
+- `./claude-relay.ts` provisions harness relays (Claude Code's login relay, OpenCode's, and each agent's key relay) and projects placeholder credentials into sessions.
+- A plan-paid turn's relay is `openPlan` of `DockerModelRelay` in `server/src/sandbox/model-relay.ts`, run from `./session.ts` (`planRelay`, `planRelayToken`, `planRelaySeen`); `planEnv` in `./machine-harnesses.ts` is what Claude Code and Codex get for it.
+- `./harness-login.ts` owns the login volume lock, Claude sign-in state and pasted or piped tokens (`claudeLoginFromStdin`); `./claude-output.ts` scrubs setup-token text from output.
+- The control frame `forget-claude-login` (Connections' "Switch back to your plan") runs `forgetClaudeLogin` in `./docker-executor.ts`, the same removal as `logout claude`, and answers `claude-login-forgotten`.
+- `./opencode-login.ts`, `./opencode-import.ts` and `./opencode-providers.ts` handle OpenCode's own sign-in and providers.
 - `./harness-options.ts` probes each harness's models and options for the inventory report.
 
 Setup wizard:
 
-- `./setup-wizard.ts` holds the prompts and navigation; `WizardEffects` owns pairing, sign-in and Docker work.
-- `./setup-prompt.ts` is the prompt interface, implemented by `./setup-tui.ts` (full screen) and `./setup-lines.ts` (plain lines, `--no-tui`).
-- `./setup-choices.ts` persists choices and converts them to flags; `./setup-run.ts` runs the wizard in a one-off container; `./setup.ts` checks the setup container and signs agents in.
+- `./setup-wizard.ts` holds the prompts and navigation; `WizardEffects` owns pairing, sign-in and Docker work. Setup signs in only OpenCode: Claude Code and Codex pay with the account's plans and keys.
+- `./setup-prompt.ts` is the prompt interface, implemented by `./setup-tui.ts` (full screen), `./setup-lines.ts` (plain lines, `--no-tui`) and `./setup-events.ts` (`--connect`: no questions, JSON event lines for the CLI's `connect --machine`).
+- `./setup-choices.ts` persists choices and converts them to flags; `./setup-run.ts` runs the wizard in a one-off container; `./setup.ts` checks the setup container and signs OpenCode in for `--harness`.
 
 ## Invariants
 
 - Change session wire messages in the shared [protocol](../../server/src/runner/protocol.ts) and control messages in [control](../../server/src/runner/control.ts). Both endpoints import their types and checks; see [server runner guide](../../server/src/runner/AGENTS.md).
 - Scrub harness output before sending or retaining frames. Reconnect can replay output already buffered by the channel.
-- Mount the login volume on the relay, never on the session. The session gets a placeholder bearer for its requests.
+- Mount a login volume (Claude Code's, OpenCode's) on its relay, never on the session. The session gets a placeholder bearer for its requests. No ChatGPT or Codex sign-in is kept on the machine.
+- A plan's token stays in the plan relay's memory: it arrives on the relay's standard input, never in a file, a volume, an argument or an environment.
 - Act only on Docker resources labelled for this pairing.
 - Never unpack or parse a session's copy in the runner; move it as bytes, checked by size and hash, and only for the asking session.
 
 ## Pitfalls
 
 - Server modules the runner imports, such as `server/src/sandbox/docker.ts` and `server/src/runner/control.ts`, must not pull in RivetKit actors or server configuration.
-- An older runner may talk to a newer server. Gate new behaviour on the capability and version constants in `server/src/runner/control.ts`.
+- An older runner may talk to a newer server, down to `MIN_RUNNER_VERSION` (`server/src/runner/protocol.ts`). Gate new behaviour on the capability and version constants in `server/src/runner/control.ts`.
 
 ## See also
 

@@ -461,6 +461,22 @@ describe("the live feed's ended items beyond its first page", () => {
 		expect(note.textContent).toBe(`And ${older} older ended items, listed under Ended on the Factory page.`);
 		expect(note.querySelector("a")?.getAttribute("href")).toBe("/factory");
 	});
+
+	it("on the usage page: what each item added to your bills, or that your plans carried it, and the listed items' total", async () => {
+		await show("/usage#usage-items", { items: "many" });
+		await settle();
+		const table = host.querySelector(".factory-cost") as HTMLElement;
+		expect(table.querySelector("thead th:nth-child(2)")?.textContent).toBe("Cost");
+		const costs = [...table.querySelectorAll("tbody tr td:nth-of-type(1)")].map(cell => cell.textContent ?? "");
+		expect(costs.some(cost => cost !== "—")).toBe(true);
+		expect(
+			costs.every(cost => /^—$|^\$\d.* extra|^Included in your plans$|^Nothing extra$|^Cost unknown$/.test(cost)),
+		).toBe(true);
+		expect(costs.join(" ")).not.toContain("tokens");
+		expect(host.querySelector(".factory-cost-total")?.textContent).toMatch(
+			/^The items listed here cost \$[\d,]+\.\d\d extra: .* Their model work is worth \$[\d,]+\.\d\d at API prices/,
+		);
+	});
 });
 
 describe("filing a work item from the Factory page", () => {
@@ -688,6 +704,16 @@ describe("the Factory page's board", () => {
 		const feature = [...host.querySelectorAll(".board-card")].find(card => card.querySelector(".board-part-asks"));
 		expect(feature?.closest(".board-tray")).not.toBeNull();
 		expect(feature?.querySelector(".board-card-action")?.textContent).toBe("Answer");
+		// One figure a card: what it added to your bills, or that your plans carried it; a feature's counts its parts too.
+		await settle();
+		const costs = [...host.querySelectorAll(".board-card-cost")].map(cost => cost.textContent ?? "");
+		expect(costs.some(cost => /^\$\d/.test(cost))).toBe(true);
+		expect(
+			costs.every(
+				cost => cost === "" || /^\$\d.* extra|^Included in your plans|^Nothing extra|^Cost unknown/.test(cost),
+			),
+		).toBe(true);
+		expect(feature?.querySelector(".board-card-cost")?.textContent).not.toBe("");
 	});
 
 	it("draws an empty column as a slim strip and gives the width to the columns with cards", async () => {

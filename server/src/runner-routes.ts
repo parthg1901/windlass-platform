@@ -7,7 +7,7 @@ import { config, ownEngineEndpoint, signedRunnerEndpoint } from "./config.js";
 import { platformConnection } from "./platform-info.js";
 import type { Registry } from "./registry.js";
 import { codeDigest, digest, machineError, newPairCode, publicSpki } from "./runner-keys.js";
-import { AddressBudget, clientAddress, rateLimited } from "./http-limits.js";
+import { AddressBudget, clientAddress, rateLimited, readJsonBody } from "./http-limits.js";
 import { OLD_RUNNER } from "./runner/protocol.js";
 import {
 	CLOCK_TOLERANCE_MS,
@@ -27,30 +27,7 @@ const connections = new AddressBudget(config.httpLimits.runnerConnection);
 const json = (status: number, body: unknown) =>
 	Response.json(body, { status, headers: { "cache-control": "no-store" } });
 
-/** RivetKit has already bounded and buffered the HTTP body. Apply the smaller runner limit before parsing it. */
-async function readBody(request: Request): Promise<{ value: unknown } | Response> {
-	if (Number(request.headers.get("content-length")) > 4096) return json(413, { code: "body_too_large" });
-	const reader = request.body?.getReader();
-	if (!reader) return json(400, { code: "bad_input" });
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	try {
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			size += value.length;
-			if (size > 4096) return json(413, { code: "body_too_large" });
-			chunks.push(value);
-		}
-		try {
-			return { value: JSON.parse(Buffer.concat(chunks).toString()) };
-		} catch {
-			return json(400, { code: "bad_input" });
-		}
-	} finally {
-		reader.releaseLock();
-	}
-}
+const readBody = (request: Request) => readJsonBody(request, 4096);
 
 export async function runnerResponse(request: Request): Promise<Response> {
 	if (!config.machines) return json(404, { code: "not_found" });

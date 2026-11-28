@@ -196,7 +196,7 @@ function problem(step: () => unknown): string | null {
 /** A database whose every statement waits a moment first: whoever started another call meanwhile gets a turn. */
 function database(): {
 	db: ModelsDb;
-	rows(): Array<{ generation: number; list: string; fetched_at: number }>;
+	rows(): Array<{ generation: string; list: string; fetched_at: number }>;
 	age(ms: number): void;
 } {
 	const sqlite = new DatabaseSync(":memory:");
@@ -217,7 +217,7 @@ function database(): {
 
 /** A user as the keeper sees one: a sign-in's generation (null: none), and a listing the check answers as it says. */
 class Account {
-	generation: number | null = 1;
+	generation: string | null = "1";
 	asked = 0;
 	answer: ListedModels | Error = PLAN;
 	/** Resolved by the check to let the listings that wait go on. */
@@ -285,7 +285,7 @@ const OTHER: ListedModels = {
 		before.source === "signed-out" && before.fetchedAt === null && user.asked === 0 && user.store.rows().length === 0,
 	);
 
-	user.generation = 1;
+	user.generation = "1";
 	const many = await Promise.all(Array.from({ length: 8 }, () => models.current(user.source())));
 	expect(
 		"eight who ask at once are answered from one listing",
@@ -304,7 +304,7 @@ const OTHER: ListedModels = {
 	expect(
 		"it is stored before it is answered, with the generation of the sign-in it was listed with",
 		user.store.rows().length === 1 &&
-			user.store.rows()[0]!.generation === 1 &&
+			user.store.rows()[0]!.generation === "1" &&
 			plain(JSON.parse(user.store.rows()[0]!.list)) === plain(PLAN) &&
 			user.store.rows()[0]!.fetched_at === first!.fetchedAt,
 	);
@@ -431,7 +431,7 @@ const OTHER: ListedModels = {
 	// Signed in again: the earlier list is nobody's, also for an actor that wakes with the old row in its storage.
 	const stale = new Account();
 	await stale.keeper().current(stale.source());
-	stale.generation = 2;
+	stale.generation = "2";
 	stale.answer = OTHER;
 	const fresh = await stale.keeper().current(stale.source());
 	expect(
@@ -439,7 +439,7 @@ const OTHER: ListedModels = {
 		stale.asked === 2 &&
 			fresh.defaultModel === "gpt-8-terra" &&
 			stale.store.rows().length === 1 &&
-			stale.store.rows()[0]!.generation === 2,
+			stale.store.rows()[0]!.generation === "2",
 	);
 
 	// A listing that was running for the earlier sign-in ends after the new one's.
@@ -449,7 +449,7 @@ const OTHER: ListedModels = {
 	racing.hold = new Promise<void>(done => (release = done));
 	const early = keeper.current(racing.source());
 	await wait(30);
-	racing.generation = 2;
+	racing.generation = "2";
 	racing.hold = null;
 	racing.answer = OTHER;
 	const current = await keeper.current(racing.source());
@@ -463,7 +463,7 @@ const OTHER: ListedModels = {
 			current.defaultModel === "gpt-8-terra" &&
 			settled.defaultModel === "gpt-8-terra" &&
 			racing.store.rows().length === 1 &&
-			racing.store.rows()[0]!.generation === 2 &&
+			racing.store.rows()[0]!.generation === "2" &&
 			plain(JSON.parse(racing.store.rows()[0]!.list)) === plain(OTHER) &&
 			earlier.defaultModel === "gpt-8-terra",
 		`${racing.asked} listings; row ${plain(racing.store.rows())}`,
@@ -734,7 +734,7 @@ if (binary === undefined) {
 		// The whole way: the keeper over a database, asking the real Windlass.
 		standin.mode = "plan";
 		const store = database();
-		let generation: number | null = 1;
+		let generation: string | null = "1";
 		const said: string[] = [];
 		const source: ModelsSource = {
 			db: store.db,
@@ -785,7 +785,7 @@ if (binary === undefined) {
 			"signed out: the stand-in, nothing kept, and Windlass is not run",
 			out.source === "signed-out" && store.rows().length === 0 && asked() === from + 3,
 		);
-		generation = 2;
+		generation = "2";
 		standin.mode = "rejected";
 		const refused = await keeper.current(source);
 		expect(

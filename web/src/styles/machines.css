@@ -448,28 +448,6 @@
 .machine-agent-command .copy-button {
 	opacity: 1;
 }
-/* Whose credential the agent uses, under its line where both could serve it; who pays under the choice. */
-.machine-credential {
-	display: grid;
-	flex-basis: 100%;
-	justify-items: start;
-	gap: 5px;
-	margin: 4px 0 6px;
-}
-.machine-credential-choice .segment {
-	padding: 4px 11px;
-	font-size: 12.5px;
-	font-weight: var(--weight-medium);
-}
-.machine-credential .field-note {
-	margin: 0;
-}
-@media (max-width: 560px) {
-	.machine-credential-choice {
-		display: grid;
-		width: 100%;
-	}
-}
 /* The steps of adding a machine, each a short heading over its command. */
 .machine-setup-agents {
 	display: grid;
@@ -482,7 +460,8 @@
 	font-weight: var(--weight-medium);
 	color: var(--ink);
 }
-/* The commands from before the one-line install, folded under it. */
+/* The ways in other than the connect command, folded under it. */
+.machine-no-node,
 .machine-other-ways {
 	margin-top: 0;
 }
@@ -733,4 +712,25 @@
 	.machine-row .machine-foot {
 		padding-inline: 14px;
 	}
+}
+/* Who pays for an agent where both its sign-in and a key could: chosen on the Connections page. */
+.machine-agent-paid {
+	flex-basis: 100%;
+	margin: 2px 0 4px;
+	font-size: 12.5px;
+	color: var(--ink-dim);
+}
+.machine-dialog .machine-wait {
+	margin-top: 10px;
+}
+.machine-paired {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: var(--text-13);
+	color: var(--ink);
+}
+.machine-paired svg {
+	flex: none;
+	color: var(--ok);
 }

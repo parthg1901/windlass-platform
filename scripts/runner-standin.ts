@@ -258,6 +258,21 @@ export class StandInRunner {
 	maxSandboxes: number | undefined = undefined;
 	/** How many create replies to lose by restarting before answering or reporting the container. */
 	loseCreates = 0;
+	/**
+	 * Whether the session's turns pay (a plan): its Windlass reports 0.7.1 and its leftover sweep finds nothing. Every
+	 * runner has the plan relay; what the server asks of it is counted here.
+	 */
+	paying = false;
+	/** What plan relays were asked: `limits` each one's request limit, `ends` each open's and hand-over's `expiresAt`. */
+	readonly planRelays = {
+		opened: 0,
+		tokens: 0,
+		seen: 0,
+		closed: 0,
+		leases: new Set<string>(),
+		limits: [] as number[],
+		ends: [] as number[],
+	};
 	creates = 0;
 	offline = false;
 	removed = false;
@@ -489,7 +504,10 @@ export class StandInRunner {
 			case "connect":
 				if (!mine) return channel.respond(op, null);
 				box.state = "running";
-				return channel.respond(op, { cwd: "/workspace", profile: box.profile });
+				return channel.respond(op, {
+					cwd: "/workspace",
+					profile: box.profile,
+				});
 			case "state":
 				return channel.respond(op, mine ? box.state : "none");
 			case "suspend":
@@ -556,6 +574,12 @@ export class StandInRunner {
 				this.end(served, op.args.process, { code: null, signal: "SIGKILL", error: null });
 				return channel.respond(op, null);
 			case "ask":
+				// The plan turn's check of the sandbox's Windlass (token-file.ts `openModelKeyRelay`).
+				if (this.paying && op.args.argv.join(" ") === "windlass --version")
+					return channel.respond(op, { code: 0, stdout: "Windlass 0.7.1\n", stderr: "" });
+				// A paying turn's sweep of leftover processes before its token file (provider.ts `sweepSessionProcesses`): none here.
+				if (this.paying && op.args.argv[0] === "/usr/bin/python3")
+					return channel.respond(op, { code: 0, stdout: "", stderr: "" });
 				// No shell here: an answer of a program that is not there, which the turn reads as "nothing to read".
 				return channel.respond(op, { code: 127, stdout: "", stderr: "stand-in runner: no shell" });
 			case "stopLeftovers": {
@@ -571,6 +595,35 @@ export class StandInRunner {
 			}
 			case "sweep":
 				return channel.respond(op, 0);
+			// The relay itself is the runner's (model-relay.ts `openPlan`): here only what it was asked is counted.
+			case "planRelay": {
+				if (!mine) return channel.refuse(op, { kind: "refused", message: "No such sandbox." });
+				const lease = randomBytes(16).toString("hex");
+				this.planRelays.opened += 1;
+				this.planRelays.leases.add(lease);
+				this.planRelays.limits.push(op.args.requestLimit);
+				this.planRelays.ends.push(op.args.expiresAt);
+				return channel.respond(op, {
+					lease,
+					placeholder: `wlp-plan.${randomBytes(32).toString("base64url")}`,
+					env: {
+						WINDLASS_MODEL_BASE_URL: "http://127.0.0.1:17893/v1",
+						WINDLASS_MODEL_ALLOWED_ORIGIN: "http://127.0.0.1:17893",
+					},
+				});
+			}
+			case "planRelayToken":
+				if (!this.planRelays.leases.has(op.args.lease))
+					return channel.refuse(op, { kind: "refused", message: "This plan relay lease has ended." });
+				this.planRelays.tokens += 1;
+				this.planRelays.ends.push(op.args.expiresAt);
+				return channel.respond(op, null);
+			case "planRelaySeen":
+				this.planRelays.seen += 1;
+				return channel.respond(op, []);
+			case "modelRelayClose":
+				if (this.planRelays.leases.delete(op.args.lease)) this.planRelays.closed += 1;
+				return channel.respond(op, null);
 		}
 	}
 }

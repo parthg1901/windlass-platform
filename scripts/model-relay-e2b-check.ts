@@ -1,15 +1,17 @@
 /**
- * One real model request through Windlass's model relay from an E2B sandbox (docs/model-relay.md), the
+ * One real model request of hosted Windlass on the ChatGPT plan from an E2B sandbox (docs/model-relay.md), the
  * whole way a hosted E2B turn takes it:
  *
- *   E2B microVM (real Windlass, the deployment's network)  ->  the relay's own hostname (Cloudflare)
- *     ->  this server's route, served by its real HTTP listener  ->  api.openai.com, with a real token
+ *   E2B microVM: real Windlass, its token file holding a placeholder  ->  the plan relay inside the microVM,
+ *     run as the transport user and handed the token on its standard input  ->  api.openai.com
+ *
+ * The server's route (behind the relay's own hostname) stays up for Settings keys; this turn must not use it.
  *
  * It starts the platform server in this process, on ports of its own with its own storage (the fake
  * sandbox layer, so nothing of a deployment is used), and puts it behind a Cloudflare quick tunnel
  * (`cloudflared tunnel --url`, no account) as WLP_MODEL_RELAY_URL. It makes one E2B sandbox from the
- * template, under `restricted` with the relay's host in place of api.openai.com, and runs one turn
- * through the platform's own turn code (token file, lease, placeholder): "Reply with exactly: relay ok".
+ * template, under `restricted` (its plan host allowed for its relay), and runs one turn through the platform's
+ * own turn code (plan relay, placeholder file): "Reply with exactly: relay ok".
  * That is one short model call, plus Windlass's model list.
  *
  *   cd server && E2B_API_KEY=e2b_... WLP_RELAY_CHECK_TOKEN_FILE=/path/token.json npx tsx ../scripts/model-relay-e2b-check.ts
@@ -221,14 +223,19 @@ try {
 	});
 	const handle = await layer.sandboxes.connect(id);
 	expect(
-		"the sandbox offers the model relay",
-		handle !== undefined && typeof (handle as { modelRelay?: unknown }).modelRelay === "function",
+		"the sandbox offers a plan relay inside it",
+		handle !== undefined && typeof (handle as { localPlanRelay?: unknown }).localPlanRelay === "function",
 	);
 	if (handle === undefined) throw new Error("the sandbox could not be connected");
 
 	const events: WindlassEvent[] = [];
 	const began = Date.now();
 	const result = await layer.windlass.runTurn(handle, {
+		modelKey: {
+			sessionId: `relay-check-${deployment}`,
+			key: { provider: "openai", plan: true, generation: "relay-check" },
+			openSecret: async () => ({ secret: token.accessToken, expiresAt: token.expiresAt }),
+		},
 		prompt: "Reply with exactly: relay ok",
 		...(process.env.WLP_RELAY_CHECK_MODEL ? { model: process.env.WLP_RELAY_CHECK_MODEL } : {}),
 		onEvent: event => events.push(event),
@@ -244,8 +251,8 @@ try {
 		`${ms} ms, failure ${JSON.stringify(result.failure)}, stderr ${result.stderrTail?.slice(-400)}`,
 	);
 	expect(
-		"its model call reached api.openai.com from the server, and was answered",
-		upstream.some(u => u.url.endsWith("/v1/responses") && u.status === 200),
+		"its model call left from the sandbox: nothing of it went through the server's route",
+		!upstream.some(u => u.url.endsWith("/v1/responses")),
 		JSON.stringify(upstream),
 	);
 	expect(

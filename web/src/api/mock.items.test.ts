@@ -572,7 +572,7 @@ describe("the mock's work items", () => {
 				"outdated",
 				"m_nas",
 				"runner_outdated",
-				'The runner on "nas" is older than this platform takes: update it to 0.2.0 or later, then start the agent again.',
+				"Update your runner on “nas” to 0.3.13 or later, then start the agent again.",
 			],
 			[
 				"pairing",

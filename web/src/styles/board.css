@@ -229,3 +229,19 @@
 	min-width: 0;
 }
 .board-ended [data-state="failed"] .board-ended-meta { color: var(--bad); }
+
+/* A card's cost: the dollars in the card's own type, what a plan paid quieter after them. */
+.board-card-cost .cost-figure {
+	column-gap: 4px;
+}
+.board-card-cost .cost-figure-amount,
+.board-card-cost .cost-figure-words {
+	font-size: var(--text-12);
+	font-weight: var(--weight-medium);
+	letter-spacing: 0;
+	color: var(--ink);
+}
+.board-card-cost .cost-figure-rest {
+	font-size: var(--text-11);
+	color: var(--ink-faint);
+}

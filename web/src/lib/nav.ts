@@ -1,8 +1,8 @@
 /**
  * Where a page belongs and how it is reached. Every page lives in one section of the app, decided by
  * what it shows, never by its path: a work item and the agents that work on it (`summary.item`) are
- * the Factory's; the user's own agents and their repositories are Agents'; machines are Machines';
- * usage, settings and plans are the account's, under the Settings tab.
+ * the Factory's; the user's own agents and their repositories are Agents'; machines are Machines'; what pays
+ * for the agents is Connections'; usage, settings and plans are the account's, under the Settings tab.
  *
  * A page further in has a fixed trail that starts with its section ("Factory › tide-tables › Fix the
  * timezone"), and the header's back control returns to where you came from (lib/router.ts `useBack`),
@@ -12,13 +12,14 @@ import { itemSessionRole, type SessionSummary, type SessionRepository } from "@c
 import type { RepositoryPaneView, Route } from "./router";
 import { repoAddress } from "../../../server/src/codehost/ref.js";
 
-export type Section = "agents" | "factory" | "machines" | "account";
+export type Section = "agents" | "factory" | "machines" | "connections" | "account";
 
 /** Each section's name, as its tab says it: the account's tab is Settings. */
 export const SECTION_NAME: Record<Section, string> = {
 	agents: "Agents",
 	factory: "Factory",
 	machines: "Machines",
+	connections: "Connections",
 	account: "Settings",
 };
 
@@ -27,6 +28,7 @@ export const SECTION_ROUTE: Record<Section, Route> = {
 	agents: { name: "home" },
 	factory: { name: "factory" },
 	machines: { name: "machines" },
+	connections: { name: "connections" },
 	account: { name: "settings" },
 };
 
@@ -44,6 +46,8 @@ export function sectionOfPage(route: Route, itemSession = false): Section | null
 			return itemSession ? "factory" : "agents";
 		case "machines":
 			return "machines";
+		case "connections":
+			return "connections";
 		case "usage":
 		case "settings":
 		case "plans":
@@ -90,6 +94,8 @@ export function routeLabel(route: Route): string {
 			return "Plans";
 		case "machines":
 			return "Machines";
+		case "connections":
+			return "Connections";
 		case "docs":
 			return "Docs";
 		default:

@@ -31,7 +31,7 @@ import { getLayer } from "./layer.js";
 import { offeredProfiles } from "./sandbox/profiles.js";
 import { billing } from "./billing/config.js";
 import { PLAN_LIST } from "./billing/plans.js";
-import { LEGACY_MIN_RUNNER_VERSION, MIN_RUNNER_VERSION } from "./runner/control.js";
+import { MIN_RUNNER_VERSION } from "./runner/control.js";
 
 const FRESH_MS = 5 * 60 * 1000;
 /** A missing image or a failed lookup is asked about again sooner. */
@@ -97,7 +97,7 @@ export async function platformInfo(): Promise<PlatformInfo> {
 	if (app) info.github = app;
 	if (config.machines)
 		info.machines = {
-			minRunnerVersion: config.machines.identity ? MIN_RUNNER_VERSION : LEGACY_MIN_RUNNER_VERSION,
+			minRunnerVersion: MIN_RUNNER_VERSION,
 			platformFingerprint: config.machines.identity && fingerprint(config.machines.identity.root),
 			runnerImage: config.machines.runnerImage,
 			runnerHarnesses: config.machines.runnerHarnesses,

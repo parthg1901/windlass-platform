@@ -13,7 +13,6 @@ import {
 } from "@contract";
 import {
 	deploymentSize,
-	machinePayers,
 	resolveRun,
 	type ResolvedRun,
 	type RunRole,
@@ -26,14 +25,11 @@ import { usesAccountModels } from "../../../server/src/sandbox/harnesses.js";
 export type RunSource = ResolvedRun["sources"]["place"];
 const ORDER: RunSource[] = ["deployment", "account", "repository", "item"];
 
-export { machinePayers };
-
 export function runOf(
 	layers: {
 		account?: AccountDefaults | null;
 		repository?: RepositoryDefaults | null;
 		item?: RunSettings;
-		machines: readonly MachineSummary[] | null;
 		sizes?: readonly HostedSizeOption[];
 	},
 	role: RunRole = "builder",
@@ -42,7 +38,6 @@ export function runOf(
 	return resolveRun(
 		{
 			deployment: sizes.length ? { hostedSize: deploymentSize(sizes) } : {},
-			machinePayers: machinePayers(layers.machines ?? []),
 			account: layers.account ?? undefined,
 			repository: layers.repository ?? undefined,
 			item: layers.item,

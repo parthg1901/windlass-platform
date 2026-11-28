@@ -31,7 +31,14 @@ import type { SnapshotSource } from "./snapshot-key.js";
 import { backupConfig, config } from "../config.js";
 import { isActorGone } from "../actors/internal.js";
 import type { Attachment, MachineFacts, TurnSlot } from "../actors/machine.js";
-import { isolationName, type SandboxProfile, type SandboxProfileId, type SessionSnapshot } from "../contract.js";
+import {
+	isolationName,
+	type RelaySeen,
+	type SandboxProfile,
+	type SandboxProfileId,
+	type SessionSnapshot,
+} from "../contract.js";
+import type { LocalModelRelay } from "./plan-relay.js";
 import { harnessName, machineHarness } from "./harnesses.js";
 import { describeError, serviceParams } from "../auth.js";
 import { type ChannelSocket, type ConversationRecord, ConversationLost, ServerChannel } from "../runner/channel.js";
@@ -59,7 +66,6 @@ import {
 	type ProcessEnd,
 	type SandboxProcess,
 	type StartOptions,
-	type TurnModelRelay,
 	type TurnSandbox,
 	markTurnSandbox,
 	randomId,
@@ -608,6 +614,12 @@ class RunnerProcess implements SandboxProcess {
 // The provider
 // ---------------------------------------------------------------------------------------------
 
+/** How often a turn takes what its machine's plan relay saw of the plan. */
+const PLAN_SEEN_MS = 15_000;
+
+/** When a machine's plan relay stops by itself: past the turn's limit from now, so a dead server leaves no token for long. */
+const planRelayExpiry = () => Date.now() + config.turnTimeoutMs + 60_000;
+
 class RunnerHandle implements TurnSandbox {
 	readonly approval: "auto" | "full";
 	readonly profile: SandboxProfileId;
@@ -642,12 +654,11 @@ class RunnerHandle implements TurnSandbox {
 		if (found.blockedNetwork)
 			this.blockedNetwork = (turn, retained) =>
 				link.request("blockedNetwork", { id, turn, retained }, { signal: AbortSignal.timeout(5_000) });
-		if (!found.windlassKeyRelay)
-			this.windlassKeyProblem = "Update the runner to use Settings keys with Windlass on this machine.";
 		if (found.modelRelay && config.modelRelay.on) {
-			this.modelRelay = async () => this.relayOf(await link.request("modelRelay", { id }));
 			this.modelKeyRelay = (sessionId, key, signal) => {
 				if (sessionId !== link.who.sessionId) throw new Error("This model relay belongs to another session.");
+				// A plan's requests leave from the machine through its own plan relay, never through the platform's.
+				if (key.plan) throw new Error("A plan pays through the machine's plan relay.");
 				return forwardKeyLease(
 					this.uid,
 					sessionId,
@@ -657,21 +668,40 @@ class RunnerHandle implements TurnSandbox {
 					signal,
 				);
 			};
-			if (link.durable) this.resumeRelay = lease => this.relayOf(lease);
 		}
+		// The turn's request limit, counted by the relay on the machine: a machine turn has no `takeRequest`.
+		this.localPlanRelay = async (token, options) => {
+			if (options.wire !== "claude-plan" && options.wire !== "chatgpt-plan")
+				throw new Error("A plan relay takes only a plan's wire.");
+			const opened = await link.request(
+				"planRelay",
+				{
+					id,
+					wire: options.wire,
+					harness: options.harness,
+					token,
+					expiresAt: planRelayExpiry(),
+					requestLimit: config.modelRelay.turnRequests,
+				},
+				{ signal: options.signal },
+			);
+			return this.planRelayOf(opened, options.onSeen);
+		};
+		if (link.durable)
+			this.resumePlanRelay = (relay, onSeen) =>
+				this.planRelayOf({ lease: relay.lease, placeholder: relay.placeholder, env: relay.env }, onSeen);
 		if (link.durable)
 			this.adopt = (process, tag, { onStdout, onStderr }) =>
 				link.adopt(process, { id, tag, argv: [] }, (fd, data) => (fd === 1 ? onStdout : onStderr)?.(data));
 	}
 
-	/** `TurnSandbox.modelRelay`, on a runner that offers it. */
 	readonly blockedNetwork?: TurnSandbox["blockedNetwork"];
-	readonly modelRelay?: () => Promise<TurnModelRelay>;
-	readonly windlassKeyProblem?: string;
 	readonly modelKeyRelay?: TurnSandbox["modelKeyRelay"];
 
-	/** `TurnSandbox.resumeRelay`: the runner kept the lease with the conversation; the restarted turn hands it a token again at once. */
-	readonly resumeRelay?: TurnSandbox["resumeRelay"];
+	/** `TurnSandbox.localPlanRelay`: a plan relay on the machine. */
+	readonly localPlanRelay: TurnSandbox["localPlanRelay"];
+	/** `TurnSandbox.resumePlanRelay`: the runner keeps the plan relay with the conversation through the grace. */
+	readonly resumePlanRelay?: TurnSandbox["resumePlanRelay"];
 
 	/** `TurnSandbox.adopt`, on a durable link. */
 	readonly adopt?: TurnSandbox["adopt"];
@@ -685,17 +715,42 @@ class RunnerHandle implements TurnSandbox {
 		};
 	}
 
-	private relayOf(opened: Value<"modelRelay">): TurnModelRelay {
+	/**
+	 * The machine's plan relay as a turn holds it: its token replaced with `planRelayToken`, what it saw of the plan
+	 * taken every `PLAN_SEEN_MS` and once more before it is closed (the provider's answers reach plan health as a
+	 * microVM's relay's do).
+	 */
+	private planRelayOf(opened: Value<"planRelay">, onSeen?: (seen: RelaySeen) => void): LocalModelRelay {
+		const take = async () => {
+			const seen = await this.link
+				.request("planRelaySeen", { id: this.id, lease: opened.lease }, { signal: AbortSignal.timeout(10_000) })
+				.catch(() => []);
+			for (const one of seen) onSeen?.(one);
+		};
+		const timer = onSeen ? setInterval(() => void take(), PLAN_SEEN_MS) : undefined;
+		timer?.unref?.();
+		let closing: Promise<void> | undefined;
 		return {
-			...this.closeableRelay(opened),
+			placeholder: opened.placeholder,
+			env: opened.env,
+			// Where a restarted server takes it up again (`resumePlanRelay`).
+			lease: opened.lease,
+			// Each hand-over moves its end on: a turn taken up after a restart has a new window (`resumePlanRelay`).
 			hand: async token => {
-				await this.link.again("modelRelayToken", {
+				if (closing) throw new Error("This relay has ended.");
+				await this.link.again("planRelayToken", {
 					id: this.id,
 					lease: opened.lease,
-					accessToken: token.accessToken,
-					expiresAt: token.expiresAt,
+					token,
+					expiresAt: planRelayExpiry(),
 				});
 			},
+			close: () =>
+				(closing ??= (async () => {
+					clearInterval(timer);
+					if (onSeen) await take();
+					await this.link.again("modelRelayClose", { id: this.id, lease: opened.lease }).catch(() => undefined);
+				})()),
 		};
 	}
 
@@ -953,13 +1008,13 @@ class RunnerSandboxes implements Sandboxes {
 }
 
 /**
- * The layer of a machine. Its sign-ins and access tokens are the deployment's (`hosted`): the platform
- * keeps the one sign-in, and a turn on a machine is handed a token as any turn is.
- * The turn checks the machine sandbox's own engine for host tools.
+ * The layer of a machine. Its sign-ins are the deployment's (`hosted`): a turn on a machine pays with a plan through
+ * a relay on the machine, or a Settings key through the platform's relay. The turn checks the machine sandbox's own
+ * engine for host tools.
  */
 export function machineLayer(link: RunnerLink, hosted: SandboxLayer): SandboxLayer {
 	const host = { version: async () => null, problem: () => hosted.windlass.problem() };
-	const windlass = new SandboxWindlass(hosted.tokens, host);
+	const windlass = new SandboxWindlass(host);
 	return {
 		machine: { name: link.known?.name || link.who.machineName || link.who.machineId },
 		sandboxes: new RunnerSandboxes(link),

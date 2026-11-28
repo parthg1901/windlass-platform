@@ -1,5 +1,5 @@
 /** The user's models as the screens read them, and the mock's list held against the server's own. */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ModelList } from "@contract";
 import { ModelProblem, checkEffort, chosenModel, standInModels } from "../../../server/src/account-models";
 import { PlatformError } from "../api/client";
@@ -62,9 +62,15 @@ describe("the user's models", () => {
 });
 
 async function connectPlan(mock: ReturnType<typeof createMockClient>) {
-	const user = mock.user(ada);
-	const { url, redirectPrefix } = await user.startChatgpt();
-	await user.finishChatgpt(redirectPrefix + "?code=plan&state=" + new URL(url).searchParams.get("state"));
+	// The mock connects the plan a few seconds after its code is approved, as the connect command would.
+	vi.useFakeTimers();
+	try {
+		const approved = mock.user(ada).approvePlanConnect("KQ2M-8XF4", "openai");
+		await vi.advanceTimersByTimeAsync(4000);
+		await approved;
+	} finally {
+		vi.useRealTimers();
+	}
 }
 
 describe("the mock's models", () => {
@@ -171,7 +177,7 @@ describe("the picker's model names and credentials", () => {
 		expect(sourceOf("opencode", "xai/grok-4")).toBe("other");
 	});
 
-	it("says whose credential serves a provider: the machine's sign-in first, the key where chosen, keys when hosted", () => {
+	it("says whose credential serves a provider: the machine's sign-in first, the key where it pays, keys when hosted", () => {
 		const claude = {
 			id: "claude" as const,
 			adapter: "",
@@ -180,9 +186,12 @@ describe("the picker's model names and credentials", () => {
 			machineSignIns: ["anthropic" as const],
 		};
 		expect(credentialWords("claude", "anthropic", claude, "mac-mini")).toBe("Claude subscription · mac-mini");
+		expect(credentialWords("claude", "anthropic", { ...claude, platformKeys: ["anthropic"] }, "mac-mini")).toBe(
+			"Anthropic key",
+		);
 		expect(
-			credentialWords("claude", "anthropic", { ...claude, platformKeys: ["anthropic"], source: "key" }, "mac-mini"),
-		).toBe("Anthropic key");
+			credentialWords("claude", "anthropic", { ...claude, machineSignIns: undefined, paysWith: true }, "mac-mini"),
+		).toBe("Claude plan");
 		expect(credentialWords("claude", "anthropic", null, null)).toBe("Anthropic key");
 		const opencode = {
 			id: "opencode" as const,

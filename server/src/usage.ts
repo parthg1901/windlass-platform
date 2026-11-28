@@ -57,6 +57,7 @@ import type {
 	SessionSummary,
 	TurnUsage,
 	WindlassEvent,
+	HostedSplit,
 	UsageDay,
 	UsageNumbers,
 	UsageSession,
@@ -64,6 +65,7 @@ import type {
 import { windlassProvider } from "./sandbox/harnesses.js";
 import { USAGE_HISTORY_DAYS } from "./contract.js";
 import { meterPeriod, monthOf, type MeterPeriod, type SubscriptionDates } from "./billing/meter.js";
+import { PLANS } from "./billing/plans.js";
 
 /**
  * Whether the platform's own limits hold a session at this place: its sandbox time, its place among the
@@ -171,7 +173,7 @@ export interface TokenReceipt {
 	seq: number;
 	at: number;
 	tokens: number;
-	key?: import("./sandbox/provider.js").ModelKeyLease;
+	key?: import("./contract.js").CredentialRef;
 }
 
 export async function recordTurnTokens(db: Pick<RawAccess, "execute">, session: string, receipt: TokenReceipt) {
@@ -410,6 +412,32 @@ export class UsageBook {
 		let sum = 0;
 		for (const entry of this.entries) if (this.countsIn(entry, period)) sum += entry.seconds * this.storedWeight(entry);
 		return sum;
+	}
+
+	/**
+	 * What Windlass billing makes of one entry, in hosted seconds: the part the plan's monthly allowance still included
+	 * when it was counted (after the period's entries counted before it), and the part past it, with what that costs at
+	 * the plan's overage price up to the spend cap. Free and yearly Pro have no overage: there it is all included. Null
+	 * where no plan applies (billing off, an exempt account).
+	 */
+	hostedSplit(entry: UsageEntry): HostedSplit | null {
+		const { plan, includedSeconds, subscription } = this.limits;
+		if (!plan || includedSeconds == null) return null;
+		const weighted = entry.seconds * this.storedWeight(entry);
+		const centsPer1000 = subscription?.period === "month" ? PLANS[plan].overageCentsPer1000 : null;
+		if (centsPer1000 === null || weighted <= 0) return { includedSeconds: weighted, extraSeconds: 0, extraUsd: 0 };
+		const period = meterPeriod(subscription ?? null, openingTime(entry));
+		let before = 0;
+		for (const earlier of this.entries) {
+			if (earlier === entry) break;
+			if (this.countsIn(earlier, period)) before += earlier.seconds * this.storedWeight(earlier);
+		}
+		const included = Math.min(weighted, Math.max(0, includedSeconds - before));
+		const extra = weighted - included;
+		// Past the cap nothing is billed (billing/account.ts `overageMinutes`).
+		const cap = this.limits.monthlySeconds ?? includedSeconds;
+		const billed = Math.min(extra, Math.max(0, cap - Math.max(before, includedSeconds)));
+		return { includedSeconds: included, extraSeconds: extra, extraUsd: (billed / 60) * (centsPer1000 / 100_000) };
 	}
 
 	private heldInPeriod(period: MeterPeriod, except?: string): number {

@@ -23,7 +23,6 @@
  */
 
 import assert from "node:assert/strict";
-import { SandboxWindlass } from "../server/src/sandbox/turn.js";
 import { HostedSandboxes } from "../server/src/sandbox/hosted.js";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -95,8 +94,23 @@ import {
 } from "../server/src/github/git.js";
 import { INIT_WORKSPACE } from "../server/src/github/git-flags.js";
 import { execFileSync } from "node:child_process";
-import { BWRAP_PROBE, DATA_DIR, isTurnSandbox, randomId, shellQuote } from "../server/src/sandbox/provider.js";
-import { tokenFilePath } from "../server/src/sandbox/token-file.js";
+import {
+	BWRAP_PROBE,
+	DATA_DIR,
+	GIT_USER_ENV,
+	isTurnSandbox,
+	randomId,
+	shellQuote,
+} from "../server/src/sandbox/provider.js";
+import {
+	openModelKeyRelay,
+	rotatePlanToken,
+	tokenFilePath,
+	turnTokenFilePath,
+	writePlanPlaceholder,
+} from "../server/src/sandbox/token-file.js";
+import { GUEST_NODE, planRelaySources } from "../server/src/sandbox/plan-relay.js";
+import { hostedKeyEnv, redactKeyLease, windlassPlanEnv } from "../server/src/sandbox/hosted-keys.js";
 import { sleep } from "./check-wait.js";
 import { Report } from "./check-report.js";
 import { matchesSection } from "./check-sections.js";
@@ -130,6 +144,16 @@ async function userError(body: () => Promise<unknown>): Promise<string | null> {
 			? error.message
 			: `not a SandboxUserError: ${error instanceof Error ? error.message : String(error)}`;
 	}
+}
+
+async function expectRejects(body: () => Promise<unknown>, pattern: RegExp, name: string): Promise<void> {
+	let message = "";
+	try {
+		await body();
+	} catch (error) {
+		message = error instanceof Error ? error.message : String(error);
+	}
+	expect(name, pattern.test(message), message || "it did not reject");
 }
 
 const MINUTE = 60_000;
@@ -1638,6 +1662,307 @@ await section("the handle", async () => {
 	);
 });
 
+/** A sandbox image whose plan relay (plan-relay.ts) runs: it listens once it has its sources and token, and ends when its input closes or it is killed. */
+class PlanRelayMachine extends ScriptedMachine {
+	readonly relays: Array<{ command: string; options: E2bCommandOptions; stdin: string; ended: boolean }> = [];
+	constructor(private readonly listens = true) {
+		super(
+			(command, stdin) =>
+				(/ wlp-network [a-z]+ /.test(command)
+					? { stdout: `network ${/ wlp-network ([a-z]+) /.exec(command)?.[1]}\n` }
+					: command.includes("windlass --version")
+						? { stdout: "Windlass 0.7.1+test (linux-x64)\n" }
+						: undefined) ?? (stdin(), undefined),
+		);
+	}
+	override async start(command: string, options: E2bCommandOptions): Promise<E2bCommand> {
+		if (command.includes("git-stop")) for (const relay of this.relays) this.end(relay);
+		if (!command.includes(GUEST_NODE)) return super.start(command, options);
+		const relay = { command, options, stdin: "", ended: false };
+		this.relays.push(relay);
+		this.commands.push({ command, options, stdin: "" });
+		let finish: (result: { exitCode: number }) => void = () => {};
+		const done = new Promise<{ exitCode: number }>(resolve => (finish = resolve));
+		this.ends.set(relay, () => finish({ exitCode: 0 }));
+		return {
+			pid: 99,
+			sendStdin: async data => {
+				relay.stdin += data;
+				const lines = relay.stdin.split("\n").length;
+				// A replaced token after the first two lines: the relay answers it was handed.
+				if (lines > 3 && data.includes('"token"')) options.onStdout?.('{"handed":true}\n');
+				if (lines === 3) {
+					if (this.listens) options.onStdout?.('{"listening":40123}\n');
+					else {
+						options.onStderr?.("[wlp-plan-relay] cannot listen: EACCES\n");
+						this.end(relay, 2);
+					}
+				}
+			},
+			closeStdin: async () => this.end(relay),
+			wait: () => done,
+			disconnect: async () => {},
+			kill: async () => this.end(relay),
+		};
+	}
+	private readonly ends = new Map<object, (code?: number) => void>();
+	private end(relay: { ended: boolean }, code = 0) {
+		if (relay.ended) return;
+		relay.ended = true;
+		this.ends.get(relay)?.(code);
+	}
+}
+
+await section("a plan's relay in the sandbox", async () => {
+	const PLAN_TOKEN = "sk-ant-oat01-FAKE-PLAN-TOKEN-not-real-" + "z".repeat(20);
+	const relayOrigin = "https://relay.example.com";
+	const machines: PlanRelayMachine[] = [];
+	const w = world(
+		{ openProfile: true, modelRelayOrigin: relayOrigin, maxRunning: 3 },
+		{
+			machine: () => {
+				const machine = new PlanRelayMachine();
+				machines.push(machine);
+				return machine;
+			},
+		},
+	);
+	const id = await w.sandboxes.create({ uid: "u1", sessionId: "s1", profile: "e2b-open", harness: "claude" });
+	const handle = (await w.sandboxes.connect(id)) as E2bSandboxHandle;
+	const machine = machines.at(-1)!;
+	const before = machine.commands.length;
+	const CLAUDE_PLAN = { wire: "claude-plan", harness: "claude" } as const;
+	const relay = await handle.localPlanRelay(PLAN_TOKEN, CLAUDE_PLAN);
+	const started = machine.relays[0];
+	expect(
+		"it runs as the transport user (nobody), started from the image's Node, with a clean environment",
+		started !== undefined &&
+			started.options.gitUser === true &&
+			started.command.includes("git-run") &&
+			Object.entries(started.options.envs ?? {}).every(
+				([key, value]) =>
+					GIT_USER_ENV[key as keyof typeof GIT_USER_ENV] === value || ["LANG", "NO_COLOR"].includes(key),
+			),
+		JSON.stringify(started?.options.envs),
+	);
+	const lines = started?.stdin.split("\n") ?? [];
+	const handed = lines[1] ? JSON.parse(lines[1]) : {};
+	expect(
+		"its program and then the token and a fresh placeholder arrive on its standard input",
+		lines[0] === planRelaySources() &&
+			handed.token === PLAN_TOKEN &&
+			handed.placeholder === relay.placeholder &&
+			handed.wire === "claude-plan" &&
+			handed.harness === "claude",
+	);
+	const agentVisible = machine.commands.slice(before).filter(entry => !entry.command.includes(GUEST_NODE));
+	const everywhere = [
+		...machine.commands.map(entry => entry.command + JSON.stringify(entry.options.envs ?? {})),
+		...agentVisible.map(entry => entry.stdin),
+		...machine.files.values(),
+	].join("\n");
+	expect(
+		"the token is on no command line, in no environment, in no other command's input and in no file",
+		!everywhere.includes(PLAN_TOKEN) && !everywhere.includes("FAKE-PLAN-TOKEN"),
+	);
+	const env = hostedKeyEnv("claude", { provider: "anthropic", plan: true }, relay);
+	expect(
+		"Claude Code is pointed at the relay on loopback with the placeholder as its plan token",
+		env.ANTHROPIC_BASE_URL === "http://127.0.0.1:40123" &&
+			env.CLAUDE_CODE_OAUTH_TOKEN === relay.placeholder &&
+			/^wlp-plan\.[A-Za-z0-9_-]{43}$/.test(relay.placeholder) &&
+			env.ANTHROPIC_API_KEY === undefined,
+		JSON.stringify(env),
+	);
+	const redacted = redactKeyLease({ active: false, text: t => t, deep: v => v, held: () => 0 }, relay.placeholder).text(
+		`bearer ${relay.placeholder}`,
+	);
+	expect("the placeholder is redacted from the turn", !redacted.includes(relay.placeholder), redacted);
+	const fileCount = machine.files.size;
+	await relay.close();
+	expect(
+		"the turn's end stops it, and it left no file behind",
+		started?.ended === true && machine.files.size === fileCount,
+	);
+	await expectRejects(() => relay.hand("sk-ant-oat01-another-token-0000"), /ended/, "a closed relay takes no token");
+
+	const controller = new AbortController();
+	const second = await handle.localPlanRelay(PLAN_TOKEN, { ...CLAUDE_PLAN, signal: controller.signal });
+	controller.abort();
+	await sleep(20);
+	expect("the turn's abort stops it", machine.relays[1]?.ended === true);
+	await second.close();
+	const early = new AbortController();
+	early.abort();
+	await expectRejects(
+		() => handle.localPlanRelay(PLAN_TOKEN, { ...CLAUDE_PLAN, signal: early.signal }),
+		/abort/i,
+		"an aborted turn starts none",
+	);
+
+	const failing = new PlanRelayMachine(false);
+	const broken = world({ openProfile: true, modelRelayOrigin: relayOrigin }, { machine: () => failing });
+	const brokenId = await broken.sandboxes.create({
+		uid: "u1",
+		sessionId: "s1",
+		profile: "e2b-open",
+		harness: "claude",
+	});
+	const brokenHandle = (await broken.sandboxes.connect(brokenId)) as E2bSandboxHandle;
+	await expectRejects(
+		() => brokenHandle.localPlanRelay(PLAN_TOKEN, CLAUDE_PLAN),
+		/plan's relay could not be started in the sandbox: \[wlp-plan-relay\] cannot listen/,
+		"a relay that cannot listen fails the turn, with nothing left running",
+	);
+	expect(
+		"and it was stopped",
+		failing.relays.every(one => one.ended),
+	);
+
+	// A ChatGPT plan's access token expires within the hour: the turn hands its relay the current one before then.
+	const codexId = await w.sandboxes.create({ uid: "u1", sessionId: "s2", profile: "e2b-open", harness: "codex" });
+	const codexHandle = (await w.sandboxes.connect(codexId)) as E2bSandboxHandle;
+	const codexMachine = machines.at(-1)!;
+	const firstAccess = "chatgpt-access-FAKE-1-" + "a".repeat(24);
+	const nextAccess = "chatgpt-access-FAKE-2-" + "b".repeat(24);
+	let asked = 0;
+	let plan: { secret: string; expiresAt: number } | null = { secret: nextAccess, expiresAt: Date.now() + 3_600_000 };
+	const codexRelay = await openModelKeyRelay(
+		codexHandle,
+		"s2",
+		{ provider: "openai", plan: true, generation: "g1", harness: "codex" },
+		undefined,
+		undefined,
+		async () => (asked++ === 0 ? { secret: firstAccess, expiresAt: Date.now() + 20 * 60_000 } : plan),
+	);
+	const codexStarted = codexMachine.relays.at(-1)!;
+	const codexHanded = JSON.parse(codexStarted.stdin.split("\n")[1] ?? "{}");
+	expect(
+		"a ChatGPT plan's relay is started on its own wire for Codex, with the access token the turn opened",
+		codexHanded.wire === "chatgpt-plan" && codexHanded.harness === "codex" && codexHanded.token === firstAccess,
+	);
+	await codexRelay.close();
+	// The next token is due again soon too, so the plan's change below is asked about while the check waits.
+	plan = { secret: nextAccess, expiresAt: Date.now() + 60_100 };
+	const rotating = await codexHandle.localPlanRelay(firstAccess, { wire: "chatgpt-plan", harness: "codex" });
+	const rotated = rotatePlanToken(
+		rotating,
+		Date.now() + 60_000,
+		async () => {
+			const answer = plan;
+			plan = null;
+			return answer;
+		},
+		{ leadMs: 59_950, retryMs: 10, log: () => undefined },
+	);
+	await sleep(400);
+	const rotatingStarted = codexMachine.relays.at(-1)!;
+	const replaced = rotatingStarted.stdin.split("\n").filter(line => line.includes(nextAccess));
+	expect(
+		"when the token has the lead left, the current one is asked for and handed on the relay's standard input, once",
+		replaced.length === 1 && JSON.parse(replaced[0]!).token === nextAccess,
+		rotatingStarted.stdin.slice(-200),
+	);
+	expect(
+		"a plan that changed meanwhile gives no token, nothing more is handed, and its relay is stopped",
+		rotatingStarted.stdin.split("\n").filter(line => line.includes('"token"')).length === 2 &&
+			rotatingStarted.ended === true,
+	);
+	await rotated.close();
+
+	// Hosted Windlass on the ChatGPT plan: the same relay in the sandbox, on Windlass's routes, its file only the placeholder.
+	const windlassId = await w.sandboxes.create({ uid: "u1", sessionId: "s3", profile: "e2b" });
+	const windlassHandle = (await w.sandboxes.connect(windlassId)) as E2bSandboxHandle;
+	const windlassMachine = machines.at(-1)!;
+	const windlassRelay = await openModelKeyRelay(
+		windlassHandle,
+		"s3",
+		{ provider: "openai", plan: true, generation: "g1", harness: "windlass" },
+		undefined,
+		undefined,
+		async () => ({ secret: firstAccess, expiresAt: Date.now() + 30 * 60_000 }),
+	);
+	const windlassStarted = windlassMachine.relays.at(-1)!;
+	const windlassHanded = JSON.parse(windlassStarted.stdin.split("\n")[1] ?? "{}");
+	const planFile = turnTokenFilePath(windlassHandle);
+	await writePlanPlaceholder(windlassHandle, planFile, windlassRelay.placeholder, Date.now() + 3_600_000);
+	const fileWrite = windlassMachine.commands.find(c => c.command.includes(planFile) && c.stdin.includes("accessToken"));
+	const windlassEnv = windlassPlanEnv(windlassRelay, planFile);
+	expect(
+		"Windlass on the ChatGPT plan starts the relay in its sandbox on the chatgpt-plan wire for Windlass, at the /v1 base, and its token file holds only the placeholder",
+		windlassHanded.wire === "chatgpt-plan" &&
+			windlassHanded.harness === "windlass" &&
+			windlassHanded.token === firstAccess &&
+			windlassEnv.WINDLASS_MODEL_BASE_URL === "http://127.0.0.1:40123/v1" &&
+			windlassEnv.WINDLASS_PROVIDER === "chatgpt" &&
+			windlassEnv.WINDLASS_ACCESS_TOKEN_FILE === planFile &&
+			planFile.startsWith(DATA_DIR) &&
+			!!fileWrite &&
+			fileWrite.stdin.includes(windlassRelay.placeholder) &&
+			!windlassMachine.commands.some(c => c.stdin.includes(firstAccess) || c.command.includes(firstAccess)),
+		JSON.stringify({ wire: windlassHanded.wire, env: windlassEnv, file: !!fileWrite }),
+	);
+	await windlassRelay.close();
+	expect("the turn's end stops Windlass's plan relay", windlassStarted.ended === true);
+
+	const keyLease = await openModelKeyRelay(handle, "s1", {
+		provider: "anthropic",
+		generation: "g1",
+		harness: "claude",
+	});
+	expect(
+		"a Settings key still goes through the platform relay, with no relay in the sandbox",
+		keyLease.env.WINDLASS_MODEL_BASE_URL === `${relayOrigin}/model-relay` && machine.relays.length === 2,
+		keyLease.env.WINDLASS_MODEL_BASE_URL,
+	);
+	await keyLease.close();
+
+	// The plan's API is allowed in a Claude Code sandbox, out of `open`, so its relay can reach it; in no other.
+	for (const mode of ["restricted", "none"] as const) {
+		const network = readE2bNetwork({
+			WLP_E2B_NETWORK: mode,
+			WLP_MODEL_RELAY_URL: relayOrigin,
+			WLP_E2B_WINDLASS_VERSION: "0.7.1",
+		});
+		const n = world({ openProfile: true, modelRelayOrigin: relayOrigin, network, maxRunning: 10 });
+		const allowed = async (harness?: "claude" | "codex" | "opencode") => {
+			const made = await n.sandboxes.create({
+				uid: "u1",
+				sessionId: `s-${harness ?? "windlass"}`,
+				profile: harness ? "e2b-open" : "e2b",
+				...(harness && { harness }),
+			});
+			const made1 = n.fake.sandboxes.get(made)!.network?.allowOut ?? [];
+			await n.sandboxes.connect(made);
+			const made2 = n.fake.sandboxes.get(made)!.network?.allowOut ?? [];
+			return { made1, made2, meta: n.fake.sandboxes.get(made)!.metadata };
+		};
+		const claude = await allowed("claude");
+		expect(
+			`${mode}: a Claude Code sandbox may reach api.anthropic.com and the platform relay, at create and at each connect`,
+			claude.made1.includes("api.anthropic.com") &&
+				claude.made2.includes("api.anthropic.com") &&
+				claude.made1.includes("relay.example.com") &&
+				claude.meta[META.harness] === "claude",
+			claude.made2.join(","),
+		);
+		const codex = await allowed("codex");
+		const others = [codex, await allowed("opencode"), await allowed()];
+		expect(
+			`${mode}: no other agent's sandbox may`,
+			others.every(o => !o.made1.includes("api.anthropic.com") && !o.made2.includes("api.anthropic.com")) &&
+				others[2]!.meta[META.harness] === undefined,
+		);
+		const windlass = others[2]!;
+		expect(
+			`${mode}: a Codex or Windlass sandbox may reach api.openai.com for a ChatGPT plan's relay, and no other agent's may`,
+			[codex, windlass].every(o => o.made1.includes("api.openai.com") && o.made2.includes("api.openai.com")) &&
+				[claude, others[1]!].every(o => !o.made1.includes("api.openai.com")),
+			`${codex.made2.join(",")} | windlass: ${windlass.made2.join(",")}`,
+		);
+	}
+});
+
 await section("a sign-in that is forgotten", async () => {
 	const w = world({ maxRunning: 5 });
 	const one = await w.make("u1", "s1");
@@ -2832,43 +3157,6 @@ if (withDocker) {
 						);
 					}
 				}
-
-				// A turn that is not scripted is handed its user's token in a file. A stand-in for the engine says what it found and exits.
-				const standIn = new SandboxWindlass(tokens, layer.windlass, {
-					engineCommand: [
-						"sh",
-						"-c",
-						'echo "file=$WINDLASS_ACCESS_TOKEN_FILE mode=$(stat -c %a "$WINDLASS_ACCESS_TOKEN_FILE") holds=$(grep -c accessToken "$WINDLASS_ACCESS_TOKEN_FILE") $(cat "$WINDLASS_ACCESS_TOKEN_FILE")" >&2; exit 7',
-					],
-					tokenFile: { log: line => lines.push(line) },
-				});
-				await handle.run("setsid env -i /bin/sleep 600 </dev/null >/dev/null 2>&1 & echo $! > /tmp/prior-turn-pid");
-				const handed = await turn(handle, "Hello", undefined, { windlass: standIn });
-				expect(
-					"the guest sweep removes the previous turn's agent process and preserves the supervisor",
-					(await handle.run('! kill -0 "$(cat /tmp/prior-turn-pid)" 2>/dev/null')).exitCode === 0,
-				);
-				const tail = handed.result.stderrTail;
-				expect(
-					"a turn that is not scripted finds its user's access token in its sandbox's own file, readable by its owner only",
-					asked === 1 &&
-						tail.includes(`file=${tokenFilePath(id, DATA_DIR)} mode=600 holds=1`) &&
-						handed.result.failure?.reason === "engine",
-					tail.replace(TOKEN, "<the token>"),
-				);
-				expect(
-					"the token itself is taken out of what the turn gives back",
-					!tail.includes(TOKEN) &&
-						tail.includes("[access token removed]") &&
-						!JSON.stringify(handed.result).includes(TOKEN) &&
-						!lines.join("\n").includes(TOKEN),
-					`in the tail: ${tail.includes(TOKEN)}, marked: ${tail.includes("[access token removed]")}, in the result: ${JSON.stringify(handed.result).includes(TOKEN)}, in the log: ${lines.join("\n").includes(TOKEN)}`,
-				);
-				expect(
-					"and the file is gone when the turn has ended",
-					!(await handle.run(`ls ${DATA_DIR}`)).stdout.includes("access-token") &&
-						(await stray(container)).length === 0,
-				);
 
 				// Suspend, resume: E2B keeps the disk; here the container is paused and unpaused.
 				await layer.sandboxes.suspend(id);

@@ -1,6 +1,6 @@
 // The setup wizard end to end in its plain-line mode, with a fake Docker and a fake platform:
 // node --test scripts/runner-setup-wizard-check.mjs
-// It pairs, carries on after a failed and a skipped sign-in, starts the runner service itself with the
+// It pairs, signs in only OpenCode (Claude Code and Codex pay with the account's plans and keys), starts the runner service itself with the
 // flags built from the answers, offers the saved answers on a re-run, re-runs one section, and with no
 // terminal takes the defaults. WIZARD_RECORD=<dir> also keeps a transcript of each run there.
 import assert from "node:assert/strict";
@@ -15,7 +15,7 @@ async function record(name, text) {
 	if (process.env.WIZARD_RECORD) await writeFile(join(process.env.WIZARD_RECORD, name + ".txt"), text);
 }
 
-test("the setup wizard in lines pairs, carries on past a failed and a skipped sign-in, starts the runner and remembers its answers", async () => {
+test("the setup wizard in lines pairs, signs in only OpenCode, starts the runner and remembers its answers", async () => {
 	const m = await fakeMachine();
 	try {
 		const first = await m.terminal(
@@ -24,12 +24,9 @@ test("the setup wizard in lines pairs, carries on past a failed and a skipped si
 				["Set up this machine?", ""],
 				["Machine name [docker-desktop]", "Build box"],
 				["Numbers separated by commas", "1,2,3"],
-				["Claude Code: sign in now?", "2"],
 				["OpenCode: sign in now?", ""],
 				["OpenCode provider", "openai"],
 				["Enter the openai API key", secret],
-				["Codex: sign in now?", ""],
-				["Choose a method:", "3"],
 				["Which Docker profiles", ""],
 				["What may the agents", "2"],
 				["Public hosts commands may reach [@npm,@pypi,@github]", "@npm,example.com"],
@@ -39,21 +36,14 @@ test("the setup wizard in lines pairs, carries on past a failed and a skipped si
 		);
 		await record("lines-first-run", first.output.replaceAll(secret, "[key]"));
 		assert.equal(first.code, 0, first.output.replaceAll(secret, "[key]"));
-		assert.equal(first.answered, 14);
+		assert.equal(first.answered, 11);
 		assert.ok(!first.output.includes(secret));
 		assert.match(first.output, /docker-desktop" is the name of Docker's VM/);
 		assert.match(first.output, /2\. Enter {5}WXYZ-1210/);
 		assert.match(first.output, /3\. Check {5}the page shows machine key [A-Z0-9]{5}-[A-Z0-9]{5}/);
 		assert.match(first.output, /OpenCode: signed in\./);
-		assert.match(
-			first.output,
-			/Codex was not signed in: Choose 1 or 2\. Setup carries on\. Sign it in later with: docker exec -it windlass-runner windlass-runner login codex/,
-		);
-		assert.match(
-			first.output,
-			/Claude Code is not signed in\. Sign it in later with: docker exec -it windlass-runner windlass-runner login claude/,
-		);
-		assert.match(first.output, /Claude Code \(not signed in\), OpenCode \(signed in\), Codex \(sign-in failed\)/);
+		assert.doesNotMatch(first.output, /Claude Code: sign in|Codex: sign in|login claude|login codex/);
+		assert.match(first.output, /Claude Code, OpenCode \(signed in\), Codex/);
 		assert.match(first.output, /OK: Online/);
 		const runs = await m.serviceRuns();
 		assert.equal(runs.length, 1);
@@ -85,16 +75,14 @@ test("the setup wizard in lines pairs, carries on past a failed and a skipped si
 				["Pairing", ""],
 				["Machine name [Build box]", ""],
 				["Numbers separated by commas, 0 for none [1,2,3]", ""],
-				["Claude Code: sign in now?", "2"],
 				["OpenCode: signed in on this machine", ""],
-				["Codex: sign in now?", "2"],
 				["Which Docker profiles", ""],
 				["Only some public hosts - a list such as @npm,@pypi,@github,example.com  [default]", "q"],
 			],
 		);
 		await record("lines-rerun-cancel", again.output);
 		assert.equal(again.code, 1, again.output);
-		assert.equal(again.answered, 9);
+		assert.equal(again.answered, 7);
 		assert.match(again.output, /Keep this pairing \(m_b{16}\) {2}\[default\]/);
 		assert.match(again.output, /Setup cancelled\. Nothing more was changed\. The pairing is kept/);
 		assert.equal((await m.serviceRuns()).length, 1);
@@ -124,10 +112,7 @@ test("the setup wizard in lines pairs, carries on past a failed and a skipped si
 		const quick = await m.piped(["setup", "--quick"]);
 		await record("lines-quick-no-terminal", quick.output);
 		assert.equal(quick.code, 0, quick.output);
-		assert.match(
-			quick.output,
-			/Claude Code is not signed in: signing in needs a terminal\. Sign it in later with: docker exec -it windlass-runner windlass-runner login claude/,
-		);
+		assert.doesNotMatch(quick.output, /sign in|signing in/i);
 		assert.doesNotMatch(quick.output, /Machine name|Which Docker profiles|What may the agents|Limits:/);
 		assert.equal((await m.serviceRuns()).length, 3);
 		assert.deepEqual(m.asked, ["/runner/pair", "/runner/pair/poll"]);

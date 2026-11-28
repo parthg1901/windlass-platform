@@ -12,7 +12,7 @@ import { docker } from "../server/src/sandbox/docker.js";
 import { BodyBudget, RelayLimiter, UserRate, openRelayLease } from "../server/src/sandbox/relay-leases.js";
 import { DockerSandboxHandle } from "../server/src/sandbox/sandboxes.js";
 import { SandboxWindlass } from "../server/src/sandbox/turn.js";
-import { serverSealer } from "../server/src/signin/seal.js";
+import { sealCredentialTransit } from "../server/src/credentials/transit.js";
 import { reportedModelUsage } from "../server/src/usage.js";
 import { imageId } from "./check-image.js";
 
@@ -74,10 +74,7 @@ const uid = "key-check",
 const id = randomBytes(6).toString("hex");
 const bridge = "wlp-key-check-" + id;
 const box = new DockerSandboxHandle(id, "docker-hardened", uid);
-const agent = new SandboxWindlass(
-	{ current: async () => assert.fail("requested ChatGPT credentials") },
-	{ version: async () => null, problem: async () => null },
-);
+const agent = new SandboxWindlass({ version: async () => null, problem: async () => null });
 const keys = Object.fromEntries(MODEL_PROVIDERS.map(p => [p, randomBytes(24).toString("hex")]));
 const origin = "http://127.0.0.1:17893";
 let provider: ModelProvider = "openai",
@@ -128,14 +125,10 @@ const deps: RelayRouteDeps = {
 	bodies: new BodyBudget(),
 	rate: new UserRate(),
 	now: Date.now,
-	key: async (owner, p, nonce) => {
+	credential: async (owner, ref, nonce) => {
 		assert.equal(owner, uid);
-		assert.equal(p, provider);
-		return serverSealer().seal(
-			"transit",
-			JSON.stringify(["model-key", uid, p, nonce]),
-			JSON.stringify({ key: keys[p], generation: "first", exp: Date.now() + 60_000 }),
-		);
+		assert.deepEqual(ref, { provider });
+		return sealCredentialTransit(uid, ref, nonce, { secret: keys[ref.provider], generation: "first" });
 	},
 	fetch: async (input, init) => {
 		const url = String(input);
@@ -283,7 +276,7 @@ try {
 	}
 	for (provider of MODEL_PROVIDERS) {
 		const input = { prompt: "Say Hello.", model: provider + "/" + models[provider] };
-		await assert.rejects(agent.runTurn(handle, input), /key in Settings/);
+		await assert.rejects(agent.runTurn(handle, input), /key (?:in Settings|on the Connections page)/);
 		const spending: number[] = [];
 		const receipts: string[] = [];
 		const result = await agent.runTurn(handle, {

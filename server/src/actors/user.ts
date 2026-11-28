@@ -17,7 +17,6 @@ import { checkRunPlace, changesPlace, changedPlace, hasRoom, placeProblem } from
 import type {
 	AccountDefaultsPatch,
 	ContinueSessionInput,
-	CredentialSource,
 	ItemPlaceDefaults,
 	RepositoryDefaultsPatch,
 } from "../contract.js";
@@ -28,7 +27,7 @@ import { mayUse } from "../access.js";
 import { githubId, isGithubId } from "../github/ids.js";
 import type { MachineUpdate } from "./machine.js";
 import { accountLimits, changeUserLimit, limitsSubject, type LimitAuditRow, type LimitChange } from "../user-limits.js";
-import { loginGeneration, recordProviderUsage, type AccountLocation } from "./provider-accounts.js";
+import { loginGeneration, moveWindlassLimits, recordProviderUsage, type AccountLocation } from "./provider-accounts.js";
 import type { UsageObservation } from "../provider-usage.js";
 import {
 	changed as machinesChanged,
@@ -41,7 +40,6 @@ import {
 	machineActions,
 	machineSecrets,
 	machineTables,
-	credentialSource,
 } from "./user-machines.js";
 import { keptFull, makeSandboxRoom } from "./user/kept-sandboxes.js";
 import {
@@ -95,6 +93,11 @@ import {
 	type AccountSettings,
 	type CreateSessionInput,
 	type GithubBranchList,
+	type PayWithChoice,
+	type PayWithPatch,
+	isPlanProvider,
+	type RelaySeen,
+	type StarterIssue,
 	type GithubRepository,
 	type GithubRepositoryList,
 	type GithubStatus,
@@ -107,6 +110,8 @@ import {
 	MAX_SERVER_DEFINITION_BYTES,
 	MAX_TITLE_CHARS,
 	type ModelProvider,
+	type ModelPlanStatus,
+	type PlanProvider,
 	MAX_SECRETS_PER_REPOSITORY,
 	type RepositoryApproval,
 	type RepositoryCheck,
@@ -165,6 +170,7 @@ import {
 	type StoredConnection,
 	listBranches,
 	listRepositories,
+	listStarterIssues,
 	resolveBoundRepository,
 	resolveRepository,
 } from "../github/repos.js";
@@ -185,7 +191,7 @@ import {
 	hostedCatalog,
 	hostedHarness,
 	hostedKeyMessage,
-	hostedProvider,
+	hostedPayer,
 	availableCatalog,
 	itemHarnessProblem,
 	itemProfileProblem,
@@ -198,7 +204,12 @@ import {
 	sessionCapabilities,
 } from "../sandbox/harnesses.js";
 import { AccountModels, MODELS_TABLE, checkItemEffort, chosenModel, standInModels } from "../account-models.js";
-import { MODEL_PROVIDER_TABLES, modelProviderActions, providerStatuses } from "../model-providers.js";
+import { modelProviderActions } from "../credentials/keys.js";
+import { CREDENTIAL_TABLES, credentialActions, hostedCredentials } from "../credentials/index.js";
+import { PAY_WITH_TABLE, PayWithProblem, payWithPatchOf, readPayWith, savePayWith } from "../pay-with.js";
+import { PAY_ONCE_TABLE, type PayerAnswer, turnPayer, useKeyOnce } from "./user-payer.js";
+import { planReading, relaySeenOf } from "../credentials/plan-health.js";
+import { MODEL_PLAN_COLUMNS, moveSignInToPlan, observePlan, planStatuses } from "../credentials/plans.js";
 import {
 	ACCOUNT_SECRETS_TABLE,
 	ACCOUNT_SECRET_PROJECT,
@@ -344,7 +355,7 @@ import {
 	userActor,
 } from "./internal.js";
 import { boundedText, type UserVars, type UserCtx } from "./user/state.js";
-import { modelInput, modelsOf, signinActions, writeActorProfile, type ModelsCtx } from "./user/signin.js";
+import { chatgptPlan, modelInput, modelsOf, signinActions, writeActorProfile, type ModelsCtx } from "./user/signin.js";
 import { readUsage, sizesOf, queueOverageReport, usageActions } from "./user/usage.js";
 export { itemSharing, readUsage } from "./user/usage.js";
 
@@ -370,6 +381,17 @@ function sessionList(vars: UserVars): SessionSummary[] {
 	return listedSessions([...vars.sessions.values()]).sort(
 		(a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : -1),
 	);
+}
+
+/** A key or plan was saved or removed: machines, the queue and items waiting on a provider see it. */
+async function credentialsChanged(
+	c: Parameters<typeof machinesChanged>[0] &
+		Parameters<typeof notifyProviderWaits>[0] &
+		Parameters<typeof queueChanged>[0],
+): Promise<void> {
+	await machinesChanged(c);
+	queueChanged(c);
+	await notifyProviderWaits(c, c.vars.items.items.values(), "settings");
 }
 
 function broadcastSessions(c: UserCtx): void {
@@ -1244,7 +1266,7 @@ async function makeSession(
 
 	let summary: SessionSummary;
 	try {
-		const machine = place.kind === "machine" ? await launchMachineProfiles(c.db, place.machineId) : null;
+		const machine = place.kind === "machine" ? await launchMachineProfiles(c.db, c.key[0]!, place.machineId) : null;
 		if (size > 1 && !machine?.slots)
 			throw new UserError("Choose a machine reporting slots for a large sandbox.", { code: "bad_input" });
 		if (repoUrl && machine?.egress === "none") throw new UserError(OFFLINE_REPOSITORY, { code: "bad_input" });
@@ -1253,10 +1275,6 @@ async function makeSession(
 		const offered = machine?.harnesses?.find(entry => entry.id === harness);
 		if (acp && machine && !offered)
 			throw new UserError(`This machine does not offer ${acp.name}.`, { code: "bad_input" });
-		if (item?.payer && offered && item.payer !== (offered.source ?? "machine"))
-			throw new UserError("The selected payer changed before launch. Restore it or choose a new placement.", {
-				code: "bad_input",
-			});
 		// A work item is not watched: one filed on a machine whose agent is not known to be signed in would only fail at its first turn.
 		const signedOut =
 			item && acp && offered ? itemSignInMessage(acp, machine?.name ?? "your machine", offered.signIn) : null;
@@ -1290,13 +1308,9 @@ async function makeSession(
 		if (offered?.optionsDigest && !catalog)
 			throw new UserError("The machine’s current model list could not be read. Try again.", { code: "bad_input" });
 		// A hosted agent's own model list comes from the Settings keys' checks (`hostedCatalog`).
-		const providers = place.kind === "hosted" && caps.models === "harness" ? await providerStatuses(c.db) : undefined;
-		const options = providers
-			? hostedCatalog(
-					harness,
-					providers.filter(p => p.ok),
-				)
-			: availableCatalog(catalog ?? undefined, offered);
+		const credentials =
+			place.kind === "hosted" && caps.models === "harness" ? await hostedCredentials(c.db, c.key[0]!) : undefined;
+		const options = credentials ? hostedCatalog(harness, credentials) : availableCatalog(catalog ?? undefined, offered);
 		// Where its commands run in its own sandbox, the machine must have probed that sandbox's modes.
 		if (profileModes && acp.sandboxedOn.includes(chosen.id) && !offered?.modes?.includes("workspace-write"))
 			throw new UserError(offered?.modeReason ?? innerModesReason, { code: "bad_input" });
@@ -1323,15 +1337,7 @@ async function makeSession(
 					? standInModels("demo")
 					: await modelsOf(c, profile.demo);
 		const model = modelInput(() => chosenModel(models, input.model), options && machine ? "bad_input" : undefined);
-		if (
-			providers &&
-			acp &&
-			!hostedProvider(
-				acp.id,
-				model,
-				providers.filter(p => p.ok).map(p => p.provider),
-			)
-		)
+		if (credentials && acp && !hostedPayer(acp.id, model, credentials))
 			throw new UserError(hostedKeyMessage(harness, model), { code: "harness_signed_out" });
 		// An item's effort runs every turn, unwatched: only one its agent reported is taken.
 		if (item?.effort !== undefined)
@@ -1406,8 +1412,8 @@ async function makeSession(
 							...(size > 1 && { size }),
 							...(item.effort && { effort: item.effort }),
 							...(offered && {
-								payer: offered.source ?? "machine",
-								payerSource: offered.source ? ("account" as const) : ("deployment" as const),
+								payer: "machine" as const,
+								payerSource: "deployment" as const,
 							}),
 							...(itemSignIn && { signIn: itemSignIn }),
 						},
@@ -1904,7 +1910,7 @@ async function loadUserState(c: { key: string[]; db: RawAccess }): Promise<UserV
 		if (key !== null && sent !== null) created.set(key, { key, sent, id: parsed.id });
 	}
 	// An actor that holds a sign-in is a user's, also before that user's own token was seen here.
-	const [held] = await c.db.execute<{ id: number }>("SELECT id FROM signin WHERE id = 1");
+	const [held] = await c.db.execute<{ provider: string }>("SELECT provider FROM model_plan WHERE provider = 'openai'");
 	const [connected] = await c.db.execute<{ connection: string }>("SELECT connection FROM github WHERE id = 1");
 	const github = connected ? (JSON.parse(connected.connection) as StoredConnection) : null;
 	const approvals = new ApprovalBook(await readApprovals(c.db), config.serverApprovalTtlMs);
@@ -1931,7 +1937,7 @@ async function loadUserState(c: { key: string[]; db: RawAccess }): Promise<UserV
 		checkout: new AccountCheckout(),
 		keptGeneration: 0,
 		listed: null,
-		machines: new Map((await listMachines({ db: c.db, vars: { sessions } })).map(m => [m.machineId, m])),
+		machines: new Map((await listMachines({ db: c.db, key: c.key, vars: { sessions } })).map(m => [m.machineId, m])),
 		items,
 	};
 }
@@ -1965,18 +1971,8 @@ export const user = actor({
 					launch_claim INTEGER
 				)
 			`);
-			await db.execute(`
-				CREATE TABLE IF NOT EXISTS signin (
-					id INTEGER PRIMARY KEY CHECK (id = 1),
-					sealed TEXT,
-					generation INTEGER NOT NULL,
-					short_noted INTEGER NOT NULL,
-					updated_at INTEGER NOT NULL
-				)
-			`);
-			await db.execute(
-				"CREATE TABLE IF NOT EXISTS model_attempt (id INTEGER PRIMARY KEY CHECK(id=1), sealed TEXT NOT NULL, expires INTEGER NOT NULL, generation INTEGER NOT NULL)",
-			);
+			// The in-page ChatGPT sign-in's pending attempt. One-time: remove after the first deploy that runs it.
+			await db.execute("DROP TABLE IF EXISTS model_attempt");
 			// Only installation metadata is stored here. Each GitHub request uses its own scoped token.
 			await db.execute(`
 				CREATE TABLE IF NOT EXISTS github (
@@ -2039,7 +2035,9 @@ export const user = actor({
 			await db.execute(MODELS_TABLE);
 			await db.execute(PERSONAL_SERVERS_TABLE);
 			await db.execute(ACCOUNT_SECRETS_TABLE);
-			for (const table of MODEL_PROVIDER_TABLES) await db.execute(table);
+			for (const table of CREDENTIAL_TABLES) await db.execute(table);
+			await db.execute(PAY_WITH_TABLE);
+			await db.execute(PAY_ONCE_TABLE);
 			await db.execute(
 				"CREATE TABLE IF NOT EXISTS requested_secret_receipt (session_id TEXT PRIMARY KEY, request_id TEXT NOT NULL)",
 			);
@@ -2054,7 +2052,6 @@ export const user = actor({
 			);
 			for (const [table, column, definition] of [
 				["readiness", "diagnosis", "TEXT"],
-				["model_attempt", "attempt_id", "TEXT"],
 				["token_generation", "disconnected", "INTEGER NOT NULL DEFAULT 0"],
 				["token_generation", "disconnect_job", "TEXT"],
 				["sessions", "disconnect_pending", "INTEGER NOT NULL DEFAULT 0"],
@@ -2062,6 +2059,7 @@ export const user = actor({
 				["sessions", "launch_claim", "INTEGER"],
 				["setup_command", "snapshot_connection", "INTEGER"],
 				["model_provider", "windlass_models", "TEXT"],
+				...MODEL_PLAN_COLUMNS,
 			] as const) {
 				const columns = await db.execute<{ name: string }>(`PRAGMA table_info(${table})`);
 				if (columns.some(found => found.name === column)) continue;
@@ -2073,6 +2071,8 @@ export const user = actor({
 					);
 				}
 			}
+			// One-time: remove after the first deploy that runs it.
+			await moveSignInToPlan(db);
 			// Where a post-setup snapshot of a project was last saved (`internalSnapshotSaved`), for placement's snapshot bonus.
 			await db.execute(
 				"CREATE TABLE IF NOT EXISTS snapshot_place (project TEXT NOT NULL, place TEXT NOT NULL, saved_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, connected_at INTEGER NOT NULL, PRIMARY KEY (project, place))",
@@ -2138,6 +2138,8 @@ export const user = actor({
 			}
 			await db.execute("CREATE TABLE IF NOT EXISTS kept_sandbox (session TEXT PRIMARY KEY, since INTEGER NOT NULL)");
 			await machineTables(db);
+			// Windlass's ChatGPT limits are the ChatGPT plan's now (provider-accounts.ts `accountLocation`). One-time: remove after the first deploy that runs it.
+			await moveWindlassLimits(db);
 			await billingTables(db);
 		},
 	}),
@@ -2176,7 +2178,6 @@ export const user = actor({
 		await dropHostedSnapshots(c.key[0]);
 	},
 	onWake: async c => {
-		await c.db.execute("DELETE FROM model_attempt WHERE attempt_id IS NULL OR expires<=?", Date.now());
 		queueOverageReport(c);
 		if (c.vars.profile)
 			void c.keepAwake(
@@ -2285,7 +2286,9 @@ export const user = actor({
 		machineCatalog: machineActions.machineCatalog,
 		claimMachine: machineActions.claimMachine,
 		confirmMachine: machineActions.confirmMachine,
+		denyMachine: machineActions.denyMachine,
 		removeMachine: machineActions.removeMachine,
+		removeMachineClaudeLogin: machineActions.removeMachineClaudeLogin,
 		internalProviderGeneration: (c, location: AccountLocation) => {
 			requireServiceFor(c, "call");
 			return loginGeneration(c.db, location);
@@ -2299,6 +2302,11 @@ export const user = actor({
 				queueChanged(c);
 			}
 		},
+		/** A connected plan's status and window snapshot (a turn's share of the plan is the snapshots' difference). */
+		internalPlanStatus: async (c, provider: PlanProvider): Promise<ModelPlanStatus | null> => {
+			requireServiceFor(c, "call");
+			return (await planStatuses(c.db)).find(plan => plan.provider === provider) ?? null;
+		},
 		internalPlacementInventory: async (c, repositories: Record<string, GithubId>, snapshot?: GithubId) => {
 			requireService(c);
 			return {
@@ -2309,12 +2317,6 @@ export const user = actor({
 		setMachineDetails: (c, input: { machineId: string; whenToUse: string; tags: string[] }) =>
 			machineActions.setMachineDetails(c, input),
 		setMachineSecrets: machineActions.setMachineSecrets,
-		setCredentialSource: async (c, input: { machineId: string; harness: string; source: CredentialSource }) => {
-			const machines = await machineActions.setCredentialSource(c, input);
-			queueChanged(c);
-			await notifyProviderWaits(c, c.vars.items.items.values(), "settings");
-			return machines;
-		},
 		internalMachineCreated: machineActions.internalMachineCreated,
 		internalMachineSystem: async (c, id: string): Promise<{ os: string; arch: string } | null> => {
 			requireServiceFor(c, "call");
@@ -2352,6 +2354,7 @@ export const user = actor({
 		internalApiItemAttachment: itemActions.internalApiItemAttachment,
 		listItems: (c, page?: ItemListPage): ItemSummary[] => itemActions.listItems(c, page),
 		itemFeed: itemActions.itemFeed,
+		finishedItems: itemActions.finishedItems,
 		item: itemActions.item,
 		internalSessionForPull: (
 			c,
@@ -2538,9 +2541,6 @@ export const user = actor({
 			requireUser(c);
 			return openUserGitlab(c);
 		},
-		startChatgpt: signinActions.startChatgpt,
-		expireModelAttempt: signinActions.expireModelAttempt,
-		finishChatgpt: signinActions.finishChatgpt,
 		chatgpt: signinActions.chatgpt,
 		forgetChatgpt: signinActions.forgetChatgpt,
 		models: signinActions.models,
@@ -2655,6 +2655,7 @@ export const user = actor({
 		internalRetryOverage: usageActions.internalRetryOverage,
 		internalBillingEvent: usageActions.internalBillingEvent,
 		usage: usageActions.usage,
+		costRates: usageActions.costRates,
 		freeSandbox: usageActions.freeSandbox,
 
 		github: (c): GithubStatus => {
@@ -2773,6 +2774,19 @@ export const user = actor({
 				return await listBranches(app, connection, repositoryId);
 			} catch (error) {
 				throw githubError(c.log, error, "The repository's branches could not be listed. Try again.");
+			}
+		},
+
+		githubStarterIssues: async (c, repositoryId: GithubId): Promise<StarterIssue[]> => {
+			requireUser(c);
+			const app = requireGithub();
+			const connection = requireConnection(c);
+			if (!isGithubId(repositoryId))
+				throw new UserError("Choose one of the listed repositories.", { code: "bad_input" });
+			try {
+				return await listStarterIssues(app, connection, repositoryId);
+			} catch (error) {
+				throw githubError(c.log, error, "The repository's issues could not be listed. Try again.");
 			}
 		},
 
@@ -3821,27 +3835,91 @@ export const user = actor({
 		modelProviders: c => modelProviderActions.modelProviders(c),
 		saveModelProvider: async (c, input: { provider: ModelProvider; key: string }) => {
 			const saved = await modelProviderActions.saveModelProvider(c, input);
-			await machinesChanged(c);
-			queueChanged(c);
-			await notifyProviderWaits(c, c.vars.items.items.values(), "settings");
+			await credentialsChanged(c);
 			return saved;
 		},
 		checkModelProvider: (c, provider: ModelProvider) => modelProviderActions.checkModelProvider(c, provider),
 		removeModelProvider: async (c, provider: ModelProvider) => {
 			await modelProviderActions.removeModelProvider(c, provider);
-			await machinesChanged(c);
-			queueChanged(c);
-			await notifyProviderWaits(c, c.vars.items.items.values(), "settings");
+			await credentialsChanged(c);
 		},
 		internalModelKeys: c => modelProviderActions.internalModelKeys(c),
-		internalCredentialSource: async (c, machineId: string, harness: string): Promise<CredentialSource | null> => {
-			requireServiceFor(c, modelKeyCaller(c.key[0]!));
-			return credentialSource(c.db, machineId, harness);
+		internalCredentialGeneration: (c, ref: unknown, onMachine?: boolean) =>
+			credentialActions.internalCredentialGeneration(c, ref, onMachine === true),
+		internalCredential: (c, ref: unknown, nonce: string, onMachine?: boolean) =>
+			credentialActions.internalCredential(c, ref, nonce, chatgptPlan(c), onMachine === true),
+
+		modelPlans: c => credentialActions.modelPlans(c),
+		approvePlanConnect: (c, userCode: string, provider: PlanProvider) =>
+			credentialActions.approvePlanConnect(c, userCode, provider),
+		denyPlanConnect: (c, userCode: string) => credentialActions.denyPlanConnect(c, userCode),
+		removeModelPlan: async (c, provider: PlanProvider) => {
+			await credentialActions.removeModelPlan(c, provider, chatgptPlan(c));
+			await credentialsChanged(c);
 		},
-		internalModelKeyGeneration: (c, provider: ModelProvider) =>
-			modelProviderActions.internalModelKeyGeneration(c, provider),
-		internalModelKey: (c, provider: ModelProvider, nonce: string) =>
-			modelProviderActions.internalModelKey(c, provider, nonce),
+		recheckModelPlan: async (c, provider: PlanProvider) => {
+			const plan = await credentialActions.recheckModelPlan(c, provider, chatgptPlan(c));
+			await credentialsChanged(c);
+			return plan;
+		},
+		internalPlanModels: (c, ref: unknown, ids: unknown) => credentialActions.internalPlanModels(c, ref, ids),
+		internalConnectPlan: async (c, provider: PlanProvider, digest: string, sealed: string) => {
+			const plan = await credentialActions.internalConnectPlan(c, provider, digest, sealed, chatgptPlan(c));
+			await credentialsChanged(c);
+			return plan;
+		},
+
+		payWith: async (c): Promise<PayWithChoice[]> => {
+			requireUser(c);
+			return readPayWith(c.db);
+		},
+		savePayWith: async (c, input: PayWithPatch): Promise<PayWithChoice[]> => {
+			const profile = requireUser(c);
+			let patch: PayWithPatch;
+			try {
+				patch = payWithPatchOf(input);
+			} catch (error) {
+				if (error instanceof PayWithProblem) throw new UserError(error.message, { code: "bad_input" });
+				throw error;
+			}
+			try {
+				const saved = await savePayWith(c.db, patch);
+				console.log(
+					`[wlp] paywith.saved uid=${profile.uid} harness=${patch.harness} pay=${patch.payWith} limited=${patch.whenLimited ?? "default"}`,
+				);
+				// Items waiting for a plan may run on the key now, or the other way round.
+				queueChanged(c);
+				return saved;
+			} catch (error) {
+				throw clientError(c.log, error, "Your choice could not be saved. Try again.");
+			}
+		},
+
+		useKeyNow: async (c, itemId: string): Promise<void> => {
+			requireUser(c);
+			const item = typeof itemId === "string" ? c.vars.items.items.get(itemId) : undefined;
+			if (!item?.wait?.plan?.keyNow || !(await useKeyOnce(c, item.sessionId)))
+				throw new UserError("No saved key can pay for this item's turn now.", { code: "bad_input" });
+			console.log(`[wlp] paywith.key_now uid=${c.key[0]} item=${itemId}`);
+			queueChanged(c);
+		},
+		/** Pay with at a turn's start (user-payer.ts); null for a turn the rule does not decide. */
+		internalTurnPayer: async (
+			c,
+			input: { sessionId: string; model: string; keyOnce?: boolean; machine?: boolean },
+		): Promise<PayerAnswer | null> => {
+			requireServiceFor(c, "call");
+			return turnPayer(c, input.sessionId, input.model, input.keyOnce === true, input.machine === true);
+		},
+		/** What a plan's relay saw the provider say of it (credentials/plan-health.ts), while it is at `generation`. */
+		internalObservePlan: async (c, provider: PlanProvider, generation: string, seen: RelaySeen): Promise<void> => {
+			requireServiceFor(c, modelKeyCaller(c.key[0]!));
+			const seenOf = relaySeenOf(seen);
+			if (!isPlanProvider(provider) || typeof generation !== "string" || !seenOf) return;
+			const before = (await planStatuses(c.db)).find(plan => plan.provider === provider);
+			const after = await observePlan(c.db, provider, generation, planReading(provider, seenOf, Date.now()));
+			if (after && (after.health !== before?.health || after.limitedUntil !== before?.limitedUntil)) queueChanged(c);
+		},
 
 		accountSecrets: async (c, input: { profile: string }): Promise<AccountSecrets> => {
 			requireUser(c);

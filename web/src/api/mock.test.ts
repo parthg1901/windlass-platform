@@ -251,8 +251,10 @@ describe("signing in", () => {
 		expect(result.profile).toEqual({ uid: "u_ada", email: "ada@example.com", demo: false });
 		const user = client.user(result);
 		expect(await after(500, user.chatgpt())).toMatchObject({ connected: false });
-		const plan = await user.startChatgpt();
-		await user.finishChatgpt(plan.redirectPrefix + "?code=plan&state=" + new URL(plan.url).searchParams.get("state"));
+		// Approving the connect command's code connects the ChatGPT plan a few seconds later.
+		await after(500, user.approvePlanConnect("KQ2M-8XF4", "openai"));
+		expect(await after(500, user.chatgpt())).toMatchObject({ connected: false });
+		await vi.advanceTimersByTimeAsync(3000);
 		expect(await after(500, user.chatgpt())).toMatchObject({ connected: true });
 		await user.forgetChatgpt();
 		expect(await after(500, user.me())).toEqual(result.profile);

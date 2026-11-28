@@ -534,13 +534,13 @@ test("a wildcard on a public suffix is refused, with the reason", async () => {
 });
 
 test("the welcome names the platform's git host to a runner that reads it, and the list takes it", async () => {
-	const { GIT_HOST_RUNNER_VERSION, MIN_RUNNER_VERSION, parseServerFrame, welcomeCapabilities } = await import(
+	const { GIT_HOST_RUNNER_VERSION, parseServerFrame, welcomeCapabilities } = await import(
 		"../server/src/runner/control.js"
 	);
 	assert.equal(welcomeCapabilities(GIT_HOST_RUNNER_VERSION, "https://git.example.com").gitHost, "git.example.com");
 	assert.equal(welcomeCapabilities("1.0.0", "https://GitHub.com/").gitHost, "github.com");
 	assert.equal(
-		"gitHost" in welcomeCapabilities(MIN_RUNNER_VERSION, "https://git.example.com"),
+		"gitHost" in welcomeCapabilities("0.2.0", "https://git.example.com"),
 		false,
 		"an older runner refuses unknown keys",
 	);

@@ -21,6 +21,7 @@
  */
 
 import { loginHttp } from "./login-http.js";
+import { connectChatgpt } from "./chatgpt-connect.js";
 import { imageId } from "./check-image.js";
 import { localListeners, portFree } from "./check-listeners.js";
 import { type ChildProcess, execFile, execFileSync, spawn, spawnSync } from "node:child_process";
@@ -196,6 +197,10 @@ class Server {
 			...process.env,
 			WLP_DEMO: "1",
 			WLP_SANDBOX: MODE,
+			// Hosted Windlass's ChatGPT models pay with the ChatGPT plan, which WLP_PLAN_USERS gates. Its catalog check at
+			// connect is refused locally: no check sends a fake token to OpenAI.
+			WLP_PLAN_USERS: process.env.WLP_PLAN_USERS ?? "*",
+			WLP_OPENAI_BASE_URL: process.env.WLP_OPENAI_BASE_URL ?? "http://127.0.0.1:9",
 			...(sandboxImage && { WLP_SANDBOX_IMAGE: sandboxImage }),
 			WLP_SECRET: this.secret,
 			RIVETKIT_STORAGE_PATH: this.storage,
@@ -702,9 +707,9 @@ async function identityChecks(client: Client, server: Server, github: GithubStan
 	await check("ChatGPT connects to the authenticated uid only", async () => {
 		const auth = await signIn("my-sub");
 		const user = userOf(auth);
-		await refused(() => client.user.get([auth.profile.uid]).startChatgpt(), "unauthorized");
-		const plan = await user.startChatgpt();
-		await user.finishChatgpt(plan.redirectPrefix + "?code=plan");
+		await refused(() => client.user.get([auth.profile.uid]).approvePlanConnect("KQ2M-8XF4", "openai"), "unauthorized");
+		const { fakeSignInFiles } = await import("../server/src/sandbox-fake.js");
+		await connectChatgpt(API, user, { files: fakeSignInFiles("plan") });
 		assert((await user.chatgpt()).email === "plan@example.com", "model grant missing");
 		assert(
 			(await user.me()).uid === "u_owner" && (await user.me()).email === auth.profile.email,
@@ -715,10 +720,6 @@ async function identityChecks(client: Client, server: Server, github: GithubStan
 			!(await user.chatgpt()).connected && (await user.me()).uid === "u_owner",
 			"disconnect changed platform session",
 		);
-		const racing = await user.startChatgpt();
-		await Promise.allSettled([user.finishChatgpt(racing.redirectPrefix + "?code=racing"), user.forgetChatgpt()]);
-		assert(!(await user.chatgpt()).connected, "in-flight completion restored a disconnected plan");
-		await refused(() => user.finishChatgpt(racing.redirectPrefix + "?code=racing"), "attempt_expired");
 		return "model grant attached and removed, same uid and session";
 	});
 
@@ -3343,15 +3344,17 @@ async function main(server: Server | null): Promise<void> {
 			"the fake layer's token source: no token without a sign-in, one request per user at a time, a fresh answer reused, a new sign-in's token after adopt",
 			async () => {
 				// The layer itself, beside the server's, with the users' sign-ins kept in this process: what the actors' turns ask before they start.
-				const { createFakeSandboxLayer } = await import("../server/src/sandbox-fake.js");
+				const { createFakeSandboxLayer, fakeSignInFiles } = await import("../server/src/sandbox-fake.js");
 				const { SandboxUserError } = await import("../server/src/sandbox/api.js");
 				const { SignInRefreshError } = await import("../server/src/sandbox/handoff.js");
 				const fake = createFakeSandboxLayer({ signIns: "memory" });
+				// As the connect route hands the user's actor an uploaded sign-in.
 				const signIn = async (uid: string, code: string) => {
-					const id = attempt();
-					const started = await fake.logins.start(id);
-					const finished = await fake.logins.finish(id, started.attempt, `${started.redirectPrefix}?code=${code}`);
-					await fake.logins.adopt(id, finished.attempt, uid);
+					const directory = fake.signIns!;
+					await directory.adopt(
+						uid,
+						directory.sealer.seal("user", uid, JSON.stringify({ files: fakeSignInFiles(code) })),
+					);
 				};
 				const refusal = async (uid: string) =>
 					fake.tokens.current(uid).then(
@@ -3430,8 +3433,8 @@ async function main(server: Server | null): Promise<void> {
 			const { issueUserToken } = await import("../server/src/tokens.js");
 			const auth = { profile, token: issueUserToken(profile, 0) };
 			const user = client.user.getOrCreate([profile.uid], { params: { token: auth.token } });
-			const plan = await user.startChatgpt();
-			await user.finishChatgpt(plan.redirectPrefix + "?" + new URLSearchParams({ code }));
+			const { fakeSignInFiles } = await import("../server/src/sandbox-fake.js");
+			await connectChatgpt(API, user, { files: fakeSignInFiles(code) });
 			return auth;
 		};
 
@@ -3555,12 +3558,13 @@ async function main(server: Server | null): Promise<void> {
 				const eve = await connectPlan("brief");
 				const uidOfEve = eve.profile.uid;
 				const user = client.user.getOrCreate([uidOfEve], { params: { token: eve.token } });
+				// Connecting the ChatGPT plan checks its catalog with a current token: the brief one is refreshed then, once.
 				const before = await user.chatgpt();
 				assert(
 					before.connected &&
 						typeof before.accessExpiresAt === "number" &&
-						before.accessExpiresAt - Date.now() < 2 * 60_000,
-					`the sign-in's saved token is not about to run out: ${plain(before)}`,
+						before.accessExpiresAt - Date.now() > 55 * 60_000,
+					`connecting did not refresh the sign-in's brief token: ${plain(before)}`,
 				);
 
 				// Only servers may ask the actor for the sign-in or its token: the user's own token is refused, and so is everyone else's.
@@ -3610,7 +3614,7 @@ async function main(server: Server | null): Promise<void> {
 						);
 						assert(
 							linesOf("sign-in.refreshed").length === 1,
-							`three turns at once refreshed the sign-in ${linesOf("sign-in.refreshed").length} times`,
+							`connecting and three turns at once refreshed the sign-in ${linesOf("sign-in.refreshed").length} times`,
 						);
 					}
 
@@ -3639,14 +3643,11 @@ async function main(server: Server | null): Promise<void> {
 
 					await user.forgetChatgpt();
 					assert((await user.chatgpt()).connected === false, "a forgotten sign-in is still reported");
-					// A session that ran a moment ago takes the prompt (it asks who is signed in only now and then): its turn is handed nothing and ends by saying so.
-					await watches[1]!.conn.prompt({ text: "hello again" });
-					const unsigned = await watches[1]!.untilEnded(2);
+					// Each prompt pins the ChatGPT plan: a session that ran a moment ago is refused before a turn starts too.
+					const unsigned = await refused(() => watches[1]!.conn.prompt({ text: "hello again" }), "chatgpt_required");
 					assert(
-						unsigned.outcome === "error" &&
-							/sign in with chatgpt again/i.test(unsigned.message ?? "") &&
-							watches[1]!.items.filter(item => item.kind === "windlass" && item.turn === 2).length === 0,
-						`a turn after the sign-in was forgotten ended ${plain(unsigned)}`,
+						watches[1]!.items.filter(item => item.kind === "windlass" && item.turn === 2).length === 0,
+						"a turn started after the sign-in was forgotten",
 					);
 					if (server)
 						assert(linesOf("token.handed").length === 4, "a turn was handed a token of a sign-in that was forgotten");
@@ -3685,7 +3686,7 @@ async function main(server: Server | null): Promise<void> {
 								? `${files} files of actor data read: sealed sign-ins in ${sealed}, a token in none`
 								: `${files} files of actor data read: a token in none (and no sealed blob was found as text either, so the engine's files may not be readable this way)`;
 					}
-					return `3 turns at once: one refresh; after the actor's sleep: no second one; forgotten: a running session's turn ends "${unsigned.message}", a new one is refused "${message}"; ${stored}`;
+					return `connect and 3 turns at once: one refresh; after the actor's sleep: no second one; forgotten: a running session's prompt is refused "${unsigned}", a new one "${message}"; ${stored}`;
 				} finally {
 					for (const watch of watches) await watch.conn.dispose().catch(() => undefined);
 					for (const session of sessions) await user.deleteSession(session.id).catch(() => undefined);

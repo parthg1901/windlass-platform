@@ -5,12 +5,13 @@ import type { AcpProfile } from "../server/src/sandbox/harnesses.js";
 import { hostedKeyMessage } from "../server/src/sandbox/harnesses.js";
 import { harnessOf } from "../server/src/sandbox/harness.js";
 import type { SandboxLayer } from "../server/src/sandbox/api.js";
-import type { ModelKeyLease, ProcessEnd, StartOptions, TurnSandbox } from "../server/src/sandbox/provider.js";
+import type { CredentialRef } from "../server/src/contract.js";
+import type { ProcessEnd, StartOptions, TurnSandbox } from "../server/src/sandbox/provider.js";
 
 /** An ACP adapter stand-in makes the same HTTP request as its pinned CLI, through the real relay route. */
 export async function checkHostedTurn(
 	id: AcpProfile["id"],
-	key: ModelKeyLease,
+	key: CredentialRef,
 	real: string,
 	handle: TurnSandbox,
 	sessionId: string,

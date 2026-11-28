@@ -129,13 +129,10 @@ export function hostedLayer(
 ) {
 	return {
 		sandboxes: new HostedSandboxes(provider),
-		windlass: new SandboxWindlass(tokens, { version, problem: async () => null }, turn),
+		windlass: new SandboxWindlass({ version, problem: async () => null }, turn),
 		tokens,
 		backups: backups ?? null,
 		logins: {
-			start: (...args) => logins.start(...args),
-			finish: (...args) => logins.finish(...args),
-			adopt: (...args) => logins.adopt(...args),
 			status: uid => logins.status(uid),
 			ensureUserVolume: uid => logins.ensureUserVolume(uid),
 			async logout(uid) {

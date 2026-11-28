@@ -43,10 +43,10 @@ export function plannerMachines(machines: MachineSummary[], screenshots = true) 
 		egress: m.egress,
 		screenshots: screenshots && m.screenshots,
 		harnesses: m.harnesses?.map(
-			({ id, signIn, source, method, keyRelay, machineProviders, platformKeys, optionsDigest }) => ({
+			({ id, signIn, paysWith, method, keyRelay, machineProviders, platformKeys, optionsDigest }) => ({
 				id,
 				signIn,
-				source,
+				paysWith,
 				method,
 				keyRelay,
 				machineProviders,

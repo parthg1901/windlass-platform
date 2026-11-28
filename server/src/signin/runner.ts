@@ -11,8 +11,7 @@
  *      to the private directory, and HOME to a place inside it as well. WINDLASS_ACCESS_TOKEN_FILE is
  *      never passed on: with it Windlass would not use a saved sign-in at all;
  *   3. when the command has ended, however it ended, the files are read back: a refresh has replaced
- *      `auth.json` (Windlass writes it whole, to a temporary name that it then renames), `login finish`
- *      has made it and removed `auth-pending.json`;
+ *      `auth.json` (Windlass writes it whole, to a temporary name that it then renames);
  *   4. the directory is removed, in every outcome: success, failure, timeout, an abort, a command that
  *      could not be started.
  *

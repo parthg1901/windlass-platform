@@ -4,7 +4,6 @@ import type {
 	HarnessId,
 	HostedSize,
 	ItemPlaceDefaults,
-	MachineSummary,
 	ModelList,
 	PlanSubtask,
 	SandboxPlace,
@@ -35,7 +34,6 @@ export interface RunSettings extends ItemPlaceDefaults {
 }
 export interface RunContext {
 	deployment?: RunSettings;
-	machinePayers?: Record<string, Partial<Record<HarnessId, CredentialSource>>>;
 	account?: RunSettings;
 	repository?: RunSettings;
 	repositories?: Record<string, RunSettings>;
@@ -102,25 +100,6 @@ export function deploymentSize(offered: readonly HostedSize[], preferred = ITEM_
 
 export const runPlace = (place: SandboxPlace): DefaultPlace =>
 	place.kind === "machine" ? { machine: place.machineId } : "hosted";
-
-export function machinePayers(machines: readonly MachineSummary[]) {
-	return Object.fromEntries(
-		machines.map(m => [m.machineId, Object.fromEntries((m.harnesses ?? []).map(h => [h.id, h.source ?? "machine"]))]),
-	);
-}
-
-/** An alternative must keep both the approved payer and that machine’s own filed credential source. */
-export function changesMachinePayer(
-	run: ResolvedRun,
-	machineId: string,
-	source: CredentialSource,
-	filed?: RunContext["machinePayers"],
-) {
-	if (source !== run.payer) return true;
-	if (!filed || (typeof run.place === "object" && run.place.machine === machineId)) return false;
-	const machine = filed[machineId];
-	return !machine || (machine[run.agent] ?? "machine") !== source;
-}
 
 function runLayers(context: RunContext): [Source, RunSettings][] {
 	return [
@@ -215,14 +194,6 @@ export function resolveRun(
 		if (value == null) return;
 		values[key] = value;
 		sources[key] = source;
-	}
-	if (agent !== "windlass" && place !== "hosted") {
-		const payers = context.machinePayers ?? {};
-		const payer =
-			place === "any-machine"
-				? Object.values(payers).find(machine => machine[agent])?.[agent]
-				: payers[place.machine]?.[agent];
-		set("payer", payer, "account");
 	}
 	let layerAgent: HarnessId = "windlass";
 	for (const [source, layer] of layers) {

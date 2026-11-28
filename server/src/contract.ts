@@ -2,11 +2,12 @@
  * Shared wire types and runtime constants for the actors, runner and web app. Keep all runtime imports browser-safe.
  * This file holds sandboxes, platform info, login and session basics (HarnessId, SessionSummary) and re-exports:
  * contract/github.ts (GitHub, GitLab, Linear, publishing), repository.ts (setup, checks, environments, network, secrets),
- * account.ts (settings, model providers, API tokens), machines.ts, items.ts (work items), reviews.ts,
+ * account.ts (settings, model providers, API tokens), connect.ts (connected plans, the connect command),
+ * machines.ts, machine-setup.ts (the setup container install.sh and `connect --machine` run), items.ts (work items), reviews.ts,
  * timeline.ts (Windlass/ACP events, timeline), questions.ts (questions, MCP servers), actors.ts (actor
  * actions/events, snapshot), limits.ts (endpoints, paths, size limits), slack.ts (Slack settings), identity.ts
- * (linked accounts on other surfaces), usage.ts,
- * hosted-sizes.ts, isolation.ts.
+ * (linked accounts on other surfaces), usage.ts, hosted-sizes.ts, isolation.ts, cost.ts (what an item used, its
+ * prices, the Usage summary's items).
  */
 
 import type { GithubId, PullRequestInfo, SessionRepository } from "./contract/github.js";
@@ -43,13 +44,16 @@ export {
 export * from "./contract/github.js";
 export * from "./contract/repository.js";
 export * from "./contract/account.js";
+export * from "./contract/connect.js";
 export * from "./contract/machines.js";
+export * from "./contract/machine-setup.js";
 export * from "./contract/items.js";
 export * from "./contract/reviews.js";
 export * from "./contract/timeline.js";
 export * from "./contract/questions.js";
 export * from "./contract/actors.js";
 export * from "./contract/limits.js";
+export * from "./contract/cost.js";
 export * from "./contract/slack.js";
 export * from "./contract/identity.js";
 

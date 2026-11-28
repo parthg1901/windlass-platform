@@ -17,7 +17,7 @@
  * which it is.
  *
  * Which sign-in a list belongs to. The row holds the generation of the sign-in it was listed with
- * (signin/holder.ts counts the times a user's sign-in was adopted or forgotten), and a row is the
+ * (signin/holder.ts gives a new one each time a user's sign-in is adopted or forgotten), and a row is the
  * user's list only while that is the generation of their sign-in. So a list does not outlive its
  * sign-in: after a sign-out there is none, and after a new sign-in the plan is listed again. A listing
  * that ends after its sign-in was replaced or forgotten is nobody's: it is neither stored nor answered.
@@ -85,7 +85,7 @@ export const MODELS_RETRY_MS = 60_000;
 export const MODELS_TABLE = `
 	CREATE TABLE IF NOT EXISTS model_list (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
-		generation INTEGER NOT NULL,
+		generation TEXT NOT NULL,
 		list TEXT NOT NULL,
 		fetched_at INTEGER NOT NULL
 	)
@@ -103,7 +103,7 @@ export interface ModelsDb {
 export interface ModelsSource {
 	db: ModelsDb;
 	/** The generation of the user's sign-in; null when there is none. */
-	generation(): Promise<number | null>;
+	generation(): Promise<string | null>;
 	/** Has Windlass list the models with the user's access token. Rejects when the token or the list cannot be had; no message of it holds a token. */
 	list(): Promise<ListedModels>;
 }
@@ -120,7 +120,7 @@ export interface AccountModelsOptions {
 
 /** A list as it is kept, with the generation of the sign-in it was listed with. */
 interface Kept {
-	generation: number;
+	generation: string;
 	list: ModelList;
 }
 
@@ -133,8 +133,8 @@ export class AccountModels {
 	/** The newest list this actor stored or read; the row holds the same. */
 	private kept: Kept | null = null;
 	/** The listing that runs now. Never rejects: null when it failed, or its sign-in is no longer the user's. */
-	private flight: { generation: number; listed: Promise<ModelList | null> } | null = null;
-	private failed: { generation: number; at: number } | null = null;
+	private flight: { generation: string; listed: Promise<ModelList | null> } | null = null;
+	private failed: { generation: string; at: number } | null = null;
 
 	constructor(private readonly options: AccountModelsOptions) {
 		this.log = options.log ?? (line => console.log(line));
@@ -178,7 +178,7 @@ export class AccountModels {
 		await db.execute("DELETE FROM model_list");
 	}
 
-	private async read(db: ModelsDb, generation: number): Promise<ModelList | null> {
+	private async read(db: ModelsDb, generation: string): Promise<ModelList | null> {
 		const [row] = await db.execute<{ list: string; fetched_at: number }>(
 			"SELECT list, fetched_at FROM model_list WHERE id = 1 AND generation = ?",
 			generation,
@@ -193,7 +193,7 @@ export class AccountModels {
 	}
 
 	/** Lists, stores, and only then answers. Null when the list could not be had or stored. */
-	private async fetch(source: ModelsSource, generation: number): Promise<ModelList | null> {
+	private async fetch(source: ModelsSource, generation: string): Promise<ModelList | null> {
 		try {
 			const listed = responsesModels(await source.list());
 			// The sign-in was replaced or forgotten while Windlass was asked: this is nobody's list.
@@ -204,14 +204,14 @@ export class AccountModels {
 				defaultModel: listed.defaultModel,
 				fetchedAt: Date.now(),
 			};
-			// One statement that reads nothing first. A row of a later sign-in is never replaced by one of an earlier.
+			// A row is read back only at its own generation, so one a later sign-in's listing replaces is never served for it.
 			await source.db.execute(
-				"INSERT INTO model_list (id, generation, list, fetched_at) VALUES (1, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET generation = excluded.generation, list = excluded.list, fetched_at = excluded.fetched_at WHERE model_list.generation <= excluded.generation",
+				"INSERT INTO model_list (id, generation, list, fetched_at) VALUES (1, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET generation = excluded.generation, list = excluded.list, fetched_at = excluded.fetched_at",
 				generation,
 				JSON.stringify(listed),
 				list.fetchedAt,
 			);
-			if (this.kept === null || this.kept.generation <= generation) this.kept = { generation, list };
+			this.kept = { generation, list };
 			if (this.failed?.generation === generation) this.failed = null;
 			this.log(
 				`[wlp] models.listed uid=${this.options.uid}: ${list.models.length} models, the default ${list.defaultModel}`,

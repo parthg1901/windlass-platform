@@ -390,6 +390,9 @@ export function isTestPath(path: string): boolean {
 	return TEST_NAME.test(path) || (TEST_DIRECTORY.test(path) && CODE.test(path) && !NOT_A_TEST.test(path));
 }
 
+/** Whether a path is source code that is not a test's. */
+export const isCodePath = (path: string): boolean => CODE.test(path) && !isTestPath(path);
+
 /** What marks a test as skipped or disabled, in the frameworks that have a marker for it. */
 const SKIP_MARKERS = [
 	/\b(?:it|test|describe|context|suite|specify)\.(?:skip|todo)\b/g,

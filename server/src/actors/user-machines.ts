@@ -7,8 +7,9 @@ import { accountLimits, type UserLimits } from "../user-limits.js";
 import {
 	machineLabel,
 	sessionTitle,
-	type CredentialSource,
+	PLAN_PROVIDERS,
 	type HarnessOptions,
+	type PlanProvider,
 	type MachineClaim,
 	type MachineSummary,
 	type SandboxPlace,
@@ -20,20 +21,15 @@ import { machineProfiles } from "../machines/profiles.js";
 import { BUILT_IN_STORE_LIMITS } from "../sandbox/store-limits.js";
 import { codeDigest } from "../runner-keys.js";
 import { compactReport, type CatalogId } from "../runner/catalog.js";
-import {
-	MACHINE_ID,
-	LEGACY_MIN_RUNNER_VERSION,
-	MIN_RUNNER_VERSION,
-	PAIRING_TTL_MS,
-	versionAtLeast,
-} from "../runner/control.js";
+import { MACHINE_ID, MIN_RUNNER_VERSION, PAIRING_TTL_MS, versionAtLeast } from "../runner/control.js";
 import { MACHINE_PROFILES } from "../runner/protocol.js";
 import { createGrant, isActorGone } from "./internal.js";
 import type { MachineUpdate } from "./machine.js";
 import { asPairingError, pairingGone } from "./machine-pairing.js";
 
-import { savedModelKeys } from "../model-providers.js";
-import { availableCatalog, initialHarnessModels, listedHarness, machineHarness } from "../sandbox/harnesses.js";
+import { savedModelKeys } from "../credentials/keys.js";
+import { planGeneration } from "../credentials/plans.js";
+import { availableCatalog, initialHarnessModels, listedHarness } from "../sandbox/harnesses.js";
 import { PROVIDER_TABLE, accountsAt, providerAccounts } from "./provider-accounts.js";
 
 interface Ctx {
@@ -78,14 +74,6 @@ export function launchPlace(raw: unknown): SandboxPlace {
 
 export async function machineTables(db: RawAccess) {
 	await db.execute(PROVIDER_TABLE);
-	// Consolidate pre-account Windlass rows before per-machine cleanup can remove them.
-	// Repeating either statement after an interrupted migration keeps the same strongest cooldown.
-	await db.execute(`INSERT OR REPLACE INTO provider_usage (place,harness,generation,data)
-		SELECT '*', harness, generation, json_set(data, '$.account.key', '*/windlass/' || generation)
-		FROM provider_usage WHERE harness='windlass' AND EXISTS (SELECT 1 FROM provider_usage WHERE harness='windlass' AND place<>'*')
-		ORDER BY CAST(generation AS INTEGER) DESC, json_extract(data, '$.account.limitedUntil') DESC,
-			json_extract(data, '$.lastRefusal') DESC, place LIMIT 1`);
-	await db.execute("DELETE FROM provider_usage WHERE harness='windlass' AND place<>'*'");
 	await db.execute(`CREATE TABLE IF NOT EXISTS machines (id TEXT PRIMARY KEY, name TEXT NOT NULL, os TEXT NOT NULL, arch TEXT NOT NULL, facts TEXT NOT NULL,
 		send INTEGER NOT NULL DEFAULT 1, login TEXT, expires INTEGER)`);
 	if (!(await db.execute<{ name: string }>("PRAGMA table_info(machines)")).some(column => column.name === "host"))
@@ -117,12 +105,9 @@ export async function machineTables(db: RawAccess) {
 				(json_extract(h.value,'$.signIn')='token' AND COALESCE(json_extract(h.value,'$.loginGeneration'),'legacy')<>generation)));
 	END`);
 	await db.execute("CREATE TABLE IF NOT EXISTS machine_details (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
-	await db.execute(
-		"CREATE TABLE IF NOT EXISTS credential_sources (machine TEXT NOT NULL, harness TEXT NOT NULL, source TEXT NOT NULL, PRIMARY KEY (machine, harness))",
-	);
-	await db.execute(
-		"CREATE TRIGGER IF NOT EXISTS forget_credential_sources AFTER DELETE ON machines BEGIN DELETE FROM credential_sources WHERE machine=OLD.id; END",
-	);
+	// The per-machine "Paid by" choice is gone. One-time: remove after the first deploy that runs it.
+	await db.execute("DROP TRIGGER IF EXISTS forget_credential_sources");
+	await db.execute("DROP TABLE IF EXISTS credential_sources");
 	await db.execute("CREATE TABLE IF NOT EXISTS machine_claims (at INTEGER NOT NULL)");
 }
 
@@ -138,8 +123,17 @@ export function itemMachines(machines: ReadonlyMap<string, MachineSummary>) {
 	return config.machines ? [...machines.values()] : [];
 }
 
+/** The account's plans a machine's agents can pay with now (`planAllowed` with `onMachine`). */
+async function machinePlans(db: RawAccess, uid: string): Promise<PlanProvider[]> {
+	const usable = await Promise.all(
+		PLAN_PROVIDERS.map(async p => ((await planGeneration(db, uid, p, true)) ? p : null)),
+	);
+	return usable.filter(p => p !== null);
+}
+
 export async function listMachines(c: {
 	db: RawAccess;
+	key: string[];
 	vars: Pick<Ctx["vars"], "sessions">;
 }): Promise<MachineSummary[]> {
 	const rows = await c.db.execute<{
@@ -156,10 +150,10 @@ export async function listMachines(c: {
 	);
 	const accounts = await providerAccounts(c.db, Date.now());
 	const keys = (await savedModelKeys(c.db)).map(k => k.provider);
-	const sources = await credentialSources(c.db);
+	const plans = await machinePlans(c.db, c.key[0]!);
 	return rows.map(row => {
 		const { report, ...facts }: MachineUpdate = JSON.parse(row.facts);
-		const harnesses = report?.harnesses?.map(h => listedHarness(h, keys, sources.get(`${row.id}/${h.id}`)));
+		const harnesses = report?.harnesses?.map(h => listedHarness(h, keys, plans));
 		const sessions = [...c.vars.sessions.values()].filter(
 			s => s.place.kind === "machine" && s.place.machineId === row.id,
 		);
@@ -218,30 +212,6 @@ export async function changed(c: Ctx) {
 	return machines;
 }
 
-/** The owner's credential choices by "machine/harness"; one machine's with `machine`. */
-async function credentialSources(db: RawAccess, machine?: string): Promise<Map<string, CredentialSource>> {
-	const rows = await db.execute<{ machine: string; harness: string; source: CredentialSource }>(
-		`SELECT machine, harness, source FROM credential_sources${machine ? " WHERE machine = ?" : ""}`,
-		...(machine ? [machine] : []),
-	);
-	return new Map(rows.map(row => [`${row.machine}/${row.harness}`, row.source]));
-}
-
-export async function credentialSource(
-	db: RawAccess,
-	machine: string,
-	harness: string,
-): Promise<CredentialSource | null> {
-	const [row] = await db.execute<{ source: CredentialSource | null }>(
-		`SELECT s.source FROM machines m
-		LEFT JOIN credential_sources s ON s.machine=m.id AND s.harness=? WHERE m.id=? AND m.expires IS NULL`,
-		harness,
-		machine,
-	);
-	if (!row) throw missing();
-	return row.source;
-}
-
 export async function machineSecrets(db: RawAccess, id: string): Promise<boolean | null> {
 	const [row] = await db.execute<{ send: number }>("SELECT send FROM machines WHERE id = ? AND expires IS NULL", id);
 	return row ? !!row.send : null;
@@ -251,7 +221,7 @@ export async function machineSecrets(db: RawAccess, id: string): Promise<boolean
  * The machine's profiles as its last report has them, and its name, which the session keeps (asking for it
  * later fails while the machine is offline); a machine that cannot take an agent yet is told apart, with what to do.
  */
-export async function launchMachineProfiles(db: RawAccess, id: string) {
+export async function launchMachineProfiles(db: RawAccess, uid: string, id: string) {
 	enabled();
 	const [row] = await db.execute<{ name: string; os: string; arch: string; facts: string }>(
 		"SELECT name, os, arch, facts FROM machines WHERE id = ? AND expires IS NULL",
@@ -261,17 +231,13 @@ export async function launchMachineProfiles(db: RawAccess, id: string) {
 	const name = machineLabel(row);
 	const { report, runnerVersion, warnings = [] }: MachineUpdate = JSON.parse(row.facts);
 	// First: an outdated runner is refused before it can report, so it has no report either.
-	const minimum = config.machines?.identity ? MIN_RUNNER_VERSION : LEGACY_MIN_RUNNER_VERSION;
 	if (!config.machines?.identity && warnings.some(w => w.kind === "signing-disabled"))
 		throw new UserError("This runner requires signed connections to be enabled on the platform.", {
 			code: "runner_signing_disabled",
 		});
-	if (
-		!versionAtLeast(runnerVersion, minimum) ||
-		(config.machines?.identity && warnings.some(w => w.kind === "outdated"))
-	) {
+	if (!versionAtLeast(runnerVersion, MIN_RUNNER_VERSION) || warnings.some(w => w.kind === "outdated")) {
 		throw new UserError(
-			`The runner on "${name}" is older than this platform takes: update it to ${minimum} or later, then start the agent again.`,
+			`Update your runner on “${name}” to ${MIN_RUNNER_VERSION} or later, then start the agent again.`,
 			{ code: "runner_outdated" },
 		);
 	}
@@ -281,32 +247,15 @@ export async function launchMachineProfiles(db: RawAccess, id: string) {
 			{ code: "machine_not_connected" },
 		);
 	const keys = (await savedModelKeys(db)).map(k => k.provider);
-	const sources = await credentialSources(db, id);
+	const plans = await machinePlans(db, uid);
 	return {
 		name,
 		slots: report.slots,
 		egress: report.egress,
 		allowedProfiles: report.allowedProfiles,
-		harnesses: report.harnesses?.map(h => listedHarness(h, keys, sources.get(`${id}/${h.id}`))),
+		harnesses: report.harnesses?.map(h => listedHarness(h, keys, plans)),
 		profiles: machineProfiles(name, report),
 	};
-}
-
-/**
- * Has each machine's runner remove its sign-in files. Never throws: by now the sign-in itself is gone,
- * and one machine actor that does not answer must not have the person told that nothing was forgotten.
- * Only a runner connected now hears it (the machine actor queues nothing for it).
- */
-export async function logoutMachines(c: Ctx) {
-	// A newly accepted socket can precede its status event. Ask each of the at most three owners.
-	const paired = await c.db.execute<{ id: string }>("SELECT id FROM machines WHERE expires IS NULL");
-	const asked = await Promise.allSettled(paired.map(({ id }) => machine(c, id).internalLogout()));
-	asked.forEach((answer, index) => {
-		if (answer.status === "rejected")
-			console.warn(
-				`[wlp] machine.logout_failed uid=${c.key[0]} machine=${paired[index]!.id}: ${answer.reason instanceof Error ? answer.reason.message : String(answer.reason)}`,
-			);
-	});
 }
 
 export async function machineCatalog(
@@ -433,6 +382,15 @@ export const machineActions = {
 		if (!summary) throw pairingGone();
 		return summary;
 	},
+	async denyMachine(c: Ctx, input: { code: string }): Promise<void> {
+		const { uid } = requireUser(c);
+		enabled();
+		const handle = await pairing(c, input);
+		const { machineId } = await handle.internalClaimed(uid).catch(asPairingError);
+		// Once confirmed, the machine is this user's to remove on Machines, not to deny here.
+		if ((await c.db.execute("SELECT 1 FROM machines WHERE id = ?", machineId)).length) return;
+		await handle.internalDeny(uid).catch(asPairingError);
+	},
 	async removeMachine(c: Ctx, input: { machineId: string; removeSandboxes: boolean }): Promise<MachineSummary[]> {
 		requireUser(c);
 		enabled();
@@ -445,6 +403,32 @@ export const machineActions = {
 			if (isActorGone(error)) throw missing();
 			throw error;
 		}
+		return listMachines(c);
+	},
+	/**
+	 * "Switch back to your plan": the machine's runner removes the Claude Code login kept there, so its Claude Code
+	 * pays through Pay with again. Its next report says so; the list is read after the runner answered.
+	 */
+	async removeMachineClaudeLogin(c: Ctx, input: { machineId: string }): Promise<MachineSummary[]> {
+		requireUser(c);
+		enabled();
+		if (typeof input?.machineId !== "string" || (await machineSecrets(c.db, input.machineId)) === null) throw missing();
+		let answer;
+		try {
+			answer = await machine(c, input.machineId).internalForgetClaudeLogin();
+		} catch (error) {
+			if (isActorGone(error)) throw missing();
+			throw error;
+		}
+		if (answer === "offline")
+			throw new UserError("The machine is offline. Start its runner, then switch back.", {
+				code: "machine_not_connected",
+			});
+		if (answer === "failed")
+			throw new UserError(
+				"The machine could not remove its Claude login. Try again, or run docker exec windlass-runner windlass-runner logout claude on it.",
+				{ code: "claude_login_kept" },
+			);
 		return listMachines(c);
 	},
 	async setMachineDetails(c: Ctx, input: { machineId: string } & import("../contract.js").MachineDetails) {
@@ -480,33 +464,6 @@ export const machineActions = {
 			input.machineId,
 		);
 		if (!rows.length) throw missing();
-		return changed(c);
-	},
-	async setCredentialSource(
-		c: Ctx,
-		input: { machineId: string; harness: string; source: CredentialSource },
-	): Promise<MachineSummary[]> {
-		requireUser(c);
-		enabled();
-		if (input?.source !== "machine" && input?.source !== "key")
-			throw new UserError("Choose the machine's sign-in or your Settings key.", { code: "bad_input" });
-		const harness = machineHarness(input.harness);
-		if (!harness) throw new UserError("Unknown agent.", { code: "bad_input" });
-		if (typeof input.machineId !== "string") throw missing();
-		const rows = await c.db.execute(
-			`INSERT OR REPLACE INTO credential_sources (machine, harness, source)
-			SELECT m.id, ?, ? FROM machines m WHERE m.id=? AND m.expires IS NULL
-			AND EXISTS (SELECT 1 FROM json_each(m.facts, '$.report.harnesses') h WHERE json_extract(h.value, '$.id')=?)
-			RETURNING machine`,
-			harness.id,
-			input.source,
-			input.machineId,
-			harness.id,
-		);
-		if (!rows.length) {
-			if ((await machineSecrets(c.db, input.machineId)) === null) throw missing();
-			throw new UserError("This machine does not offer that agent.", { code: "bad_input" });
-		}
 		return changed(c);
 	},
 	async internalMachineCreated(c: Ctx, id: string): Promise<boolean> {

@@ -415,11 +415,11 @@ export class AcpHarness implements Harness {
 				{ ...ref.key, harness: this.id },
 				input.signal,
 				ref.takeRequest,
+				ref.openSecret,
+				ref.onSeen,
 			);
 			input.signal?.throwIfAborted();
-			const env = this.machine
-				? { WLP_TURN_KEY_LEASES: lease.placeholder }
-				: hostedKeyEnv(this.id, ref.key.provider, lease);
+			const env = this.machine ? { WLP_TURN_KEY_LEASES: lease.placeholder } : hostedKeyEnv(this.id, ref.key, lease);
 			const secrets = input.secrets?.redactor ?? NO_REDACTION;
 			return await this.run(handle, input, env, redactKeyLease(secrets, lease.placeholder));
 		} finally {

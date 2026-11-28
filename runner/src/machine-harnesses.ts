@@ -2,11 +2,12 @@
 import type { ModelProvider } from "../../server/src/contract.js";
 import { innerModesReason } from "../../server/src/sandbox/codex-modes.js";
 import { keyRelayUrl, openCodeCredentials, prepareRelay, type ProviderLogin } from "./claude-relay.js";
-import { changeCodexLogin, codexLogin } from "./codex-login.js";
-import { changeClaudeLogin } from "./harness-login.js";
+import { changeClaudeLogin, claudeLoginFromStdin } from "./harness-login.js";
 import { changeProviderLogin, currentProvider } from "./opencode-login.js";
 import { providerHosts } from "./opencode-providers.js";
 import type { MachineDocker, MachineHarness } from "./policy.js";
+import { MODEL_RELAY_URL } from "../../server/src/sandbox/model-relay.js";
+import { Refusal } from "./state.js";
 import { HARNESSES } from "./setup-choices.js";
 
 type Keys = Partial<Record<ModelProvider, string>>;
@@ -29,22 +30,28 @@ export interface MachineHarnessRecord {
 	keysOnRelayPort: boolean;
 	/** The machine's own sign-in the relay serves; none where the relay reads the login volume itself (Claude). */
 	machineLogin: (m: MachineDocker) => ProviderLogin | undefined;
-	/** Whether a turn needs a machine sign-in or a key: Claude's relay can start without either. */
-	needsLogin: boolean;
+	/** The refusal for a turn with no plan, no key and no machine sign-in; none where its relay can start without (Claude). */
+	noCredential?: string;
 	/** A Settings key handed straight to the agent, bypassing the session relay. */
 	keyEnv: (keys: Keys) => Record<string, string> | undefined;
+	/** A plan-paid turn's env: the plan relay on this machine, behind the turn's forwarder on 127.0.0.1:17893 (`planRelay`). */
+	planEnv: (placeholder: string) => Record<string, string>;
 	/** The session relay's credentials for a turn. */
 	credentials: (m: MachineDocker, nonce: string, login: ProviderLogin | undefined, keys: Keys) => Promise<Credentials>;
-	/** `login` / `logout <agent>`. */
+	/** `login` / `logout <agent>`; refuses for an agent with no login of its own on the machine. */
 	changeLogin: (m: MachineDocker, login: boolean, signal: AbortSignal, provider?: string) => Promise<unknown>;
 	/** Whether `login` takes `--provider`. */
 	takesProvider: boolean;
+	/** `login --token-stdin`: keeps a token piped in, with no questions (Claude Code's setup token). */
+	tokenFromStdin?: (m: MachineDocker, signal: AbortSignal) => Promise<void>;
 	/** The line after a successful logout. */
 	signedOut: string;
 }
 
-const relayCredentials = (m: MachineDocker, nonce: string, login: ProviderLogin | undefined) =>
-	prepareRelay(m, login, nonce);
+/** The model relay's forwarder in the sandbox, where a plan turn's forwarder listens too (egress-proxy.mjs `wlp-model-forward`). */
+const PLAN_RELAY_ORIGIN = new URL(MODEL_RELAY_URL).origin;
+
+const relayCredentials = (m: MachineDocker, nonce: string) => prepareRelay(m, nonce);
 
 export const MACHINE_HARNESSES: Record<MachineHarness, MachineHarnessRecord> = {
 	claude: {
@@ -57,12 +64,13 @@ export const MACHINE_HARNESSES: Record<MachineHarness, MachineHarnessRecord> = {
 		deniedHosts: () => [],
 		keysOnRelayPort: false,
 		machineLogin: () => undefined,
-		needsLogin: false,
 		keyEnv: keys =>
 			keys.anthropic ? { ANTHROPIC_BASE_URL: keyRelayUrl, ANTHROPIC_API_KEY: keys.anthropic } : undefined,
+		planEnv: placeholder => ({ ANTHROPIC_BASE_URL: PLAN_RELAY_ORIGIN, CLAUDE_CODE_OAUTH_TOKEN: placeholder }),
 		credentials: relayCredentials,
 		changeLogin: changeClaudeLogin,
 		takesProvider: false,
+		tokenFromStdin: claudeLoginFromStdin,
 		signedOut: "signed out.",
 	},
 	codex: {
@@ -72,13 +80,23 @@ export const MACHINE_HARNESSES: Record<MachineHarness, MachineHarnessRecord> = {
 		unprefixedNames: false,
 		deniedHosts: () => ["api.openai.com", "auth.openai.com", "chatgpt.com"],
 		keysOnRelayPort: true,
-		machineLogin: codexLogin,
-		needsLogin: true,
+		// No login of its own on the machine: the ChatGPT plan (its relay here) or a Settings key pays.
+		machineLogin: () => undefined,
+		noCredential: "Codex on this machine pays with your ChatGPT plan or an OpenAI key. Connect one on Connections.",
 		keyEnv: keys => (keys.openai ? { WLP_SESSION_BEARER: keys.openai } : undefined),
-		credentials: relayCredentials,
-		changeLogin: changeCodexLogin,
+		planEnv: placeholder => ({ WLP_CODEX_BASE_URL: `${PLAN_RELAY_ORIGIN}/v1`, WLP_SESSION_BEARER: placeholder }),
+		credentials: async () => {
+			throw new Refusal(
+				"Codex on this machine pays with your ChatGPT plan or an OpenAI key. Connect one on Connections.",
+			);
+		},
+		changeLogin: async () => {
+			throw new Refusal(
+				"Codex has no login on this machine: it pays with your ChatGPT plan or OpenAI key from Connections.",
+			);
+		},
 		takesProvider: false,
-		signedOut: "signed out on this machine; OpenAI-side revocation not available.",
+		signedOut: "signed out.",
 	},
 	opencode: {
 		notEnabled: "Start the runner with --harness opencode.",
@@ -88,8 +106,12 @@ export const MACHINE_HARNESSES: Record<MachineHarness, MachineHarnessRecord> = {
 		deniedHosts: () => providerHosts,
 		keysOnRelayPort: false,
 		machineLogin: currentProvider,
-		needsLogin: true,
+		noCredential: "Run windlass-runner login opencode on this machine.",
 		keyEnv: () => undefined,
+		// No plan pays for OpenCode (harnesses.ts `planProviders`).
+		planEnv: () => {
+			throw new Refusal("No plan pays for OpenCode.");
+		},
 		credentials: openCodeCredentials,
 		changeLogin: changeProviderLogin,
 		takesProvider: true,

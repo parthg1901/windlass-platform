@@ -7,6 +7,7 @@ Actors ask the sandbox layer to provision a workspace and run a turn on Docker, 
 Run one command from the repository root.
 
 - `cd server && npx tsx ../scripts/model-relay-route-check.ts` exercises the hosted relay route.
+- `cd server && npx tsx --test ../scripts/plan-relay-check.ts` runs the in-sandbox plan relay against a recording upstream.
 - `cd server && npx tsx ../scripts/harness-check.ts` checks the harness capability records and platform tool reach.
 - `cd server && npx tsx ../scripts/e2b-provider-test.ts` exercises E2B with an in-memory client; see the [E2B guide](./e2b/AGENTS.md).
 - `cd server && npx tsx ../scripts/daytona-provider-test.ts` exercises Daytona without credentials.
@@ -33,7 +34,7 @@ Turns and harnesses
 - `./codex-modes.ts` lists Codex session modes per profile and refuses sandbox escapes on `docker-windlass-sandbox`.
 - `./platform-checks.ts` runs a repository's saved checks between prompts for harnesses whose `checks` is `"platform"`.
 - `./platform-steps.ts` counts tool calls as steps for harnesses whose `steps` is `"platform"`.
-- `./hosted-keys.ts` maps a Settings-key placeholder into each harness's environment variables.
+- `./hosted-keys.ts` maps a Settings-key or plan placeholder into each harness's environment variables (`windlassPlanEnv` for Windlass on the ChatGPT plan).
 - `./demo.ts` holds scripted demo scenarios (`WINDLASS_ACP_SCRIPT`); no model is called.
 - `./command.ts` holds `runCommand` with output caps and the `within` timeout helper.
 
@@ -47,7 +48,7 @@ Docker provider
 - `./windlass.ts` locates the image's Windlass and builds a turn's `docker exec`.
 - `./tokens.ts` reads the installed Windlass version once per image ID.
 - `./logins.ts` runs Windlass sign-in commands in a throwaway container for development.
-- `./model-relay.ts` holds `DockerModelRelay`: one relay per daemon scope and a forwarder per turn.
+- `./model-relay.ts` holds `DockerModelRelay`: one relay per daemon scope and a forwarder per turn. Hosted Docker opens only forwarded key and plan leases (`openKey`); the access-token lease (`open`) is a runner's.
 - `./snapshots.ts` keeps post-setup Docker image snapshots, addressed by local image ID.
 - `./snapshot-key.ts` derives snapshot keys from Git blob IDs and the lookup rules for children and reviewers.
 - `./snapshot-deployment.ts` installs a deployment identity atomically in a shared state directory.
@@ -56,8 +57,9 @@ Docker provider
 
 Credentials, network and data
 
-- `./token-file.ts` writes a turn's access-token file (`TokenFile`) and opens Settings-key relays.
-- `./relay-leases.ts` holds E2B and machine relay leases, signed placeholders and route limits (`RelayLimiter`).
+- `./token-file.ts` opens Settings-key and plan relays (`openModelKeyRelay`), writes Windlass's plan placeholder file (`writePlanPlaceholder`), and keeps a turn's relay on its plan (`rotatePlanToken`): a ChatGPT plan's token fresh, and the relay closed within a minute once the plan is gone. No sandbox is handed an access token.
+- `./relay-leases.ts` holds the platform route's leases (a credential reference each, never a secret), signed placeholders and route limits (`RelayLimiter`).
+- `./plan-relay.ts` starts a plan's relay (Claude or ChatGPT) inside an E2B or Daytona sandbox as the transport user, its source and token on stdin (`localPlanRelay` of `TurnSandbox`). Its base URL is the wire's (`/v1` for ChatGPT).
 - `./handoff.ts` describes the ChatGPT sign-in hand-off in words and numbers.
 - `./hosted-network.ts` holds the hosted allow-list rules (`MAX_HOSTS`, `isHostName`, presets).
 - `./hosted-settings.ts` reads the `WLP_HOSTED_` settings, falling back to the older `WLP_E2B_` names (`hostedName`).
@@ -82,6 +84,7 @@ Credentials, network and data
 - Put common turn behaviour behind `TurnSandbox`. Check the [Docker](./sandboxes.ts), [E2B](./e2b/sandboxes.ts), [Daytona](./daytona/guest.ts) and runner implementations when changing it.
 - Stopping a process client does not stop guest processes. Signal and sweep by run tag (`SWEEP_SCRIPT`) before detaching.
 - Model relay token files in sessions contain a per-turn placeholder. Refresh the real credential at the relay and revoke access when the turn closes.
+- Windlass on a ChatGPT model is a plan turn, hosted or on a machine: it arrives with `modelKey` (`plan: true`). A Windlass turn without `modelKey` must be scripted (the demo).
 - A signed E2B placeholder can reach another server process. The process hosting the session actor owns the live lease.
 - Throw `SandboxUserError` (or a subclass) for a failure the person should read; `isSandboxUserError` in `server/src/auth.ts` maps it to a `UserError` with code `sandbox_error` (`clientError`).
 

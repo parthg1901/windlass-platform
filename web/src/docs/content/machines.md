@@ -1,6 +1,6 @@
 ## Why use your own machine
 
-An agent on one of your machines runs in a Docker container there, made by a small program called the runner. Its sandboxes take none of your daily sandbox time, no place among your kept sandboxes and none of the sandboxes running at once on this platform, work items included. You set its limits yourself. On a paired machine, Claude Code, Codex and OpenCode can use a provider key saved in Settings or a login on that machine.
+An agent on one of your machines runs in a Docker container there, made by a small program called the runner. Its sandboxes take none of your daily sandbox time, no place among your kept sandboxes and none of the sandboxes running at once on this platform, work items included. You set its limits yourself. On a paired machine, Claude Code and Codex pay with your connected plan or a key saved in Settings, as **Connections → Pay with** says; OpenCode uses its logins on that machine or your Settings keys.
 
 The runner connects out to the platform. Nothing needs to reach your machine from outside.
 
@@ -33,9 +33,30 @@ Where Hosted can be used, choose its size and isolation here too. The agent and 
 
 Open the account menu and choose **Machines**, then **Add a machine**.
 
+### Connect it with one command
+
+The dialog shows one command first. Copy it and run it in a terminal on the computer. It needs Docker and Node:
+
+```sh
+npx @windlassai/cli connect --machine
+```
+
+It checks that Docker is installed and running, and says what to do if it is not. Then it fetches the runner image, pairs the machine and opens a page here to approve it. The page and your terminal show the same pairing code and **machine key**: check that they match, then choose **Approve**. Choose **Deny** if they differ or you did not run the command yourself; nothing is connected and the terminal stops. The dialog on the Machines page notices the new machine by itself.
+
+After you approve, it starts the runner in the background with the defaults: every agent in the runner image offered, the recommended profiles (see [What you need](#what-you-need)), **Restricted** [network access](#network-access) and limits sized for the computer. The machine's agents use the plans and keys connected on **Connections**.
+
+Last, it asks one question in the terminal: "Claude Code on this machine: use your Claude plan from Windlass (recommended), or keep a login on this machine only?" Press Enter for the plan. Choose the second to [keep Claude Code's own login on this machine](#claude-codes-own-login-on-this-machine) now. `--local-claude` chooses it without asking; without a terminal, the plan it is.
+
+To change the settings later, run setup on the machine:
+
+```sh
+docker run -it --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  -v windlass-runner:/var/lib/windlass-runner <runner image> setup
+```
+
 ### 1. Start the runner
 
-The dialog shows one line first. Copy it and run it in a terminal on the computer:
+Without Node, open **No Node?** in the dialog. It shows one line. Copy it and run it in a terminal on the computer:
 
 ```sh
 curl -fsSL <platform address>/install.sh | sh
@@ -48,7 +69,7 @@ Setup asks one thing at a time. Use the arrow keys and Enter; Space ticks an age
 1. **Welcome.** It shows the platform's address. Check that it is yours.
 2. **Pair.** It shows the code, the address to enter it at and the **machine key**. Enter the code as in [step 2](#2-enter-the-code) and check the key as in [step 3](#3-connect-it). Setup waits until you choose **Connect**. A code lasts ten minutes; if it runs out, setup offers a new one.
 3. **Machine name.** It suggests the name Docker gives the computer. Docker Desktop calls every computer `docker-desktop`, so give it a name you will know it by. See [Name it](#name-it).
-4. **Agents.** Tick the agents the machine should offer. Windlass is always offered. For each one ticked, setup offers to [sign it in](#sign-agents-in) now. If a sign-in fails or you skip it, setup says so and carries on: sign it in later.
+4. **Agents.** Tick the agents the machine should offer. Windlass is always offered. Claude Code and Codex need no sign-in on the machine: they pay with your plan or key. For OpenCode, setup offers to [sign it in](#sign-opencode-in) now. If that fails or you skip it, setup says so and carries on: sign it in later.
 5. **Profile.** Whether agents may also use **Docker + Windlass sandbox** besides hardened Docker. Setup recommends it and has it chosen, and says what it loosens. See [Allowed profiles](/docs/runner#allowed-profiles).
 6. **Network.** **Restricted**, the recommended mode, **Only some public hosts**, or **Open**. See [Network access](#network-access).
 7. **Limits.** The turn slots, the disk for setup snapshots and the free disk to keep, with defaults sized for the computer. See [Run options](/docs/runner#run-options).
@@ -66,7 +87,7 @@ docker run -it --rm -v /var/run/docker.sock:/var/run/docker.sock \
   -v windlass-runner:/var/lib/windlass-runner <runner image> setup network
 ```
 
-The parts are `name`, `agents`, `claude`, `codex`, `opencode`, `profile`, `network` and `limits`. `setup --quick` asks only what is missing, such as an agent that is not signed in. Each ends by offering to replace the running runner with the new settings.
+The parts are `name`, `agents`, `opencode`, `profile`, `network` and `limits`. `setup --quick` asks only what is missing, such as OpenCode not being signed in. Each ends by offering to replace the running runner with the new settings.
 
 #### Other ways
 
@@ -82,7 +103,7 @@ docker run -it --rm \
   --allow-profile docker-windlass-sandbox
 ```
 
-It pairs the machine and signs its agents in, asking in the terminal as it goes. First it prints the pairing code: enter it as in steps 2 and 3. Then it asks to [sign each agent in](#sign-agents-in). Last, it prints `Start the runner on this machine:` and the command that starts the runner in the background, with the same options. Run that command.
+It pairs the machine, asking in the terminal as it goes. First it prints the pairing code: enter it as in steps 2 and 3. Then, with OpenCode ticked, it asks to [sign OpenCode in](#sign-opencode-in). Last, it prints `Start the runner on this machine:` and the command that starts the runner in the background, with the same options. Run that command.
 
 A box is shown only for an agent the platform's runner image includes. **Allow Windlass's command sandbox** is ticked unless you untick it: both commands then end with `--allow-profile docker-windlass-sandbox` (see [What you need](#what-you-need)). Unticked, they end with `--allow-profile docker-hardened`, and setup starts with the sandbox turned off at its **Profile** step. Add `--name` and a name of your own to the setup command on a Mac or Windows PC.
 
@@ -108,7 +129,7 @@ When it starts, the runner prints a pairing code like `XXXX-XXXX`, and the addre
 docker logs windlass-runner
 ```
 
-Choose **Enter the code**, type the code and choose **Check code**. Case, spaces and dashes do not matter. A code lasts ten minutes. It belongs to the first account that enters it.
+Under **No Node?** in the dialog, choose **Enter the code**, type the code and choose **Check code**. Case, spaces and dashes do not matter. A code lasts ten minutes. It belongs to the first account that enters it.
 
 ### 3. Connect it
 
@@ -138,7 +159,7 @@ A machine runs the agents you start on it. It receives what they need, and nothi
 
 - your repository's files;
 - the saved secrets each agent is allowed, while **Send saved secrets to this machine** is on;
-- a ChatGPT access token for each turn of a Windlass agent, which lasts about an hour. With a current runner, the token goes to the machine's model relay and never into the agent's container. See [The Windlass model relay](#the-windlass-model-relay).
+- a plan's token for each turn a plan pays for: a Claude plan's, or a ChatGPT access token, which lasts about an hour. It goes to a relay on the machine for that turn and never into the agent's container or onto the disk. See [Plans on your machine](#plans-on-your-machine).
 
 The platform does not control this machine. What a session there shows of checks and changes is what the machine reports. See [Sandboxes and security](/docs/security#on-your-machine) for what the platform can and cannot do there.
 
@@ -290,9 +311,13 @@ The choice is saved at once. A machine that is not on **Any feature** says so on
 
 On a machine of yours you can run three more agents, each with your own account:
 
-- **Claude Code** uses your Anthropic Settings key or Claude subscription.
-- **OpenCode** uses Settings keys for OpenAI, Anthropic, Google and OpenRouter alongside providers configured on the machine.
-- **Codex** uses your OpenAI Settings key or its machine login (ChatGPT or an OpenAI API key).
+- **Claude Code** uses your connected Claude plan or your Anthropic Settings key, as **Connections → Pay with** says, or [its own login kept on this machine](#claude-codes-own-login-on-this-machine).
+- **OpenCode** uses the providers signed in on the machine, and your Settings keys for OpenAI, Anthropic, Google and OpenRouter where it has no login of its own.
+- **Codex** uses your connected ChatGPT plan or your OpenAI Settings key, as **Connections → Pay with** says.
+
+A plan pays from your machine: at each turn's start the platform hands the plan's token to a relay on the machine for that turn only. The relay keeps it in memory, never on disk, and sends the agent's requests to Anthropic or OpenAI from your machine. See [Plans on your machine](#plans-on-your-machine). Claude Code and Codex need no sign-in on the machine.
+
+The runner must be 0.3.13 or later. An older one cannot connect: the Machines page says "Update your runner to 0.3.13 or later" with the command to do it.
 
 An agent runs only on a machine whose runner was started with its flag: `--harness claude`, `--harness opencode` or `--harness codex`. Repeat `--harness` to offer more than one. The **Enable** boxes of the setup command add these flags, and the command setup prints keeps them. The runner must be a build that includes that agent's image. If it does not, it says "Use --harness claude with a runner built with the pinned Claude Code image.", "Use --harness opencode with a runner built with the pinned OpenCode image." or "Use --harness codex with a runner built with the pinned Codex image."
 
@@ -309,33 +334,35 @@ On either profile Codex ignores a repository's own Codex settings (`.codex/`), a
 
 None of these agents has a tool to publish: open the pull request from the session panel. None gets your saved secrets.
 
-## Sign agents in
+## What pays on your machine
 
-An agent signed in on the machine uses that sign-in first: a Claude subscription, Codex's ChatGPT or API-key login, or OpenCode's provider logins. A key in **Settings → Model providers** serves the providers the machine is not signed in to. To use your key even where the machine is signed in, choose **Use your … key** under **Paid by**, beside the agent on its card. Only the payer you choose is used: if it can't be, the item stops and asks you. Hosted agents always use your keys. With a key, the machine receives a temporary relay credential. The saved key stays on the platform, and the provider bills the key owner. Claude Code and Codex work items count API-key tokens toward their budget. Subscription turns show token usage separately.
+Claude Code and Codex follow **Connections → Pay with**, as hosted agents do. With a key, the machine receives a temporary relay credential: the saved key stays on the platform, and the provider bills the key owner. Claude Code and Codex work items count API-key tokens toward their budget. Plan turns show token usage separately. The Machines page says what pays for each agent and links to its cell on **Connections**. Where neither a plan nor a key is connected, it says "no plan or key connected": connect one on **Connections**.
 
-With a matching key, the Machines page shows **Settings key**. For a machine login it shows **signed in**, **sign in needed** or **couldn't check the sign-in**, with the runner's reason when it gives one. The last is the runner's check failing, not a sign-out: turns still run if the agent is signed in, and the runner checks again after 10 s, 30 s and 60 s, then every minute. Beside it is the command that signs it in, with a copy button:
+### Claude Code's own login on this machine
+
+Instead of your plan from Windlass, Claude Code on one machine can use a Claude login kept on that machine only. It never leaves the machine: Windlass never receives it. On **Connections**, the machine's Claude Code cell offers two ways: **Your Claude plan, from Windlass** (the default) and **This machine's own login — it never leaves this machine**. Choose the second, then run the command it shows in a terminal on that machine, once it is paired:
 
 ```sh
-docker exec -it windlass-runner windlass-runner login claude
+npx @windlassai/cli connect claude --this-machine
 ```
+
+It runs `claude setup-token` there. Sign in to Claude, and the command hands the token straight to the machine's runner, which keeps it in its Claude login volume. Nothing goes to Windlass: the runner reports that it has a login, and the cell turns to **This machine's own login · stays on this machine** by itself. Without a runner on the computer, the command says "Pair this machine first: npx @windlassai/cli connect --machine".
+
+While the login is kept, it pays for Claude Code on that machine, whatever **Pay with** says. Your plan and keys on Windlass still pay for Claude Code on Hosted and on your other machines. If nothing on Windlass pays for Claude Code, the Hosted cell says "Hosted Claude Code needs your plan or a key on Windlass."
+
+**Switch back to your plan** in the cell removes the login from the machine; its runner must be online. Claude Code there then pays through **Pay with** again. On the machine itself, `docker exec windlass-runner windlass-runner logout claude` does the same.
+
+## Sign OpenCode in
+
+OpenCode keeps its own logins on the machine. A key in **Settings → Model providers** serves the providers it is not signed in to. The Machines page shows **signed in**, **sign in needed** or **couldn't check the sign-in**, with the runner's reason when it gives one. The last is the runner's check failing, not a sign-out: turns still run if OpenCode is signed in, and the runner checks again after 10 s, 30 s and 60 s, then every minute. Beside it is the command that signs it in, with a copy button:
 
 ```sh
 docker exec -it windlass-runner windlass-runner login opencode
 ```
 
-The machine must be paired first, or the runner says "Pair this machine before signing in to Claude Code." or "Pair this machine before signing in to OpenCode." When it is done, it says "Claude Code: signed in." or "OpenCode: signed in.", and the Machines page shows the new state.
+The machine must be paired first, or the runner says "Pair this machine before signing in to OpenCode." When it is done, it says "OpenCode: signed in.", and the Machines page shows the new state.
 
-[Setup](#1-start-the-runner) offers to sign each agent in as it goes: **Sign in now** or **Skip for now**. A failed sign-in is shown, and setup carries on. Sign it in later with `login`, or with `setup claude`, `setup codex` or `setup opencode`. The line-by-line setup asks "Claude Code: sign in now? [Y/n] ": answer `n` to skip one.
-
-### Claude Code
-
-`login claude` runs Anthropic's own sign-in, `claude setup-token`, in your terminal. Sign in there. Then the runner asks, without showing what you type:
-
-```text
-Paste the token it printed (or one made by claude setup-token on any computer):
-```
-
-Paste the token `claude setup-token` printed. You can also make the token on another computer with `claude setup-token`, and paste it here. If the sign-in in the terminal does not finish, the runner says "Setup did not finish. You can paste a token made on another computer." and asks for the token all the same.
+[Setup](#1-start-the-runner) offers to sign OpenCode in as it goes: **Sign in now** or **Skip for now**. A failed sign-in is shown, and setup carries on. Sign it in later with `login opencode` or `setup opencode`.
 
 ### OpenCode
 
@@ -399,28 +426,27 @@ If it took nothing, setup asks for a provider as `login opencode` does. The comm
 ### Sign out
 
 ```sh
-docker exec windlass-runner windlass-runner logout claude
-```
-
-```sh
 docker exec windlass-runner windlass-runner logout opencode
 ```
 
-`logout` signs the agent out for this pairing and every earlier one. `logout opencode` removes all of its providers at once.
+`logout opencode` signs OpenCode out for this pairing and every earlier one, and removes all of its providers at once.
+
+## Plans on your machine
+
+Connect a plan once with `npx @windlassai/cli connect claude` or `npx @windlassai/cli connect codex`, and every machine of yours can use it. For each turn the plan pays for, the runner starts a relay container on the machine, `wlp-plan-relay-<sandbox>`. The platform hands it the plan's token at the turn's start, and a fresh one before a ChatGPT token expires. The token stays in the relay's memory: it is never written to the machine's disk, a volume or the agent's container. The agent gets the relay's address, `http://127.0.0.1:17893`, and a placeholder that works only for that turn. When the turn ends, the relay and its token are gone.
+
+- **Windlass** pays for its ChatGPT models with your ChatGPT plan.
+- **Claude Code and Codex** follow **Connections → Pay with**, as hosted agents do: the plan, your key, or the plan and then your key, and what to do when the plan reaches its limit.
 
 ## The Windlass model relay
 
-Windlass agents use your ChatGPT sign-in, which the platform keeps. A current runner has a model relay for them: a container on the machine, `wlp-model-relay-<machine id>`. The platform hands each turn's access token to the relay, not to the agent's container. Windlass in the container gets the relay's address, `http://127.0.0.1:17893/v1`, and a placeholder in its token file. A helper in the session's network namespace forwards that address to the relay. The relay checks the placeholder on every request and sends the request on to OpenAI with the real token. When the turn ends, the relay forgets the token, and the helper goes away.
-
-So commands, MCP servers and anything left running from setup can read only the placeholder. While a turn runs, they can still use the relay to make model requests on your plan, within the limits below. The relay has the same limits as the other relays on the machine: 8 requests at once per turn, with up to 32 more waiting, and 24 at once on the machine. The relay works in every network mode, `none` included.
-
-Runners 0.3.0 and 0.3.1 don't have the relay, and a runner whose sandbox image has a Windlass older than 0.7.1 doesn't offer it. Their Windlass turns get the access token in a file in the container, as before. The machine's sandbox row in the **where** menu says which applies. If the relay can't be started on a runner that has it, the turn fails with "the model relay could not be started". The runner never falls back to putting the token in the container.
+For a Windlass turn on a Settings key, the runner keeps a model relay on the machine, `wlp-model-relay-<machine id>`. Windlass in the container gets the relay's address, `http://127.0.0.1:17893/v1`, and a placeholder. A helper in the session's network namespace forwards that address to the relay, which forwards the request to the platform; the platform checks the turn's lease and adds the key. The key never reaches the machine. The relay has the same limits as the other relays on the machine: 8 requests at once per turn, with up to 32 more waiting, and 24 at once on the machine. It works in every network mode, `none` included. If it can't be started, the turn fails with "the model relay could not be started".
 
 ## Agent logins stay out of the container
 
-The runner keeps machine logins in private volumes. Only the agent’s relay can read its login volume. Keys saved in Settings stay on the platform.
+The runner keeps OpenCode's machine logins in a private volume. Only OpenCode's relay can read it. Keys saved in Settings stay on the platform, and a plan's token stays in its turn's relay.
 
-Each turn receives the local relay’s address and a placeholder. For a Settings key, the machine relay forwards model requests to the platform, which checks the turn’s lease and adds the saved key. For a machine login, the relay checks the session’s signed placeholder and sends the request directly to the provider. It also renews an OpenCode ChatGPT login when it expires.
+Each turn receives the local relay’s address and a placeholder. For a Settings key, the machine relay forwards model requests to the platform, which checks the turn’s lease and adds the saved key. For an OpenCode login, the relay checks the session’s signed placeholder and sends the request directly to the provider. It also renews an OpenCode ChatGPT login when it expires.
 
 When the relay refuses a request, or the provider answers with an error, the agent gets one of these fixed messages. The relay does not pass the provider's own reason on.
 
@@ -449,11 +475,9 @@ So commands in a session cannot read your login. They can still use that session
 
 In `restricted` mode, commands in an OpenCode session also cannot reach any model provider's host, or any bare IP address, through the proxy. `--egress-allow` does not reopen them. Model requests go only through the relay.
 
-In `restricted` mode, commands in a Codex session cannot reach `api.openai.com`, `auth.openai.com` or `chatgpt.com` through the proxy. This blocks OpenAI only by hostname. It is a policy, not a security boundary: a command can still reach OpenAI by another route. Your login is safe regardless, because a Codex session holds only a lease for its relay, never the login itself.
+In `restricted` mode, commands in a Codex session cannot reach `api.openai.com`, `auth.openai.com` or `chatgpt.com` through the proxy. This blocks OpenAI only by hostname. It is a policy, not a security boundary: a command can still reach OpenAI by another route. Your plan and key are safe regardless, because a Codex session holds only a placeholder for its relay, never the token or key itself.
 
 OpenCode checks which providers are available at the start of each turn. Adding, changing or removing a Settings key takes effect in existing sessions. Logging out on the machine revokes that login’s placeholders.
-
-Older runners mounted the Claude login volume in Claude sessions. On upgrade, archive any work you need from those stopped sessions, remove them, revoke the old token with Anthropic, and sign in with a fresh token before recreating the sessions.
 
 ## Machine details and warnings
 

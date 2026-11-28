@@ -285,7 +285,7 @@ test("one host sample per minute with a 493-model catalog sends only the host de
 			.run(machineId, JSON.stringify({ ...facts, report }));
 		await machineTables(db);
 		await accountTables(db);
-		for (const table of (await import("../server/src/model-providers.js")).MODEL_PROVIDER_TABLES) sql.exec(table);
+		for (const table of (await import("../server/src/credentials/index.js")).CREDENTIAL_TABLES) sql.exec(table);
 		const digest = optionsDigest(options);
 		// The machine actor drops an older runner's stored report in its migration (no nested transaction);
 		// the runner reports again when it connects.

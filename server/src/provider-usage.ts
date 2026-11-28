@@ -9,7 +9,6 @@ export type UsageObservation =
 
 export const MINUTE = 60_000;
 export const MAX_PROVIDER_WAIT = 360 * MINUTE;
-export const WINDLASS_ACCOUNT = "*";
 
 export const resetTime = (value: unknown): number | undefined =>
 	typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value < 8.64e15 - MINUTE

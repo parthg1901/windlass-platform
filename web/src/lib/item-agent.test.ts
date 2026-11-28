@@ -27,7 +27,7 @@ describe("an item's agent on its page", () => {
 			"33,500 reported by Claude Code, not counted: a subscription is not billed by token",
 		);
 	});
-	it("says the reported cost and the 5-hour window where there are any", () => {
+	it("says the 5-hour window where there is one, never a reported dollar cost", () => {
 		expect(agentFacts(agent({ harness: "opencode" }))).toEqual([]);
 		expect(agentFacts(agent({ harness: "codex", tokens: "counted", subscriptionTokens: 12 }))).toContainEqual({
 			label: "Subscription tokens",
@@ -36,10 +36,10 @@ describe("an item's agent on its page", () => {
 		expect(agentFacts(agent({ tokens: "subscription", reportedTokens: 33_500 }))).toEqual([
 			{ label: "5-hour window", value: "Not reported: Claude Code sends it only with a usage warning" },
 		]);
-		expect(agentFacts(agent({ harness: "opencode", cost: { amount: 0.42, currency: "USD" } }))[0]).toEqual({
-			label: "Cost",
-			value: "$0.42, as OpenCode reported it",
-		});
+		// A subscription's reported cost is not what it cost the person: lib/cost.ts prices items instead.
+		expect(agentFacts(agent({ tokens: "subscription", cost: { amount: 0.42, currency: "USD" } }))).not.toContainEqual(
+			expect.objectContaining({ label: "Cost" }),
+		);
 		expect(agentFacts(agent({ fiveHour: { first: 38, latest: 41.4 } }))[0]?.value).toBe(
 			"38% used at the first turn, 41% after the latest",
 		);

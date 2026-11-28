@@ -47,6 +47,7 @@ import {
 	shortSha,
 	spendTurn,
 	stepLimitReached,
+	budgetStopped,
 	stop,
 	SUBTASK_CHECK_QUESTION,
 	subtaskChoices,
@@ -305,6 +306,7 @@ export function reviewEnded(c: Change, fact: Extract<Fact, { kind: "review_ended
 	if (fact.outOfMemory && fact.outcome !== "succeeded")
 		return outOfMemory(c, fact.outOfMemory, { ...reviewPlan(c), newStep: false });
 	if (fact.stepLimit !== undefined) return stepLimitReached(c, reviewPlan(c), fact.stepLimit);
+	if (fact.budgetStopped) return budgetStopped(c, reviewPlan(c));
 	if (CUT_SHORT.has(fact.outcome)) {
 		c.run.step.interruptions += 1;
 		c.say(`The review ${OUTCOME_WORDS[fact.outcome]}.`);

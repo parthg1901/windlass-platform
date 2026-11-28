@@ -141,6 +141,13 @@ export interface GithubRepositoryList {
 	incomplete: boolean;
 }
 
+/** An open issue a first work item could start from: the repository's oldest open issues labelled "bug". */
+export interface StarterIssue {
+	number: number;
+	title: string;
+	url: string;
+}
+
 export interface GithubBranchList {
 	/** Branch names, the default branch first. */
 	branches: string[];

@@ -32,7 +32,10 @@ test("agent containers get low CPU shares and the machine's CPU cap", async () =
 			owner.disk = async () => 10_000_000_000;
 			owner.existing = async () => undefined;
 			owner.ownedVolume = async () => true;
-			owner.prepareClaudeRelay = async () => ({ env: {}, nonce: "0".repeat(32) });
+			owner.prepareClaudeRelay = async () => ({
+				env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:17892", CLAUDE_CODE_OAUTH_TOKEN: "fixture" },
+				nonce: "0".repeat(32),
+			});
 			for (const harness of [undefined, "claude"] as const) {
 				await owner.create("s_fixture", "docker-hardened", false, harness);
 				const flags = readFileSync(join(dir, "docker.args"), "utf8").trim().split("\n");

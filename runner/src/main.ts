@@ -13,7 +13,6 @@ import { category, control, pair } from "./control.js";
 import { cleanClaudeOutput } from "./claude-output.js";
 import { claudeSignIn } from "./harness-login.js";
 import { installedProvider, terminalQuestion } from "./opencode-login.js";
-import { codexLogin } from "./codex-login.js";
 import { MACHINE_HARNESSES } from "./machine-harnesses.js";
 import { setupAgents, setupImageAndMounts, shellCommand } from "./setup.js";
 import { HARNESSES, HARNESS_LABELS, isMachineHarness } from "./setup-choices.js";
@@ -75,8 +74,6 @@ async function showMachineStatus(
 	offered: boolean,
 ) {
 	const executor = new Executor(machine, limits);
-	if (agents.includes("codex") || harnessImage("codex"))
-		console.log("  Codex: " + (codexLogin(executor) ? "signed in" : "not signed in"));
 	if (agents.includes("opencode") || harnessImage("opencode")) {
 		console.log(
 			`  OpenCode${current && read("opencode-offered.json") === true ? " (offered)" : ""}: ${(await installedProvider(executor)) ? "signed in" : "not signed in"}`,
@@ -85,10 +82,10 @@ async function showMachineStatus(
 	if (offered || agents.includes("claude") || harnessImage("claude")) {
 		const signIn = await claudeSignIn(executor);
 		console.log(
-			`  Claude Code${offered && current ? " (offered)" : ""}: ${signIn === "token" ? "signed in" : signIn === "none" ? "not signed in" : "unknown"}`,
+			`  Claude Code${offered && current ? " (offered)" : ""}: ${signIn === "token" ? "login kept on this machine" : signIn === "none" ? "pays with your plans and keys" : "unknown"}`,
 		);
 	}
-	for (const relay of ["codex", "opencode", "claude"] as const) {
+	for (const relay of ["opencode", "claude"] as const) {
 		const notes = await relayNotes(executor, relay).catch(() => []);
 		if (notes.length)
 			console.log(`  ${HARNESS_LABELS[relay]} relay, latest notes:\n${notes.map(line => "    " + line).join("\n")}`);
@@ -115,6 +112,7 @@ async function main() {
 		allowPositionals: true,
 		options: {
 			provider: { type: "string" },
+			"token-stdin": { type: "boolean" },
 			egress: { type: "string" },
 			"egress-allow": { type: "string" },
 			"egress-domains": { type: "string" },
@@ -135,6 +133,7 @@ async function main() {
 			"snapshot-user": { type: "string" },
 			"keep-free": { type: "string" },
 			quick: { type: "boolean" },
+			connect: { type: "boolean" },
 			"no-tui": { type: "boolean" },
 		},
 	});
@@ -159,6 +158,11 @@ async function main() {
 	const agent = positionals[1] as MachineHarness;
 	if (values.provider && !(isMachineHarness(agent) && MACHINE_HARNESSES[agent].takesProvider && command === "login"))
 		throw new RunnerError("Use --provider with login opencode.");
+	if (
+		values["token-stdin"] &&
+		!(isMachineHarness(agent) && MACHINE_HARNESSES[agent].tokenFromStdin && command === "login")
+	)
+		throw new RunnerError("Use --token-stdin with login claude.");
 	// Setup without --harness is the wizard; it takes one section name, such as setup network.
 	const wizard = command === "setup" && wantsWizard(values);
 	const validCommand = auth
@@ -166,7 +170,7 @@ async function main() {
 		: positionals.length <= (wizard ? 2 : 1) && ["setup", "run", "pair", "status", "log", "prune"].includes(command);
 	if (!validCommand)
 		throw new RunnerError(
-			"Use windlass-runner [setup [--quick|--no-tui|name|agents|claude|codex|opencode|profile|network|limits]|run|pair|status|capabilities|log|prune|login <agent>|logout <agent>] [--platform URL] [--name TEXT] [--max-sandboxes N] [--max-running N] [--spares 0|1|2] [--slots N | --max-turns N] [--slot-cpus X] [--slot-memory Nm|Ng] [--sandbox-memory Ng] [--snapshot-disk SIZE] [--snapshot-user SIZE] [--keep-free SIZE] [--screenshots] [--harness claude] [--harness opencode] [--harness codex] [--allow-profile ID ...] [--egress open|restricted|none] [--egress-allow host[,host]] [--egress-domains host|*.host|@preset[,...]].",
+			"Use windlass-runner [setup [--quick|--no-tui|--connect|name|agents|opencode|profile|network|limits]|run|pair|status|capabilities|log|prune|login opencode|login claude [--token-stdin]|logout opencode|logout claude] [--platform URL] [--name TEXT] [--max-sandboxes N] [--max-running N] [--spares 0|1|2] [--slots N | --max-turns N] [--slot-cpus X] [--slot-memory Nm|Ng] [--sandbox-memory Ng] [--snapshot-disk SIZE] [--snapshot-user SIZE] [--keep-free SIZE] [--screenshots] [--harness claude] [--harness opencode] [--harness codex] [--allow-profile ID ...] [--egress open|restricted|none] [--egress-allow host[,host]] [--egress-domains host|*.host|@preset[,...]].",
 		);
 	if (values.name !== undefined && (!["setup", "run", "pair"].includes(command) || !validMachineName(values.name)))
 		throw new RunnerError("Use --name with setup, run or pair and a printable name of 1 to 64 characters.");
@@ -211,8 +215,9 @@ async function main() {
 		maxRunning: limit("max-running", values["max-running"]),
 		store: storeFlags(values),
 	};
-	if ((values.quick || values["no-tui"]) && command !== "setup")
-		throw new RunnerError("Use --quick and --no-tui with setup.");
+	if ((values.quick || values["no-tui"] || values.connect) && command !== "setup")
+		throw new RunnerError("Use --quick, --no-tui and --connect with setup.");
+	if (values.connect && !wizard) throw new RunnerError("Use --connect with setup alone, without --harness.");
 	if (values.quick && !wizard) throw new RunnerError("Use --quick with setup alone, without --harness.");
 	if (wizard) return setupWizard(positionals.slice(1), values);
 	if (command === "log") return showLog();
@@ -222,13 +227,15 @@ async function main() {
 	process.on("SIGTERM", stop);
 	try {
 		if (auth) {
-			const { changeLogin, signedOut } = MACHINE_HARNESSES[agent];
+			const { changeLogin, signedOut, tokenFromStdin } = MACHINE_HARNESSES[agent];
 			const label = HARNESS_LABELS[agent];
 			const paired = loadPair();
 			if (!paired || (command === "login" && !paired.key))
 				throw new RunnerError("Pair this machine before signing in to " + label + ".");
 			if (command === "login") {
-				await changeLogin(new Executor(paired.current, limits), true, abort.signal, values.provider);
+				const executor = new Executor(paired.current, limits);
+				if (values["token-stdin"] && tokenFromStdin) await tokenFromStdin(executor, abort.signal);
+				else await changeLogin(executor, true, abort.signal, values.provider);
 				console.log(label + ": signed in.");
 			} else {
 				for (const identity of [paired.current, ...paired.previous]) {
@@ -348,8 +355,9 @@ async function main() {
 					client = undefined;
 					if (command === "setup") {
 						const machine = new Executor(result.paired.current, limits);
+						// Only OpenCode signs in here: Claude Code and Codex pay with the account's plans and keys.
 						await setupAgents(
-							agents,
+							agents.filter(id => id === "opencode"),
 							prompt => terminalQuestion(prompt, abort.signal),
 							id => signInForSetup(machine, id, abort.signal, launch?.importFile),
 							console.log,

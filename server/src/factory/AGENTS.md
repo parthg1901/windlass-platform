@@ -39,7 +39,9 @@ Types and inputs:
 
 Limits and judgement:
 
-- `./budget.ts` tracks an item's budget and returns a `Wait` when a turn may not start yet. It never refuses.
+- `./budget.ts` tracks an item's budget and returns a `Wait` when a turn may not start yet. It never refuses. The budget is dollars of work (`usd`): every turn at API prices whoever pays (`turnUsd`, priced at its end), a plan's turns at what the same tokens would cost on a key. A plan's windows are account-wide, so they never measure an item. Tokens hold only while a turn could not be priced (`usdUnknown`, `budgetUnits`). A part's dollars follow its planned tokens (`partShare`). A turn is also stopped at its budget while it runs: `nextTurn` in `./change.ts` puts `turnBudget` (what is left plus `TURN_BUDGET_GRACE`) on the `deliver` effect, the session prices the running spend (`server/src/actors/agent-session/budget-watch.ts`, `crossedStop`) and stops the turn there, and its `budgetStopped` ended fact asks the budget question through `budgetStopped` in `./change.ts`.
+- `./cost.ts` records what each turn used (model, payer, tokens, hosted size and seconds) in the item's spend (`usage`) and prices it with `CostRates` (`server/src/model-prices.ts`) by who carried it (its `payers`: plans' turns at their API-price value, keys' at their cost) and its hosted time as billing split it (the usage's `hosted`, from `hostedSplit` in `server/src/usage.ts`: included in the plan or extra), or, with billing off, estimated at the rate card. `extraUsd` is what the item added to the person's bills. An unpriced part is unknown, never guessed.
+- `./usage-summary.ts` holds the Usage summary: an item's type from its changed paths (`workType`, stored by the work item when a turn with changes ends), its size from its parts, the ended items of a period (`finishedItems`), and their median and p90 cost and time, priced in the browser (`summarize`). Retry spend is what `chargeTurn` puts in the spend's `retryUsage`: turns of a run begun by `retryRun` and of a `ci_fix` step.
 - `./autonomy.ts` holds required CI branches, the small-plan limit, the plan critic and the merge decision.
 - `./feature-plan.ts` validates the planner's subtasks and dependencies. It stays free of Node modules because the web mock imports it; child and session ids live in `./feature-ids.ts` (uses `node:crypto`).
 - `./cross-repo.ts` adds cross-repo features (`WLP_FACTORY_CROSS_REPO=1`) as pure helpers that the blueprint calls at a few points.
@@ -66,7 +68,7 @@ Review and readiness:
 
 ## Pitfalls
 
-- The web imports `budget`, `default-place`, `feature-plan`, `placement`, `readiness`, `readiness-track`, `resolve-run`, `answered`, `types` and `verdict`. Keep their runtime imports browser-safe and run the web typecheck too.
+- The web imports `budget`, `cost`, `usage-summary`, `default-place`, `feature-plan`, `placement`, `readiness`, `readiness-track`, `resolve-run`, `answered`, `types` and `verdict`. Keep their runtime imports browser-safe and run the web typecheck too.
 - Do not import a later flow module from an earlier one; the order above avoids cycles.
 - Never decide by harness id. Use the capability flags on records in `server/src/sandbox/harnesses.ts`.
 

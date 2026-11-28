@@ -27,6 +27,7 @@ import {
 import { useEffect, useState } from "react";
 import { FeedSection } from "../components/Feed";
 import { Mark, WarnIcon } from "../components/Icons";
+import { OnboardingGate } from "../components/Onboarding";
 import { StartComposer } from "../components/StartComposer";
 import { FilterBar } from "../components/WorkspaceFilters";
 import { useIdentity } from "../lib/identity";
@@ -85,7 +86,7 @@ function AccountLine() {
 			) : (
 				<span className="tone-faint">
 					ChatGPT not connected ·{" "}
-					<a className="link" href="/settings#settings-models">
+					<a className="link" {...linkProps({ name: "connections", section: "plan-openai" })}>
 						Connect
 					</a>
 				</span>
@@ -240,9 +241,22 @@ export interface HomeProps {
 	filters: Filters;
 	onFilters(filters: Filters): void;
 	machines: readonly MachineSummary[];
+	/** The first-run setup is on the page: the header's counts, ChatGPT line and meter are left out, having nothing in them yet. */
+	firstRun?: boolean;
+	onFirstRun?(showing: boolean): void;
 }
 
-export function Home({ state, items, usage, scope = "all", filters, onFilters, machines }: HomeProps) {
+export function Home({
+	state,
+	items,
+	usage,
+	scope = "all",
+	filters,
+	onFilters,
+	machines,
+	firstRun = false,
+	onFirstRun,
+}: HomeProps) {
 	const { sessions, connection, error } = state;
 	const { platform } = useApp();
 	const now = useNow(15_000);
@@ -265,21 +279,23 @@ export function Home({ state, items, usage, scope = "all", filters, onFilters, m
 
 	return (
 		<main className="home home-agents ws-pane">
-			<header className="home-head">
-				<div className="home-title">
-					<h1 className="display">{scope === "none" ? "No repository" : "Agents"}</h1>
-					<Facts
-						agents={agents === null ? null : agents.length}
-						counts={counts}
-						ceiling={ceiling}
-						waiting={waiting + asked}
-					/>
-					<AccountLine />
-				</div>
-				<div className="ws-head-usage">
-					<UsageMeter numbers={usage} />
-				</div>
-			</header>
+			{firstRun ? null : (
+				<header className="home-head">
+					<div className="home-title">
+						<h1 className="display">{scope === "none" ? "No repository" : "Agents"}</h1>
+						<Facts
+							agents={agents === null ? null : agents.length}
+							counts={counts}
+							ceiling={ceiling}
+							waiting={waiting + asked}
+						/>
+						<AccountLine />
+					</div>
+					<div className="ws-head-usage">
+						<UsageMeter numbers={usage} />
+					</div>
+				</header>
+			)}
 			<HostedNotice numbers={usage} pro={platform.info?.billing?.plans.find(plan => plan.id === "pro") ?? null} />
 
 			{empty ? null : (
@@ -317,12 +333,20 @@ export function Home({ state, items, usage, scope = "all", filters, onFilters, m
 					))}
 				</ul>
 			) : empty ? (
-				<div className="state state-empty home-empty">
-					<Mark size={56} />
-					<h2>No agents yet</h2>
-					<p>Say what it should do and press Enter. Where it runs and the repository are under the field.</p>
-					<StartComposer sessions={sessions} autoFocus hostedNotice />
-				</div>
+				<OnboardingGate
+					// The setup opens on "Everything" only, never on the agents on no repository.
+					sessions={scope === "none" ? 1 : (agents?.length ?? null)}
+					items={items === null ? null : items.length}
+					machines={machines}
+					onShowing={onFirstRun}
+				>
+					<div className="state state-empty home-empty">
+						<Mark size={56} />
+						<h2>No agents yet</h2>
+						<p>Say what it should do and press Enter. Where it runs and the repository are under the field.</p>
+						<StartComposer sessions={sessions} autoFocus hostedNotice />
+					</div>
+				</OnboardingGate>
 			) : (
 				<div className="home-feed">
 					<FeedSection title="Needs you" tone="needs" entries={feed.needs} now={now} />

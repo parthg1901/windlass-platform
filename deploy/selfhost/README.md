@@ -58,7 +58,7 @@ Before first live boot, run `SELFHOST_ENV_DIR=<private directory> deploy/selfhos
 
 The gateway URL clients dial (`WLP_PUBLIC_ENDPOINT`) and the engine's canonical leader URL (`SELFHOST_ENGINE_ORIGIN`) are separate settings. The latter determines the JWT issuer persisted in the signing ring. Keep it stable for the life of the data, including restores. For an existing loopback staging volume, keep its original canonical URL when assigning it a client-facing hostname. Changing the issuer of an existing ring can produce `503 auth.issuance_unavailable` even with correct admin credentials.
 
-The live preset selects the production image, disables demo login and runs real Windlass sign-in commands locally. Choose paired-machine sessions for workloads on a separate machine. The preset's hosted provider is fake. Configure a supported real provider separately if hosted sessions are required. Additional application settings, including the user allowlist, go in the mode-600 server env file the stack env file selects. Configure and pair a runner for the intended stack independently. A runner paired to another deployment has its own identity and session data.
+The live preset selects the production image, disables demo login and runs real Windlass sign-in commands locally. Choose paired-machine sessions for workloads on a separate machine. The preset's hosted provider is fake. Configure a supported real provider separately if hosted sessions are required. Additional application settings, including the user allowlist, go in the mode-600 server env file the stack env file selects. Set `WLP_PLAN_USERS` there too (user ids, or `*`) for users to run hosted turns on a connected plan, hosted Windlass's own ChatGPT models included. The server warns at startup while it is unset. Configure and pair a runner for the intended stack independently. A runner paired to another deployment has its own identity and session data.
 
 For platform login with the existing GitHub App, keep its repository connection callback first and add `<web-origin>/signin` as a second callback URL. Enable the App's **Email addresses** read-only permission only when admitting GitHub users through `WLP_ALLOWED_EMAILS`. For Google, register a **Web application** OAuth client with the exact authorized redirect URI `<web-origin>/signin`. Set `WLP_GOOGLE_CLIENT_ID` and `WLP_GOOGLE_CLIENT_SECRET` in the protected server env file and recreate the server. Google login is disabled and its button is hidden unless both are set. Register each web origin where people sign in.
 
@@ -132,7 +132,7 @@ Switch every server node together when the owner is ready to update and re-pair 
    `platform-online.env` through the deployment's secret channel. Install its single `WLP_PLATFORM_KEY`
    line in the mode-600 optional server env file (`SELFHOST_SERVER_ENV_FILE`).
    Keep both the env file and generated key material outside Git, images, logs and chat.
-3. Stage the **0.2.0** runner at a new immutable digest. Keep the old setup command available until cutover. Set the new pinned `WLP_RUNNER_IMAGE` and matching
+3. Stage a runner of **0.3.13** or later (the oldest the server serves) at a new immutable digest. Keep the old setup command available until cutover. Set the new pinned `WLP_RUNNER_IMAGE` and matching
    `WLP_RUNNER_CAPABILITIES` in that server env file. To obtain the capabilities JSON, export the new
    `WLP_RUNNER_IMAGE` digest reference and run `docker run --rm --network none -e WLP_RUNNER_IMAGE "$WLP_RUNNER_IMAGE" capabilities`.
    Set `WLP_REQUIRE_SIGNED_RUNNER=1` in

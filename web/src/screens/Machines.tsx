@@ -1,16 +1,16 @@
 import {
+	MACHINE_CONNECT_COMMAND,
 	MAX_MACHINES,
-	type CredentialSource,
 	type MachineClaim,
 	type MachineSummary,
 	type MachineWarning,
 	type MachinesInfo,
-	type ModelProvider,
 } from "@contract";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { hasReason } from "../api/client";
 import { CopyButton } from "../components/Copy";
 import { Command } from "../components/Command";
+import { Waiting } from "../components/ui/StatusTag";
 import { Dialog } from "../components/Dialog";
 import {
 	CheckIcon,
@@ -24,14 +24,14 @@ import {
 	WarnIcon,
 } from "../components/Icons";
 import { RowsSkeleton } from "../components/Skeleton";
-import { HARNESS_NAMES, loginCommand, signInWords, type ReportedHarness } from "../lib/acp";
+import { HARNESS_NAMES, loginCommand, signInWords } from "../lib/acp";
 import { absoluteTime, clockTime, plural, relativeTime, spelledDuration } from "../lib/format";
-import { navigate } from "../lib/router";
+import { linkProps, navigate } from "../lib/router";
+import { cellId } from "../lib/connections";
 import { useApp, useAuth } from "../state/app";
-import { useAccount, useHostedProviders, useNow } from "../state/hooks";
+import { useAccount, useNow } from "../state/hooks";
 import { DefaultPlace } from "../components/RunSettings";
 import { SOURCE_NAMES } from "../lib/models";
-import { anyOf } from "../../../server/src/sandbox/harnesses.js";
 import {
 	MAX_WHEN_TO_USE,
 	diskSize,
@@ -44,7 +44,7 @@ import {
 	tagsOf,
 } from "../lib/machines";
 import { MachineState, SandboxLine } from "../components/MachineState";
-import { useMachines } from "../state/machines";
+import { type MachinesState, useMachines } from "../state/machines";
 import { ORCHESTRATOR_CHOICES, orchestratorNote, orchestratorOf, type Orchestrator } from "../lib/placement";
 import { Check } from "../components/ui/Check";
 import { AgentGlyph } from "../components/ui/Pill";
@@ -110,8 +110,8 @@ function Warning({
 				<WarnIcon />
 				<div>
 					<p className="callout-text">
-						This machine's runner is {machine.runnerVersion}; the platform needs {info.minRunnerVersion} or later, so it
-						cannot connect.{" "}
+						This machine's runner is {machine.runnerVersion}, so it cannot connect. Update your runner to{" "}
+						{info.minRunnerVersion} or later.{" "}
 						{install
 							? info.platformFingerprint
 								? "Update it on the machine and pair again to pin the platform key."
@@ -293,17 +293,13 @@ function machineCapacity({ slots, turns, host }: MachineSummary) {
 	return parts.join(" · ");
 }
 
-function MachineAgents({ machine, onChanged }: { machine: MachineSummary; onChanged(list: MachineSummary[]): void }) {
+function MachineAgents({ machine }: { machine: MachineSummary }) {
 	const harnesses = machine.harnesses ?? [];
-	const saved = useHostedProviders(harnesses.some(harness => harness.machineSignIns?.length));
 	if (harnesses.length === 0) return null;
 	return (
 		<ul className="machine-agents" aria-label="Agents on this machine">
 			{harnesses.map(harness => {
-				const command = loginCommand(harness);
-				const both = harness.keyRelay
-					? (harness.machineSignIns ?? []).filter(provider => saved?.some(key => key.provider === provider))
-					: [];
+				const command = harness.signIn === "none" ? loginCommand(harness) : null;
 				return (
 					<li key={harness.id} className={`machine-agent machine-agent-${harness.signIn}`}>
 						<span className="machine-agent-name">
@@ -315,9 +311,6 @@ function MachineAgents({ machine, onChanged }: { machine: MachineSummary; onChan
 								{" "}
 								<CheckIcon size={13} />
 								{signInWords(harness)}
-								{!harness.platformKeys?.length && harness.id === "codex" && harness.method
-									? ` with ${harness.method === "chatgpt" ? "ChatGPT" : "an API key"}`
-									: ""}
 							</span>
 						) : harness.signIn === "none" ? (
 							<span className="machine-agent-state">: {signInWords(harness)}</span>
@@ -328,104 +321,27 @@ function MachineAgents({ machine, onChanged }: { machine: MachineSummary; onChan
 								{harness.signInReason ? ` (${harness.signInReason})` : ""}
 							</span>
 						)}
-						{harness.signIn !== "none" ? null : (
+						{command ? (
 							<span className="machine-agent-command">
 								<code>{command}</code>
 								<CopyButton text={command} label={`Copy the command that signs ${HARNESS_NAMES[harness.id]} in`} />
 							</span>
-						)}
-						{both.length > 0 ? (
-							<CredentialChoice machine={machine} harness={harness} providers={both} onChanged={onChanged} />
+						) : null}
+						{harness.paysWith ? (
+							<span className="machine-agent-paid">
+								Paid with your plan or key ·{" "}
+								<a
+									className="link"
+									{...linkProps({ name: "connections", section: cellId(harness.id, machine.machineId) })}
+								>
+									{harness.signIn === "none" ? "Connect on Connections" : "Change on Connections"}
+								</a>
+							</span>
 						) : null}
 					</li>
 				);
 			})}
 		</ul>
-	);
-}
-
-function CredentialChoice({
-	machine,
-	harness,
-	providers,
-	onChanged,
-}: {
-	machine: MachineSummary;
-	harness: ReportedHarness;
-	providers: ModelProvider[];
-	onChanged(list: MachineSummary[]): void;
-}) {
-	const { client, explain } = useApp();
-	const auth = useAuth();
-	const [busy, setBusy] = useState<CredentialSource | null>(null);
-	const [error, setError] = useState<string | null>(null);
-	const label = useId();
-	const saved: CredentialSource = harness.source ?? "machine";
-	const shown = busy ?? saved;
-	const here =
-		machine.os.toLowerCase().startsWith("mac") || machine.os === "Darwin" ? "this Mac" : `“${machineLabel(machine)}”`;
-	const keys = anyOf(providers.map(provider => SOURCE_NAMES[provider]));
-	const plan =
-		harness.id === "claude"
-			? "Claude subscription"
-			: harness.machineMethod === "chatgpt" ||
-					(providers.includes("openai") && harness.machineProviders?.includes("chatgpt"))
-				? "ChatGPT plan"
-				: `${keys} login${providers.length > 1 ? "s" : ""}`;
-	const choices: Array<{ id: CredentialSource; label: string }> = [
-		{ id: "machine", label: `Use ${here}'s ${plan}` },
-		{ id: "key", label: `Use your ${keys} key${providers.length > 1 ? "s" : ""}` },
-	];
-	const set = (source: CredentialSource) => {
-		if (source === saved || busy) return;
-		setBusy(source);
-		setError(null);
-		client
-			.user(auth)
-			.setCredentialSource({ machineId: machine.machineId, harness: harness.id, source })
-			.then(
-				list => {
-					onChanged(list);
-					setBusy(null);
-				},
-				(failure: unknown) => {
-					setError(explain(failure));
-					setBusy(null);
-				},
-			);
-	};
-	return (
-		<div className="machine-credential">
-			<span className="label" id={label}>
-				Paid by
-			</span>
-			<div className="segmented machine-credential-choice" role="radiogroup" aria-labelledby={label}>
-				{choices.map(choice => (
-					<label
-						key={choice.id}
-						className={`segment${shown === choice.id ? " segment-chosen" : ""}`}
-						data-source={choice.id}
-					>
-						<input
-							className="segment-radio"
-							type="radio"
-							name={label}
-							value={choice.id}
-							checked={shown === choice.id}
-							disabled={busy !== null}
-							onChange={() => set(choice.id)}
-						/>
-						{choice.label}
-					</label>
-				))}
-			</div>
-			<p className="field-note">Only this one is used. If it can't be, the item stops and asks.</p>
-			{error && (
-				<p className="field-note tone-bad" role="alert">
-					{error}
-				</p>
-			)}
-		</div>
 	);
 }
 
@@ -626,7 +542,7 @@ function MachineRow({
 			</div>
 			{machine.harnesses?.length || upgrade || limited.length > 0 ? (
 				<div className="machine-part">
-					<MachineAgents machine={machine} onChanged={onChanged} />
+					<MachineAgents machine={machine} />
 					{upgrade && <p className="field-note">{upgrade}</p>}
 					{limited.map(a => (
 						<p className="field-note" key={a.key}>
@@ -778,10 +694,13 @@ type AddStep = { step: "command" } | { step: "code" } | { step: "confirm"; claim
 /** Pairing a machine: the command that starts its runner, the code the runner prints, and what that machine says it is. */
 function AddDialog({
 	info,
+	machines,
 	onClose,
 	onAdded,
 }: {
 	info: MachinesInfo;
+	/** The user's machines as the page keeps them, live: a machine paired from the connect page arrives here. */
+	machines: MachinesState;
 	onClose(): void;
 	onAdded(machine: MachineSummary): void;
 }) {
@@ -820,6 +739,7 @@ function AddDialog({
 	const install = installCommand(info, agents);
 	const oneLine = oneLineInstall(info);
 	const complete = code.replace(/-/g, "").length === 8;
+	const paired = useNewMachine(machines, step.step === "command");
 
 	const shown = useRef(step.step);
 	useEffect(() => {
@@ -1017,33 +937,62 @@ function AddDialog({
 			lede="Use a terminal on your Mac, Linux computer or Windows machine (WSL) with Docker."
 			onClose={onClose}
 			footer={
-				<>
-					<button type="button" className="button button-quiet" onClick={onClose}>
+				paired ? (
+					<button type="button" className="button button-primary" onClick={onClose}>
+						Done
+					</button>
+				) : (
+					<button type="button" className="button button-quiet" onClick={onClose} ref={aim}>
 						Cancel
 					</button>
-					<button type="button" className="button button-primary" onClick={() => go({ step: "code" })} ref={aim}>
-						Enter the code
-					</button>
-				</>
+				)
 			}
 		>
 			<div className="machine-dialog">
 				{oneLine ? (
-					<div>
-						<p className="machine-step">1. Install</p>
-						<Command text={oneLine} label="The install command" />
-						<details className="field-note">
-							<summary>What setup asks</summary>
-							<p>
-								Choose a name, sign in your agents and set network access, isolation and limits. Setup starts the
-								machine software in the background.{" "}
-								<a href={`${info.platformUrl}/install.sh`} target="_blank" rel="noreferrer">
-									Read the script
+					<>
+						<div>
+							<Command text={MACHINE_CONNECT_COMMAND} label="The connect command" />
+							<p className="field-note">
+								Run it on the machine; it needs Docker and Node. It opens a page here to approve the machine, then runs
+								in the background. Its agents use your plans and keys from{" "}
+								<a className="link" {...linkProps({ name: "connections" })}>
+									Connections
 								</a>
 								.
 							</p>
+							{paired ? (
+								<p className="machine-wait machine-paired" role="status">
+									<CheckIcon size={15} />
+									Paired: {machineLabel(paired)}.
+								</p>
+							) : (
+								<Waiting className="machine-wait">Waiting for your machine…</Waiting>
+							)}
+						</div>
+						<details className="panel-more machine-no-node">
+							<summary>
+								<ChevronIcon size={12} className="panel-more-chevron" />
+								No Node?
+							</summary>
+							<div className="machine-other-ways-body">
+								<Command text={oneLine} label="The install command" />
+								<p className="field-note">
+									Setup asks for a name, signs in your agents and sets network access, isolation and limits, then starts
+									the machine software in the background.{" "}
+									<a href={`${info.platformUrl}/install.sh`} target="_blank" rel="noreferrer">
+										Read the script
+									</a>
+									. It prints a code: enter it here, then confirm the machine key.
+								</p>
+								<p>
+									<button type="button" className="button button-outline" onClick={() => go({ step: "code" })}>
+										Enter the code
+									</button>
+								</p>
+							</div>
 						</details>
-					</div>
+					</>
 				) : (
 					<p className="callout callout-info">
 						<InfoIcon />
@@ -1109,11 +1058,36 @@ function AddDialog({
 						</div>
 					</details>
 				) : null}
-				<p className="machine-step">2. Enter the code from your terminal</p>
-				<p className="machine-step">3. Confirm the machine key to finish</p>
 			</div>
 		</Dialog>
 	);
+}
+
+/**
+ * A machine that joined the list after the dialog's first step was shown (paired from the connect page the
+ * command opens); null until one does. The page's list follows the user's actor; it is read again when the person
+ * comes back to this tab from that page.
+ */
+function useNewMachine(machines: MachinesState, watching: boolean): MachineSummary | null {
+	const known = useRef<Set<string> | null>(null);
+	const [found, setFound] = useState<MachineSummary | null>(null);
+	const { list, reload } = machines;
+	useEffect(() => {
+		if (!watching) return;
+		window.addEventListener("focus", reload);
+		return () => window.removeEventListener("focus", reload);
+	}, [watching, reload]);
+	useEffect(() => {
+		if (list === null || found) return;
+		if (known.current === null) {
+			known.current = new Set(list.map(machine => machine.machineId));
+			return;
+		}
+		if (!watching) return;
+		const fresh = list.find(machine => !known.current?.has(machine.machineId));
+		if (fresh) setFound(fresh);
+	}, [list, watching, found]);
+	return found;
 }
 
 function RemoveDialog({
@@ -1351,6 +1325,7 @@ export function Machines({ adding }: { adding: boolean }) {
 			{adding && info !== null && canAdd ? (
 				<AddDialog
 					info={info}
+					machines={machines}
 					onClose={closeAdd}
 					onAdded={machine =>
 						machines.replace([...(list ?? []).filter(one => one.machineId !== machine.machineId), machine])

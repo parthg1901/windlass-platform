@@ -45,7 +45,7 @@ import { feedCounts, type FeedFilters } from "../lib/repositories";
 import { navigate } from "../lib/router";
 import { submissionOf, type Submission } from "../lib/submission";
 import { useApp, useAuth } from "../state/app";
-import { useCatalogs, useHostedProviders, useModels, useNow } from "../state/hooks";
+import { useCatalogs, useHostedCredentials, useModels, useNow } from "../state/hooks";
 import { agentModelsOf } from "../lib/subtask-agents";
 import { DefaultsProblem, useFilingDefaults, useCatalog } from "../components/StartComposer";
 import { effortChoices, effortsOf, harnessOptions } from "../lib/models";
@@ -399,7 +399,7 @@ export function NewItemDialog({
 	const now = useNow(30_000);
 	const mine = machinesInfo === null ? [] : (machines.list ?? []);
 	const { saved, account, problem: defaultsProblem, retry } = useFilingDefaults(repositoryId);
-	const keys = useHostedProviders();
+	const keys = useHostedCredentials();
 	const accountModels = useModels();
 	// What this item changes for itself; everything else comes from the repository, then your defaults.
 	const [changing, setChanging] = useState(false);
@@ -414,7 +414,6 @@ export function NewItemDialog({
 	const layers = {
 		account: account.settings?.defaults,
 		repository: saved.defaults,
-		machines: machines.list,
 		sizes: platform.info?.hostedSizes,
 	};
 	const placeLayer =

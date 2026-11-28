@@ -1,5 +1,4 @@
 import type { ProviderRefusal } from "../provider-refusal.js";
-import type { MachinePayerOffer } from "./default-place.js";
 import type { PlacementRoute, PlacementInventory } from "./placement.js";
 import type {
 	CheckConclusion,
@@ -102,6 +101,8 @@ export interface CiProgress extends BaseFailureDecision {
 }
 
 export interface Run extends ItemRun {
+	/** The person started this run again after one that failed or was given up (Retry): what it uses is retry spend. */
+	retry?: true;
 	/** The PR summaries were published in this run. A retry can inherit a passing integration on the same heads. */
 	confirmFeatureCi?: true;
 	/** Read CI once before the owner takes the branch. */
@@ -216,7 +217,6 @@ export interface FeatureJob {
 	askMachine?: boolean;
 	offerHosted?: boolean;
 	hostedProfile?: ChildPlacement["profile"];
-	offerPayer?: MachinePayerOffer;
 	reviewFix?: { reviewedHead?: string };
 	ciFix?: { head: string; fingerprint: string };
 	conflictFix?: { target: string; child?: string; retry?: true };
@@ -239,6 +239,8 @@ export interface FeatureJob {
 	placement?: ChildPlacement;
 	failure?: string | null;
 	cancelRequested?: boolean;
+	/** Dispatched in a run the person started again: all it uses is retry spend. */
+	retry?: true;
 	id: string;
 	task: import("../contract.js").PlanSubtask;
 	state: import("../contract.js").ItemState;
@@ -274,7 +276,6 @@ export interface FactoryItem {
 	requestedReview?: RequestedReview;
 	/** Waiting for the builder to bind to a machine before its first run. */
 	awaitingPlace?: string;
-	offerPayer?: MachinePayerOffer;
 	awaitingReviewer?: boolean;
 	useHosted?: boolean;
 	placeAttempts?: number;
@@ -385,6 +386,8 @@ export interface FactoryItem {
 	workingSince: number | null;
 	/** When it last entered done, failed or cancelled; absent while it is not ended, and on items that ended before this was kept. */
 	endedAt?: number;
+	/** When its first run began. */
+	startedAt?: number;
 	run: Run | null;
 	pr: { number: number; url: string } | null;
 	/** The commit pushed last. */
@@ -478,6 +481,12 @@ export interface TurnSpend {
 	hostedSeconds: number;
 	/** What a machine harness reported of the turn. Absent for Windlass. */
 	agent?: AgentTurn;
+	/** The turn's model, payer, tokens and sandbox size, for its cost (cost.ts). Absent from the platform's own spend facts. */
+	meter?: import("./cost.js").TurnMeter;
+	/** The turn's model dollars at API prices, whoever paid (budget.ts `turnUsd`); null where they could not be priced. */
+	usd?: number | null;
+	/** What billing made of the item's own hosted seconds so far, a lifetime total like `hostedSeconds`; absent with billing off. */
+	hosted?: import("../contract.js").HostedSplit;
 }
 
 /** What a machine harness (Claude Code, OpenCode) reported of one turn. */
@@ -523,7 +532,7 @@ export type Fact =
 			place: SandboxPlace;
 			agent: NonNullable<FactoryItem["agent"]>;
 	  }
-	| { kind: "default_place_wait"; offerPayer?: MachinePayerOffer; reviewer?: boolean; at: number; sentence: string }
+	| { kind: "default_place_wait"; reviewer?: boolean; at: number; sentence: string }
 	| ({ kind: "github_feedback"; at: number } & FeedbackInput)
 	| { kind: "reverify"; at: number; head: string }
 	/** A cross-repo feature's combined run was asked of GitHub (`runId` once GitHub named it). */
@@ -618,7 +627,7 @@ export type Fact =
 	  }
 	| { kind: "ci_rerun_result"; repo?: string; at: number; head: string; accepted: string[]; said: string }
 	/** The ledger has counted more hosted sandbox time for the item's session (it settles after a turn ends, and then while nothing else happens). */
-	| { kind: "spent"; at: number; hostedSeconds: number }
+	| { kind: "spent"; at: number; hostedSeconds: number; hosted?: import("../contract.js").HostedSplit }
 	/**
 	 * The draft feature PR's ready-for-review step after handover: `refused` is GitHub's reason when it kept refusing (the
 	 * person is asked to mark it ready), null once the PR is ready.
@@ -649,7 +658,6 @@ export type StepFact =
 			askMachine?: boolean;
 			offerHosted?: boolean;
 			hostedProfile?: ChildPlacement["profile"];
-			offerPayer?: MachinePayerOffer;
 			refused?: boolean;
 			dailyCap?: boolean;
 			providerUntil?: number;
@@ -697,6 +705,8 @@ export type StepFact =
 	| {
 			kind: "turn_ended";
 			taskKind?: import("./readiness-track.js").TaskKind;
+			/** What the work's changed paths are (usage-summary.ts `workType`); absent where git named none. */
+			workType?: import("../contract.js").WorkType;
 			autoApprovePlans?: boolean;
 			at: number;
 			key: string;
@@ -727,6 +737,8 @@ export type StepFact =
 			sandboxFailed?: string;
 			/** Measured hosted memory and limit in MiB, plus the sandbox size. */
 			outOfMemory?: OutOfMemory;
+			/** Its session stopped the turn at the delivery's `budget` (#100a): the item asks its budget question. */
+			budgetStopped?: true;
 			spend: TurnSpend;
 	  }
 	| {
@@ -745,6 +757,8 @@ export type StepFact =
 			providerRefusal?: ItemProviderRefusal /** As `turn_ended`'s. */;
 			sandboxFailed?: string;
 			outOfMemory?: OutOfMemory;
+			/** Its session stopped the review at the delivery's `budget` (#100a). */
+			budgetStopped?: true;
 			spend: TurnSpend;
 	  }
 	/** The session's sandbox was removed for "Start on a fresh sandbox" (`fresh_sandbox` effect): `plan` runs next, in a new one. */
@@ -859,6 +873,8 @@ export type Effect =
 			untrusted?: string[] /** Every source of someone else's in `untrusted` is in `FactoryItem.unsandboxed`. */;
 			unsandboxed?: true /** A builder's turn that goes on with its step: the prompt for an agent without the step's conversation (session-inbox.ts `Delivery.fresh`). */;
 			fresh?: { text: string; untrusted: string[]; unsandboxed?: true };
+			/** Where the turn is stopped while it runs (budget.ts `turnBudget`); absent where nothing measurable holds the item. */
+			budget?: import("./budget.js").TurnBudget;
 	  }
 	/** The turn of `key` is not wanted any more: take it out of the inbox, or stop it. */
 	| { kind: "release_review"; key: string; run: number; to: "review" }

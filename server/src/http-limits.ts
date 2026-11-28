@@ -108,3 +108,31 @@ export function rateLimited(seconds: number, message: string, code = "rate_limit
 		},
 	);
 }
+
+const noStore = (status: number, body: unknown) =>
+	Response.json(body, { status, headers: { "cache-control": "no-store" } });
+
+/** RivetKit has already bounded and buffered the HTTP body. Apply a route's smaller limit before parsing it. */
+export async function readJsonBody(request: Request, maxBytes: number): Promise<{ value: unknown } | Response> {
+	if (Number(request.headers.get("content-length")) > maxBytes) return noStore(413, { code: "body_too_large" });
+	const reader = request.body?.getReader();
+	if (!reader) return noStore(400, { code: "bad_input" });
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			size += value.length;
+			if (size > maxBytes) return noStore(413, { code: "body_too_large" });
+			chunks.push(value);
+		}
+		try {
+			return { value: JSON.parse(Buffer.concat(chunks).toString()) };
+		} catch {
+			return noStore(400, { code: "bad_input" });
+		}
+	} finally {
+		reader.releaseLock();
+	}
+}

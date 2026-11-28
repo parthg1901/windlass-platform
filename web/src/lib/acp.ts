@@ -78,8 +78,12 @@ export function sessionModelWords(summary: Pick<SessionSummary, "harness" | "har
 export type ReportedHarness = NonNullable<MachineSummary["harnesses"]>[number];
 
 // The same words on every page. "unknown" is a runner that could not check: the agent may well run, so it is never said to be unable to.
-/** Its sign-in in a few words: "signed in", "sign in needed", "couldn't check the sign-in". */
+/** Its sign-in in a few words: "signed in", "sign in needed", "couldn't check the sign-in"; for an agent the account pays for (`paysWith`), what pays. */
 export function signInWords(harness: ReportedHarness): string {
+	if (harness.paysWith && harness.signIn !== "unknown") {
+		if (harness.signIn === "none") return "no plan or key connected";
+		return harness.method === "api-key" ? "your API key" : "your plan";
+	}
 	// Signed in there, it uses its own sign-in first; a key only where that is all it has.
 	if (harness.platformKeys?.length && !harness.machineSignIns?.length) return "your API key";
 	return harness.signIn === "token"
@@ -89,9 +93,12 @@ export function signInWords(harness: ReportedHarness): string {
 			: "couldn't check the sign-in";
 }
 
-/** The command that signs a harness in on its machine, run inside the runner's container. */
-export const loginCommand = (harness: ReportedHarness) =>
-	`docker exec -it windlass-runner windlass-runner login ${harness.id}`;
+/**
+ * The command that signs a harness in on its machine, run inside the runner's container: only OpenCode keeps logins of
+ * its own there. Claude Code and Codex pay with the account's plans and keys (Connections → Pay with).
+ */
+export const loginCommand = (harness: ReportedHarness): string | null =>
+	harness.id === "opencode" ? `docker exec -it windlass-runner windlass-runner login ${harness.id}` : null;
 
 type NewBlock<B extends Block = Block> = B extends Block ? Omit<B, "id"> : never;
 

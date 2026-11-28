@@ -176,14 +176,16 @@
 	margin: 0;
 }
 
-.chatgpt-plan-form {
+.plan-connect {
 	display: grid;
-	gap: 10px;
+	gap: 8px;
 	margin-top: 10px;
 }
-.chatgpt-plan-actions {
-	display: flex;
-	gap: 8px;
+.plan-connect .machine-command {
+	margin-top: 0;
+}
+.plan-connect .field-note {
+	margin: 0;
 }
 
 @media (max-width: 760px) {

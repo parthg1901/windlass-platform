@@ -16,7 +16,7 @@
 import type { FeaturePlan, ItemSummary, ItemView } from "@contract";
 import { useId, useState, type ReactNode } from "react";
 import { FoldToggle, LongText } from "./Fold";
-import { absoluteTime, compact, plural } from "../lib/format";
+import { absoluteTime, plural } from "../lib/format";
 import { linkProps } from "../lib/router";
 import {
 	activeSubtasks,
@@ -210,7 +210,10 @@ export function SubtasksBlock({
 	jobs,
 	wait,
 	now,
+	cost,
 }: {
+	/** The feature's cost so far, as "Cost so far" says it (lib/cost.ts `costWords`): one figure on the page. */
+	cost?: string | null;
 	plan: FeaturePlan;
 	children: readonly ItemSummary[];
 	jobs?: ItemView["subtasks"];
@@ -225,9 +228,6 @@ export function SubtasksBlock({
 	const integrated = groups.done.filter(
 		line => line.phase === "integrated" && planKeys.has(line.entry.task.key),
 	).length;
-	const made = subtasks.map(entry => entry.child).filter((child): child is ItemSummary => child !== null);
-	const spent = made.reduce((sum, child) => sum + child.spent.tokens, 0);
-	const budget = subtasks.reduce((sum, entry) => sum + (entry.child?.budget.tokens ?? entry.task.budget.tokens), 0);
 	return (
 		<section className="subtasks-block" aria-label="Subtasks">
 			<header className="subtasks-head">
@@ -273,11 +273,13 @@ export function SubtasksBlock({
 					</ol>
 				</div>
 			) : null}
-			<p className="subtasks-foot">
-				<span>
-					{compact(spent)} <span className="tone-faint">of {compact(budget)} tokens</span>
-				</span>
-			</p>
+			{cost ? (
+				<p className="subtasks-foot">
+					<span>
+						{cost} <span className="tone-faint">so far, the feature with its parts</span>
+					</span>
+				</p>
+			) : null}
 		</section>
 	);
 }

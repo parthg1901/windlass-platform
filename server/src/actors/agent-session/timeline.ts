@@ -365,7 +365,7 @@ export function onWindlassEvent(
 	meta: SessionMeta,
 	turn: number,
 	event: WindlassEvent,
-	key?: import("../../sandbox/provider.js").ModelKeyLease,
+	key?: import("../../contract.js").CredentialRef,
 ): void {
 	if (typeof event !== "object" || event === null || typeof event.type !== "string") return;
 	if (typeof event.sessionId === "string" && event.sessionId !== "" && meta.windlassSessionId !== event.sessionId) {

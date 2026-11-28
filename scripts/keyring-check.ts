@@ -83,7 +83,7 @@ test("a saved sign-in is opened and re-sealed by a status read", () => {
 		overlap,
 		`await (async () => {
 		const { SignInHolder } = await import("./src/signin/holder.ts");
-		let row = {sealed: input, generation: 7, shortNoted: false};
+		let row = {sealed: input, generation: "g7", shortNoted: false};
 		const holder = new SignInHolder({uid:profile.uid, sealer:serverSealer(), commands:{},
 			store:{ load: async () => row, save: async next => {row = next} }});
 		await holder.status();
@@ -119,7 +119,7 @@ test("current-key status returns while a token command is still running", async 
 		sealer,
 		commands,
 		store: {
-			load: async () => ({ sealed, generation: 7, shortNoted: false }),
+			load: async () => ({ sealed, generation: "g7", shortNoted: false }),
 			save: async () => assert.fail("a current key needs no save"),
 		},
 	});
@@ -140,7 +140,7 @@ test("status reports the account and retries rotation after a failed re-seal sav
 		{ id: "old", secret: Buffer.from(old) },
 	]);
 	const original = createSealer(old).seal("user", "u", material);
-	let row: StoredSignIn = { sealed: original, generation: 7, shortNoted: false };
+	let row: StoredSignIn = { sealed: original, generation: "g7", shortNoted: false };
 	let fail = true;
 	const log: string[] = [];
 	const holder = new SignInHolder({
@@ -162,7 +162,7 @@ test("status reports the account and retries rotation after a failed re-seal sav
 	fail = false;
 	assert.equal((await holder.status())?.sub, "test-sub");
 	assert.ok(sealer.isCurrent(row.sealed!));
-	assert.equal(row.generation, 7);
+	assert.equal(row.generation, "g7");
 });
 
 test("account and repository reads replace old ciphertext without overwriting concurrent edits", () => {

@@ -22,6 +22,7 @@ process.env.WLP_RUNNER_IMAGE = image;
 process.env.WLP_PUBLIC_URL = platform;
 const { config } = await import("../server/src/config.js");
 const { INSTALL_SCRIPT_PATH, installScript, installScriptResponse } = await import("../server/src/install-script.js");
+const { DOCKER_HELP, setupRunArgs } = await import("../server/src/contract/machine-setup.js");
 const get = (method = "GET") => installScriptResponse(new Request(platform + INSTALL_SCRIPT_PATH, { method }));
 
 test("GET /install.sh is the script for this platform, as plain text that is not cached", async () => {
@@ -39,12 +40,17 @@ test("GET /install.sh is the script for this platform, as plain text that is not
 	assert.ok(body.includes('"$IMAGE" setup --platform "$PLATFORM"'));
 	assert.ok(body.includes("-v /var/run/docker.sock:/var/run/docker.sock"));
 	assert.ok(body.includes("-v windlass-runner:/var/lib/windlass-runner"));
+	// The same container and messages as `npx @windlassai/cli connect --machine`, from the one definition both use.
+	assert.ok(body.includes(`set -- docker ${setupRunArgs('"$IMAGE"', '"$PLATFORM"', "terminal").join(" ")}\n`));
+	for (const message of [DOCKER_HELP.missing.linux, DOCKER_HELP.stopped.darwin, DOCKER_HELP.denied])
+		assert.ok(body.includes(`fail '${message.replaceAll("'", "'\\''")}'`), message);
 	// What it runs (its messages aside): nothing with sudo, nothing written in a file.
 	const commands = body
 		.split("\n")
 		.filter(line => !/^\s*#/.test(line))
 		.join("\n")
-		.replace(/(fail|say) "[^"]*"/g, "");
+		.replace(/(fail|say) "[^"]*"/g, "")
+		.replace(/fail '(?:[^']|'\\'')*'/g, "");
 	assert.doesNotMatch(
 		commands,
 		/\bsudo\b|mkdir|\btee\b|>>|>\s*(?!\/dev\/null\b|&)[^\s]|\$HOME|chmod|\bcurl\b|\bwget\b/,

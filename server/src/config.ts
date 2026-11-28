@@ -8,6 +8,11 @@
  *                              the sign-in and at every call, so a removal holds at once (access.ts)
  *   WLP_GOOGLE_CLIENT_ID, WLP_GOOGLE_CLIENT_SECRET
  *                              enable Google platform login when both are configured
+ *   WLP_PLAN_USERS             who may connect a subscription plan (a Claude plan) and run hosted turns on it:
+ *                              user ids (`u_...`), comma-separated, or `*` for everyone. Unset: nobody, and
+ *                              turns stop using connected plans at once (the kill switch)
+ *   WLP_PLAN_PARALLEL_TURNS    the most hosted turns one connected plan pays for at once (default 3, 1–20); past
+ *                              it an item waits and a prompt is asked about, as at the plan's limit (pay-with.ts)
  *   WLP_ALLOW_DOCKER_HOSTED=1 explicitly allow the Docker sandbox layer with a remote engine
  *   WLP_SANDBOX=docker|e2b|daytona|fake
  *                              the sandbox layer (default docker). docker: containers on this machine, for
@@ -69,6 +74,9 @@
  *                              turning it off and on again loses nothing; while it is off, nobody can
  *                              file, read or act on an item
  *   WLP_DAILY_TOKENS           model tokens per user per UTC day (default unlimited)
+ *   WLP_MODEL_PRICES_URL       the public model catalog items' token costs are priced from (model-prices.ts;
+ *                              default https://models.dev/api.json). `off`: none is read, and a turn's tokens
+ *                              are priced only where its agent reported its cost; otherwise its cost is unknown
  *   WLP_FACTORY_CROSS_REPO=1   let a Plan-first feature be filed over two repositories (default off):
  *                              its children build in either, each repository gets its own draft PR,
  *                              and the repositories are tested together before the feature is handed
@@ -82,9 +90,10 @@
  *   WLP_FACTORY_GITHUB_ITEMS_PER_DAY
  *                              items a user may file from GitHub issues a UTC day, drafts among them
  *                              (default 20)
- *   WLP_FACTORY_ITEM_TOKENS, WLP_FACTORY_ITEM_HOSTED_SECONDS
- *                              a new work item's budget (default 2,000,000 cost-weighted tokens, cached
- *                              input at a tenth, and 2 hours of hosted sandbox); used up, the item asks
+ *   WLP_FACTORY_ITEM_TOKENS, WLP_FACTORY_ITEM_HOSTED_SECONDS, WLP_FACTORY_ITEM_USD
+ *                              a new work item's budget (default $5 of work at API prices, whoever pays,
+ *                              2,000,000 cost-weighted tokens while a turn can't be priced, cached input at a
+ *                              tenth, and 2 hours of hosted sandbox); used up, the item asks
  *                              its person for more. The same on every server, like all of these
  *   WLP_HTTP_PORT, PORT        where the platform's HTTP routes listen (`/platform/info`, `/health`);
  *                              WLP_HTTP_PORT first, then PORT, which Rivet Cloud sets on its nodes
@@ -379,6 +388,12 @@ export interface Config {
 	serverApprovalTtlMs: number;
 	/** Windlass's model relay (docs/model-relay.md): WLP_MODEL_RELAY, the hosted relay's ceiling, and WLP_MODEL_RELAY_URL (null when unset). */
 	modelRelay: { on: boolean; requests: number; turnRequests: number; url: ModelRelayUrl | null };
+	/** Who may connect and use subscription plans (WLP_PLAN_USERS): everyone, these user ids, or nobody. */
+	plans: "all" | ReadonlySet<string>;
+	/** The most hosted turns one plan pays for at once (WLP_PLAN_PARALLEL_TURNS): ordinary use. */
+	planParallelTurns: number;
+	/** Where items' model prices are read from (WLP_MODEL_PRICES_URL); null: nowhere. */
+	modelPricesUrl: string | null;
 	/** A Docker setup must finish successfully and reach this duration to be saved. */
 	snapshots: boolean;
 	/** Selected remote provider settings, without credentials. */
@@ -975,6 +990,8 @@ function readHttpLimits() {
 		loginTotal: perMinute("WLP_LOGIN_TOTAL_PER_MINUTE", 600),
 		runnerPoll: perMinute("WLP_RUNNER_POLLS_PER_MINUTE", 240),
 		runnerConnection: perMinute("WLP_RUNNER_CONNECTIONS_PER_MINUTE", 120),
+		connect: perMinute("WLP_CONNECT_PER_MINUTE", 30),
+		connectPoll: perMinute("WLP_CONNECT_POLLS_PER_MINUTE", 240),
 	};
 }
 
@@ -1004,6 +1021,7 @@ function readFactory(): FactoryLimits & { reviewer: boolean; screenshots: boolea
 		item: {
 			tokens: count("WLP_FACTORY_ITEM_TOKENS", d.item.tokens, 1_000_000_000),
 			hostedSeconds: count("WLP_FACTORY_ITEM_HOSTED_SECONDS", d.item.hostedSeconds, 7 * 86_400),
+			usd: count("WLP_FACTORY_ITEM_USD", d.item.usd ?? 5, 100_000),
 		},
 	};
 }
@@ -1087,6 +1105,25 @@ function readMachines(httpPort: number): MachinesConfig | null {
 const httpPort = readHttpPort();
 
 const sandbox = readSandboxMode();
+function readPlanUsers(raw: string | undefined): Config["plans"] {
+	if (raw?.trim() === "*") return "all";
+	return new Set(
+		(raw ?? "")
+			.split(",")
+			.map(uid => uid.trim())
+			.filter(uid => uid !== ""),
+	);
+}
+
+function readModelPricesUrl(raw: string | undefined): string | null {
+	const value = raw?.trim() || "https://models.dev/api.json";
+	if (value === "off") return null;
+	const url = URL.parse(value);
+	if (!url || (url.protocol !== "https:" && url.protocol !== "http:"))
+		throw new Error(`WLP_MODEL_PRICES_URL must be an http(s) address or "off"; got "${value}"`);
+	return url.href;
+}
+
 export const config: Config = {
 	demo: process.env.WLP_DEMO === "1",
 	machines: readMachines(httpPort),
@@ -1115,6 +1152,9 @@ export const config: Config = {
 	// Never longer than Windlass keeps its own record: a shorter time is for the checks.
 	serverApprovalTtlMs: Math.min(APPROVAL_TTL_MS, readDuration("WLP_SERVER_APPROVAL_TTL_MS", APPROVAL_TTL_MS, 1_000)),
 	modelRelay: readModelRelay(),
+	plans: readPlanUsers(process.env.WLP_PLAN_USERS),
+	planParallelTurns: readCount("WLP_PLAN_PARALLEL_TURNS", 3, 1, 20, false) ?? 3,
+	modelPricesUrl: readModelPricesUrl(process.env.WLP_MODEL_PRICES_URL),
 	snapshots: process.env.WLP_SNAPSHOTS === "on",
 	hosted: sandbox === "e2b" ? readE2bSettings() : sandbox === "daytona" ? readDaytonaSettings() : null,
 	snapshotMinSetupMs: readDuration("WLP_SNAPSHOT_MIN_SETUP_MS", SNAPSHOT_MIN_SETUP_MS, SNAPSHOT_MIN_SETUP_MS),

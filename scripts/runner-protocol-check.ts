@@ -907,12 +907,7 @@ async function durableRestart(): Promise<void> {
 		}),
 	);
 	void outcome(
-		s1.request("modelRelayToken", {
-			...box,
-			lease: "a".repeat(32),
-			accessToken: "RELAY-TOKEN-VALUE-0123",
-			expiresAt: 1,
-		}),
+		s1.request("planRelayToken", { ...box, lease: "a".repeat(32), token: "RELAY-TOKEN-VALUE-0123", expiresAt: 1 }),
 	);
 	store.save(s1);
 	const stored = JSON.stringify(store.read());

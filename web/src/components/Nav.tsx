@@ -75,6 +75,7 @@ export function SectionMenu({ current, asking = 0 }: { current: Section | null; 
 		"agents",
 		...(platform.info?.items ? ["factory" as const] : []),
 		...(platform.info?.machines ? ["machines" as const] : []),
+		"connections",
 		"account",
 	];
 	const spec: MenuSpec = {

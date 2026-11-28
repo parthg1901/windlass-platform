@@ -26,17 +26,15 @@ export function agentTokens(agent: ItemAgent | undefined): string | null {
 	return `${agent.reportedTokens.toLocaleString("en-US")} reported by ${name}, not counted: a subscription is not billed by token`;
 }
 
-/** What else the agent reported: its cost, and Claude Code's 5-hour window at the first turn and now. */
+/**
+ * What else the agent reported: Claude Code's 5-hour window at the first turn and now. Its dollar cost is not
+ * shown here: lib/cost.ts prices the item, and a plan's turns have none.
+ */
 export function agentFacts(agent: ItemAgent | undefined): { label: string; value: string }[] {
 	if (!agent) return [];
 	const facts: { label: string; value: string }[] = [];
 	if (agent.subscriptionTokens)
 		facts.push({ label: "Subscription tokens", value: agent.subscriptionTokens.toLocaleString("en-US") });
-	if (agent.cost)
-		facts.push({
-			label: "Cost",
-			value: `${agent.cost.amount.toLocaleString("en-US", { style: "currency", currency: agent.cost.currency, maximumFractionDigits: 2 })}, as ${HARNESS_NAMES[agent.harness] ?? agent.harness} reported it`,
-		});
 	if (agent.fiveHour)
 		facts.push({
 			label: "5-hour window",

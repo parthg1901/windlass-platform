@@ -1,6 +1,5 @@
 // The Change one fact makes to an item, and the shared steps every flow takes: questions, turns, stops and feedback.
 import { SIZE_WEIGHT } from "../billing/meter.js";
-import type { MachinePayerOffer } from "./default-place.js";
 import type { OutOfMemory } from "../sandbox/api.js";
 import {
 	MAX_ITEM_BODY_CHARS,
@@ -20,7 +19,10 @@ import { subtaskMinimum, approvalText, planRecovery } from "./feature-plan.js";
 import { crossRepo, plannerText } from "./cross-repo.js";
 import { MAX_PROVIDER_WAIT, MINUTE, providerWait, usageRefusal } from "../provider-usage.js";
 import { PLATFORM_TOOLS, refusalMessage } from "../provider-refusal.js";
-import { budgetStop, itemAgent, noteAgentTurn, spellTokens } from "./budget.js";
+import { budgetStop, itemAgent, noteAgentTurn, spellTokens, spellUsd, turnBudget, type TurnBudget } from "./budget.js";
+import { addSandbox, addTurn, noUsage, sandboxSeconds } from "./cost.js";
+import { ITEM_HOSTED_SIZE } from "../contract/hosted-sizes.js";
+import type { HostedSplit } from "../contract.js";
 import { environmentFailure } from "./check-environment.js";
 import type {
 	ChoiceId,
@@ -244,16 +246,12 @@ export class Change {
 
 export function hostedChoice(agent?: HarnessId, profile?: FeatureJob["hostedProfile"]) {
 	const isolation = profile ? ` (${isolationName(profile)})` : "";
-	const payer = agent && agent !== "windlass" ? " with my Settings key" : "";
+	const payer = agent && agent !== "windlass" ? " with my key" : "";
 	return { id: "use_hosted" as const, label: "Run on Hosted" + isolation + payer };
 }
 
-export function payerChoice(offer: MachinePayerOffer | { payer: "machine" }) {
-	const payer = offer.payer === "key" ? "my Settings key" : "the machine’s own sign-in";
-	if (!("place" in offer)) return { id: "wait" as const, label: `Use ${payer}` };
-	const isolation = offer.profile ? ` (${isolationName(offer.profile)})` : "";
-	return { id: "use_machine_payer" as const, label: `Use ‘${offer.name}’${isolation} with ${payer}` };
-}
+/** A run filed before its payer was recorded: the owner confirms the machine's own sign-in. */
+export const confirmPayerChoice = { id: "wait" as const, label: "Use the machine’s own sign-in" };
 
 export const IMPLEMENT: TurnPlan = {
 	kind: "implement",
@@ -343,9 +341,16 @@ export function beginRun(c: Change, plan: TurnPlan): void {
 	nextTurn(c, plan);
 }
 
+/** Begins a run the person started again after a failed one: what it uses is counted as retry spend. */
+export function retryRun(c: Change, plan: TurnPlan): void {
+	beginRun(c, plan);
+	c.run.retry = true;
+}
+
 export function resetRun(c: Change, kind: StepKind): void {
 	const { item } = c;
 	const before = item.run;
+	item.startedAt ??= c.at;
 	if (before !== null && before.endedAt === null) {
 		before.endedAt = c.at;
 		before.stopReason = "retried";
@@ -543,17 +548,22 @@ export const backstopTurns = (item: FactoryItem): number =>
 /** The failures this run already had a fix turn for (the stuck detector): a run stored before they were kept has its last one. */
 export const failuresOf = (run: Run): string[] => run.failures ?? (run.lastFailure === null ? [] : [run.lastFailure]);
 
-export function turnBudgetStop(c: Change) {
+/** The budget the item's next turn is held to, and what was spent of it. */
+function heldBudget(c: Change): { budget: ItemBudget; spent: ItemSpend } {
 	const { item } = c;
 	const working = item.workingSince === null ? 0 : Math.max(0, c.at - item.workingSince) / 1000;
 	const spent = { ...item.spent, activeSeconds: item.spent.activeSeconds + working };
 	// A feature's own turns (planning, summary, review) are held to its own allowance; its subtasks hold to theirs.
 	const feature = item.mode === "orchestrate";
-	return budgetStop(
-		feature ? { ...item.budget, tokens: ownTokens(item) } : item.budget,
-		feature ? ownSpent(item, spent) : spent,
-		item.place,
-	);
+	return {
+		budget: feature ? { ...item.budget, tokens: ownTokens(item) } : item.budget,
+		spent: feature ? ownSpent(item, spent) : spent,
+	};
+}
+
+export function turnBudgetStop(c: Change) {
+	const { budget, spent } = heldBudget(c);
+	return budgetStop(budget, spent, c.item.place);
 }
 
 export function nextTurn(c: Change, plan: TurnPlan): void {
@@ -621,12 +631,22 @@ export function nextTurn(c: Change, plan: TurnPlan): void {
 			text: [summary.text, plan.text].filter(Boolean).join("\n\n"),
 			...marked(summary.untrusted, plan.untrusted),
 		};
+	// Where the turn is stopped while it runs, should it use up what is left (#100a): its session watches its spend. A
+	// fix turn given the grace past its tokens may use the grace.
+	const held = heldBudget(c);
+	const budget: TurnBudget | undefined = grace
+		? {
+				figure: "tokens",
+				stopAt: Math.max(0, Math.round(item.budget.tokens * (1 + RULES.checkFixGrace) - item.spent.tokens)),
+			}
+		: turnBudget(held.budget, held.spent);
 	const delivery = {
 		kind: "deliver" as const,
 		key: c.key,
 		text: plan.kind === "refine" ? plan.text + plannerBudgetText(item) : plan.text,
 		fetchBase: plan.fetchBase,
 		...(plan.feedbackQuote && { feedbackQuote: plan.feedbackQuote }),
+		...(budget && { budget }),
 	};
 	const fresh =
 		plan.to !== "review" && !plan.newStep ? (summary ?? (ASKING.has(plan.kind) ? freshPlan(item) : null)) : null;
@@ -755,8 +775,35 @@ export function chargeTurn(item: FactoryItem, spend: TurnSpend): void {
 	item.spent.rawTokens = (item.spent.rawTokens ?? item.spent.tokens) + (spend.rawTokens ?? spend.tokens);
 	item.spent.tokens += spend.tokens;
 	if (spend.agent) noteAgentTurn(item, spend.agent);
+	if (spend.meter) {
+		addTurn((item.spent.usage ??= noUsage()), spend.meter);
+		// A turn after a failed attempt: in a run started again, or fixing a failed CI.
+		if (item.run?.retry || item.run?.step.kind === "ci_fix")
+			addTurn((item.spent.retryUsage ??= noUsage()), spend.meter);
+	}
+	// The turn's dollars of work, whoever paid; a turn that could not be priced leaves tokens holding too.
+	if (spend.usd === null) item.spent.usdUnknown = true;
+	else if (spend.usd !== undefined) item.spent.usd = roundCents((item.spent.usd ?? 0) + spend.usd);
 	item.spent.turns += 1;
 	if (item.place.kind === "hosted") item.spent.hostedSeconds = Math.max(item.spent.hostedSeconds, spend.hostedSeconds);
+	noteHostedTime(item, spend.hosted);
+}
+
+const roundCents = (usd: number) => Math.round(usd * 10_000) / 10_000;
+
+/**
+ * Puts the item's own hosted seconds not yet in its usage there, at the size its latest turn ran: what its
+ * sandbox time costs. A feature's parts keep their own, so theirs are left out of its own.
+ */
+export function noteHostedTime(item: FactoryItem, hosted?: HostedSplit): void {
+	if (item.place.kind !== "hosted") return;
+	// What billing made of the item's own hosted time so far: a lifetime total, so the latest replaces it.
+	if (hosted) (item.spent.usage ??= noUsage()).hosted = hosted;
+	const parts = (item.jobs ?? []).reduce((sum, job) => sum + job.spent.hostedSeconds, 0);
+	const fresh = item.spent.hostedSeconds - parts - sandboxSeconds(item.spent.usage);
+	if (fresh <= 0) return;
+	const usage = (item.spent.usage ??= noUsage());
+	addSandbox(usage, usage.size ?? ITEM_HOSTED_SIZE, fresh);
 }
 
 export function askProviderRefusal(c: Change, refusal: ItemProviderRefusal, plan: TurnPlan): void {
@@ -813,6 +860,20 @@ export function stepLimitReached(c: Change, plan: TurnPlan, limit: number, verif
 		text,
 		newStep: false,
 		...(failing && verified && { charge: "gate", fingerprint: gateFingerprint(verified) }),
+	});
+}
+
+/**
+ * The session stopped a turn at its budget while it ran (#100a, the delivery's `budget`): not an interruption of the
+ * step. The next turn goes on where it stopped, and `nextTurn` asks the budget question before it is given.
+ */
+export function budgetStopped(c: Change, plan: TurnPlan): void {
+	c.say("The turn was stopped when it used its budget.");
+	nextTurn(c, {
+		...plan,
+		text: "You were stopped when you used your budget. Continue from where you were.",
+		newStep: false,
+		charge: null,
 	});
 }
 
@@ -960,7 +1021,6 @@ export function askPlacement(c: Change, job: FeatureJob) {
 					: []),
 				...(job.askMachine ? [choice("wait")] : []),
 				...(job.offerHosted ? [hostedChoice(job.task.resolved?.agent, job.hostedProfile)] : []),
-				...(job.offerPayer ? [payerChoice(job.offerPayer)] : []),
 				{ id: "revise" as const, label: "Revise the placement" },
 				{ id: "again", label: "Retry allowed places" },
 				{ id: "give_up", label: "Give up the subtask" },
@@ -1063,12 +1123,19 @@ export function stop(c: Change, cause: StopCause, sentence: string, resume: Turn
 	);
 }
 
+/** One more start's worth: an item's budget again, a quarter of it in dollars (whole dollars, at least $1). */
 export function extraOf(item: FactoryItem, cause: keyof ItemBudget): number {
-	return Math.max(1, (item.singleBudget ?? item.budget)[cause]);
+	const budget = item.budget[cause] ?? (item.singleBudget ?? item.budget)[cause] ?? 1;
+	if (cause === "usd") return Math.max(1, Math.ceil(budget / 4));
+	return Math.max(1, (item.singleBudget ?? item.budget)[cause] ?? 1);
 }
 
-const spellExtra = (cause: keyof ItemBudget, n: number) =>
-	cause === "tokens" ? `${spellTokens(n)} more tokens` : `${spellSeconds(n)} more hosted time`;
+const EXTRA_WORDS: Record<keyof ItemBudget, (n: number) => string> = {
+	tokens: n => `${spellTokens(n)} more tokens`,
+	hostedSeconds: n => `${spellSeconds(n)} more hosted time`,
+	usd: n => `${spellUsd(n)} more`,
+};
+const spellExtra = (cause: keyof ItemBudget, n: number) => EXTRA_WORDS[cause](n);
 
 function askBudget(c: Change, cause: keyof ItemBudget, sentence: string, resume: TurnPlan): void {
 	const { item } = c;

@@ -1,59 +1,22 @@
 /**
- * The access token file of one turn: how a turn that is not scripted gets to use its user's ChatGPT
- * sign-in without the sandbox ever holding it.
- *
- *   where   Docker's per-container /dev/shm tmpfs, or Windlass's data directory on E2B's private disk.
- *           Bubblewrap mounts a fresh /dev and hides the data directory, so neither path is visible
- *           to sandboxed commands. Docker's shared user volume never receives the token.
- *   what    `{"accessToken":"...","expiresAt":<ms>}`, as `windlass login token --json` prints it. With
- *           the expiry Windlass refuses an expired token before it sends anything.
- *   how     written to a file beside it (`<file>.tmp`) and renamed into place, mode 0600, the content on
- *           standard input (`TurnSandbox.writeSecretFile`).
- *   when    before Windlass starts, with a token that is good for at least `TOKEN_VALID_FOR_MS` (twenty
- *           minutes) more, then again when the token in it has `TOKEN_REPLACE_LEAD_MS` (ten minutes)
- *           left. The token source asks Windlass for one with twenty, so at that moment, whenever it
- *           comes, the sign-in is refreshed and the file gets a new token: the replacement depends on
- *           no window of Windlass's. A token that has no more than the lead left when it is written
- *           (the service issues none that lasts as long as was asked) is replaced when half of what it
- *           had left is gone, not at once and again and again.
- *           A replacement that fails is logged and tried again every
- *           `TOKEN_REPLACE_RETRY_MS` (20 s) for as long as the turn runs; it never ends the turn. When
- *           the reason is the sign-in itself (it is gone, or OpenAI refuses to refresh it), which
- *           trying again does not mend, each wait is twice the one before, up to five minutes. If
- *           the token runs out all the same, Windlass says so at its next model call with its code
- *           `handed_in_expired`, and the turn's failure names the reason the replacement failed
- *           (handoff.ts, `handedInFailure`). That reason is kept as the token source threw it: its kind
- *           says whether it is the sign-in's (`SandboxUserError`, made from Windlass's `signed_out` or a
- *           refusal such as `invalid_grant`) or not (`network_error`, ...), and no message is read for it.
- *           Removed when the turn ends; `Sandboxes.suspend` and `destroy` remove what a turn that was
- *           cut off with its server left there, and `ChatgptLogins.logout` the files of all the user's
- *           running turns.
- *   whose   one session, one turn at a time. An unsandboxed command or local MCP server can read
- *           the current token, including a replacement during that turn.
- *   relay   where the sandbox offers Windlass's model relay (`TurnSandbox.modelRelay`,
- *           docs/model-relay.md), each token goes to the relay and the file holds the turn's
- *           placeholder instead, with the token's expiry: the sandbox never holds the token. The lease
- *           is opened before the first write and ended in `stop`. A relay that cannot be had fails the
- *           turn (`TokenFileError`); nothing falls back to writing the token into the sandbox.
- *
- * What such a command prints is tool output, which becomes an event. Windlass takes out of tool output
- * every token it has read from the file, which it does at a model call; the platform takes every token
- * it handed this turn out of everything the engine sends as well (`scrub`), so that a token never gets
- * into the turn's events by being printed as it is, also not one written to the file a moment before.
+ * A Windlass turn's token file and a plan's token in a turn's relay. Windlass reads its bearer from an access token
+ * file (`WINDLASS_ACCESS_TOKEN_FILE`): on the ChatGPT plan that file holds only the plan relay's placeholder for the
+ * turn (`writePlanPlaceholder`), in Docker's per-container /dev/shm tmpfs or Windlass's data directory on a microVM's
+ * private disk, which bubblewrap hides from sandboxed commands. The plan's token itself goes to a relay the agent
+ * cannot read (`openModelKeyRelay`): inside the sandbox on E2B and Daytona, in a container on a paired machine, or the
+ * platform's relay hosted. A token that expires (a ChatGPT plan's) is handed again before it runs out, and a plan that
+ * was removed, reconnected or turned off closes the relay within a minute (`rotatePlanToken`). No sandbox, hosted or
+ * on a machine, is ever handed an access token itself.
  */
 
-import { type AccessToken, type AccessTokens, SandboxUserError } from "./api.js";
-import { TOKEN_REPLACE_LEAD_MS, TOKEN_REPLACE_RETRY_MS, type TokenFileState, tokenFileContent } from "./handoff.js";
-import { readsModelRelay, SETTINGS_KEY_WINDLASS } from "../model-relay-url.js";
-import {
-	DATA_DIR,
-	type KeyReference,
-	type KeyTurnRelay,
-	type TakeRelayRequest,
-	type TurnModelRelay,
-	type TurnSandbox,
-} from "./provider.js";
+import { SandboxUserError } from "./api.js";
+import { TOKEN_REPLACE_LEAD_MS, TOKEN_REPLACE_RETRY_MS, tokenFileContent } from "./handoff.js";
+import { MODEL_RELAY_WINDLASS, readsModelRelay, SETTINGS_KEY_WINDLASS } from "../model-relay-url.js";
+import { DATA_DIR, type KeyReference, type KeyTurnRelay, type TakeRelayRequest, type TurnSandbox } from "./provider.js";
 import { errorText } from "../util.js";
+import { credentialWire } from "../../../sandbox/relay/wires.cjs";
+import type { PlanSecret } from "../credentials/transit.js";
+import type { LocalModelRelay, LocalPlanRelayOptions } from "./plan-relay.js";
 
 /** Prefix used by both providers and for cleaning pre-upgrade volumes. */
 export const TOKEN_FILE_PREFIX = "access-token-";
@@ -69,29 +32,27 @@ export function tokenFilePath(
 	return `${directory}/${TOKEN_FILE_PREFIX}${sandboxId}.json`;
 }
 
-/**
- * How long after a token was written late (the one before it had expired) a refusal by Windlass still
- * counts as that gap's: Windlass fails the turn at the model call that found no usable token, and the
- * turn's end is worked out a moment later.
- */
-const LAPSE_MEMORY_MS = 60_000;
+/** Where a turn's token file goes in this sandbox: Docker's private tmpfs, or Windlass's data directory on a microVM's private disk. */
+export function turnTokenFilePath(sandbox: Pick<TurnSandbox, "id" | "profile">): string {
+	const hosted = sandbox.profile === "daytona" || sandbox.profile.startsWith("e2b");
+	return tokenFilePath(sandbox.id, hosted ? DATA_DIR : DOCKER_TOKEN_DIR);
+}
 
-/** What stands in an event where a command printed the turn's access token. */
-export const TOKEN_REMOVED = "[access token removed]";
+/** How often a turn's relay in a sandbox or on a machine looks whether its plan is still the one it pays with. */
+export const PLAN_CHECK_MS = 60_000;
 
-/** The longest wait between two tries to replace the file while the sign-in itself is what fails. */
-const REFUSED_RETRY_MAX_MS = 5 * 60_000;
-
-export interface TokenFileOptions {
-	/** How much the token in the file has left when the file is replaced. Default `TOKEN_REPLACE_LEAD_MS`; the layer's checks change it. */
+export interface RotateOptions {
+	/** How much the token in the relay has left when it is replaced. Default `TOKEN_REPLACE_LEAD_MS`; checks change it. */
 	leadMs?: number;
 	/** How long after a failed replacement the next is tried, and the least time between two. Default `TOKEN_REPLACE_RETRY_MS`. */
 	retryMs?: number;
-	/** Where the log lines go: `[wlp] token.handed`, `token.replaced`, `token.replace_failed`. Default the console. They never contain a token. */
+	/** The most time between two looks at the plan, also for a token that never expires (a setup token). Default `PLAN_CHECK_MS`. */
+	checkMs?: number;
+	/** Where the log lines go: `[wlp] plan_token.gone`, `plan_token.replace_failed`. Default the console. They never contain a token. */
 	log?: (line: string) => void;
 }
 
-/** The token was there, but its file could not be written in the sandbox: the sandbox's failure, not the token source's. */
+/** The turn's relay or its file could not be had in the sandbox: the sandbox's failure, not the plan's. */
 export class TokenFileError extends Error {
 	constructor(message: string) {
 		super(message);
@@ -99,240 +60,151 @@ export class TokenFileError extends Error {
 	}
 }
 
-/** Settings-key turns get only a relay address and placeholder. */
+/**
+ * Settings-key turns get only a relay address and placeholder. A plan on a sandbox with an address of its own
+ * gets the relay inside it (`TurnSandbox.localPlanRelay`), so the plan's requests leave from there; the token,
+ * opened here for this turn, goes to that relay and nowhere the agent can read, which then follows the plan
+ * (`rotatePlanToken`). Elsewhere (hosted Docker) a plan goes through the platform relay like a key, which resolves the
+ * plan's current token at every request.
+ */
 export async function openModelKeyRelay(
 	sandbox: TurnSandbox,
 	sessionId: string,
 	key: KeyReference,
 	signal?: AbortSignal,
 	takeRequest?: TakeRelayRequest,
+	openSecret?: () => Promise<PlanSecret | null>,
+	onSeen?: LocalPlanRelayOptions["onSeen"],
 ): Promise<KeyTurnRelay> {
-	if (key.harness === "windlass" && sandbox.windlassKeyProblem) throw new TokenFileError(sandbox.windlassKeyProblem);
-	if (!sandbox.modelKeyRelay) throw new TokenFileError("A saved provider key requires a model relay for this sandbox.");
 	if (key.harness === "windlass") {
+		if (!key.plan && sandbox.windlassKeyProblem) throw new TokenFileError(sandbox.windlassKeyProblem);
 		// A connected runner or restored snapshot can have an older binary than its current image.
+		const minimum = key.plan ? MODEL_RELAY_WINDLASS : SETTINGS_KEY_WINDLASS;
 		const version = await sandbox.ask(["windlass", "--version"], { timeoutMs: 10_000 });
-		if (
-			version?.code !== 0 ||
-			!readsModelRelay(/^Windlass\s+(\S+)/.exec(version.stdout.trim())?.[1], SETTINGS_KEY_WINDLASS)
-		)
-			throw new TokenFileError(`Windlass needs ${SETTINGS_KEY_WINDLASS} to use Settings keys in this sandbox.`);
+		if (version?.code !== 0 || !readsModelRelay(/^Windlass\s+(\S+)/.exec(version.stdout.trim())?.[1], minimum))
+			throw new TokenFileError(
+				`Windlass needs ${minimum} to use ${key.plan ? "your ChatGPT plan" : "Settings keys"} in this sandbox.`,
+			);
+		signal?.throwIfAborted();
 	}
+	if (key.plan && sandbox.localPlanRelay) {
+		if (!openSecret) throw new Error("A plan turn on this sandbox needs its secret opened for the turn.");
+		const opened = await openSecret();
+		signal?.throwIfAborted();
+		if (!opened)
+			throw new SandboxUserError(
+				"The plan for this turn changed, was removed, or its sign-in is no longer accepted. Reconnect it if needed, then send the prompt again.",
+			);
+		const relay = await sandbox.localPlanRelay(opened.secret, {
+			signal,
+			takeRequest,
+			wire: credentialWire(key),
+			harness: key.harness,
+			onSeen,
+		});
+		return rotatePlanToken(relay, opened.expiresAt, openSecret);
+	}
+	if (!sandbox.modelKeyRelay)
+		throw new TokenFileError(
+			key.plan
+				? "A plan requires the platform's model relay (WLP_MODEL_RELAY_URL) for this sandbox."
+				: "A saved provider key requires a model relay for this sandbox.",
+		);
 	return sandbox.modelKeyRelay(sessionId, key, signal, takeRequest);
+}
+
+/**
+ * Windlass on the ChatGPT plan reads its bearer from an access token file, as it reads a handed-in token: the file
+ * holds the plan relay's placeholder for this turn, with an expiry past the turn's end (Windlass refuses an expired
+ * one before it sends anything). The relay ends the placeholder with the turn, whatever the file says.
+ */
+export async function writePlanPlaceholder(
+	sandbox: TurnSandbox,
+	path: string,
+	placeholder: string,
+	expiresAt: number,
+): Promise<void> {
+	await sandbox
+		.writeSecretFile(path, tokenFileContent({ accessToken: placeholder, expiresAt }))
+		.catch((error: unknown) => {
+			throw new TokenFileError(errorText(error));
+		});
+}
+
+/** When a token is replaced: once it has `leadMs` left, or, one that has no more than that already, once half of what it has is gone. */
+function replaceAtOf(expiresAt: number, leadMs: number, now = Date.now()): number {
+	const left = Math.max(0, expiresAt - now);
+	return expiresAt - (left > leadMs ? leadMs : left / 2);
+}
+
+/**
+ * Keeps the turn's relay in a sandbox or on a machine on the plan it pays with. An expiring token (`expiresAt`, a
+ * ChatGPT plan's) is replaced on a token file's schedule: the token handed at the start has at least twenty minutes
+ * left (the sign-in holder's promise), and when it has ten left `open` asks for the current one, which the holder
+ * refreshes, and the relay is handed it. A try that fails is tried again every `retryMs`. Between replacements, and for
+ * a token that never expires (a setup token), the plan is looked at every `checkMs`: one that was reconnected, removed
+ * or turned off (`WLP_PLAN_USERS`) gives no token, and the relay is closed, so the turn's requests stop.
+ */
+export function rotatePlanToken(
+	relay: LocalModelRelay,
+	expiresAt: number | undefined,
+	open: () => Promise<PlanSecret | null>,
+	options: RotateOptions = {},
+): KeyTurnRelay {
+	const leadMs = options.leadMs ?? TOKEN_REPLACE_LEAD_MS;
+	const retryMs = options.retryMs ?? TOKEN_REPLACE_RETRY_MS;
+	const checkMs = options.checkMs ?? PLAN_CHECK_MS;
+	const log = options.log ?? (line => console.warn(line));
+	let current = expiresAt;
+	/** Until the next look: the next check, or the replacement if that is sooner. */
+	const nextIn = () =>
+		current === undefined ? checkMs : Math.max(retryMs, Math.min(checkMs, replaceAtOf(current, leadMs) - Date.now()));
+	let stopped = false;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const schedule = (inMs: number) => {
+		if (stopped) return;
+		timer = setTimeout(() => void replace(), inMs);
+		timer.unref?.();
+	};
+	const replace = async () => {
+		try {
+			const next = await open();
+			if (stopped) return;
+			if (!next) {
+				stopped = true;
+				log("[wlp] plan_token.gone: the plan changed, was removed or is off for this user; its relay is closed");
+				await relay.close();
+				return;
+			}
+			if (next.expiresAt === undefined || next.expiresAt === current) {
+				// Nothing newer: a token that never expires, or one the holder still reuses (looked at again soon once due).
+				const due = current !== undefined && replaceAtOf(current, leadMs) <= Date.now();
+				return schedule(due ? retryMs : nextIn());
+			}
+			await relay.hand(next.secret);
+			current = next.expiresAt;
+			schedule(nextIn());
+		} catch (error) {
+			if (stopped) return;
+			log(
+				`[wlp] plan_token.replace_failed: ${errorText(error).replace(/\s+/g, " ").trim()}; trying again in ${Math.round(retryMs / 1000)} s`,
+			);
+			schedule(retryMs);
+		}
+	};
+	schedule(nextIn());
+	return {
+		env: relay.env,
+		placeholder: relay.placeholder,
+		...(relay.lease !== undefined && { lease: relay.lease }),
+		close: async () => {
+			stopped = true;
+			clearTimeout(timer);
+			await relay.close();
+		},
+	};
 }
 
 export function tokenFilePaths(path: string): string[] {
 	return [path, `${path}.tmp`];
-}
-
-export class TokenFile {
-	readonly path: string;
-	private readonly leadMs: number;
-	private readonly retryMs: number;
-	private readonly log: (line: string) => void;
-	private timer: ReturnType<typeof setTimeout> | undefined;
-	private stopped = false;
-	/** The write in progress, if one is: `stop` waits for it, so nothing is written after the file was removed. */
-	private writing: Promise<void> = Promise.resolve();
-	private expiresAt = 0;
-	/** When the token in the file is due to be replaced. */
-	private replaceAt = 0;
-	private problem: unknown = null;
-	/** When a token was written that came after the one before it had expired: for a while, a refusal by Windlass is that gap's. */
-	private lapseEndedAt: number | null = null;
-	/** How many replacements in a row failed because of the sign-in itself. */
-	private refused = 0;
-	/** Every token this turn was handed, in the forms a line of the engine's output can hold it: as it is, and as JSON writes it. */
-	private readonly handed = new Set<string>();
-	/** How many times the file was replaced after the first write. */
-	replaced = 0;
-	/** The turn's lease of the model relay, once `start` opened it. */
-	private relay: TurnModelRelay | null = null;
-	/** How long opening the relay's lease took (StartTimes.relay), once it was opened. */
-	relayMs: number | null = null;
-
-	constructor(
-		private readonly sandbox: TurnSandbox,
-		private readonly tokens: AccessTokens,
-		options: TokenFileOptions = {},
-	) {
-		this.path = tokenFilePath(
-			sandbox.id,
-			sandbox.profile === "daytona" || sandbox.profile.startsWith("e2b") ? DATA_DIR : DOCKER_TOKEN_DIR,
-		);
-		this.leadMs = options.leadMs ?? TOKEN_REPLACE_LEAD_MS;
-		this.retryMs = options.retryMs ?? TOKEN_REPLACE_RETRY_MS;
-		this.log =
-			options.log ?? (line => (line.includes("token.replace_failed") ? console.warn(line) : console.log(line)));
-	}
-
-	/** What the turn leaves in the sandbox and removes when it ends: the file, and the one a write that was cut off may have left beside it. */
-	get files(): string[] {
-		return tokenFilePaths(this.path);
-	}
-
-	/**
-	 * Takes the tokens this turn was handed out of a piece of the engine's output (a protocol message, its
-	 * standard error). It is what keeps a token a command printed out of the turn's events; a token a
-	 * command has changed before printing it is not found.
-	 */
-	scrub(text: string): string {
-		for (const token of this.handed) if (text.includes(token)) text = text.split(token).join(TOKEN_REMOVED);
-		return text;
-	}
-
-	/** What `handedInFailure` needs to know when Windlass refuses the token. */
-	get state(): TokenFileState {
-		const now = Date.now();
-		const lapsed =
-			(this.expiresAt > 0 && this.expiresAt <= now) ||
-			(this.lapseEndedAt !== null && now - this.lapseEndedAt < LAPSE_MEMORY_MS);
-		return { expiresAt: this.expiresAt, problem: this.problem, lapsed };
-	}
-
-	/** What Windlass is started with besides the file's path: the relay's address, when the turn has one. */
-	get env(): Record<string, string> {
-		return this.relay?.env ?? {};
-	}
-
-	/** Whether the turn's token goes to a relay and the file holds a placeholder. */
-	get relayed(): boolean {
-		return this.relay !== null;
-	}
-
-	/** Gets the user's token and writes the file. Rejects with what the token source threw when there is no token to be had, and with a TokenFileError when the file cannot be written or the relay cannot be had. */
-	async start(): Promise<void> {
-		const token = await this.tokens.current(this.sandbox.uid);
-		if (this.sandbox.modelRelay !== undefined && !this.stopped) {
-			const began = Date.now();
-			try {
-				this.relay = await this.sandbox.modelRelay();
-				this.relayMs = Date.now() - began;
-			} catch (error) {
-				throw new TokenFileError(`the model relay could not be started: ${errorText(error)}`);
-			}
-			// A stop that came while the lease was being opened did not see it.
-			if (this.stopped) await this.relay.close();
-		}
-		const written = await this.write(token).catch((error: unknown) => {
-			throw new TokenFileError(errorText(error));
-		});
-		if (!written) return;
-		this.log(
-			`[wlp] token.handed sandbox=${this.sandbox.id} uid=${this.sandbox.uid}: the turn was handed an access token that lasts ${Math.round((token.expiresAt - Date.now()) / 1000)} s more${this.relay ? ", through the model relay" : ""}`,
-		);
-		this.schedule();
-	}
-
-	/** The relay's lease, where a restarted server can take it up again (`TurnModelRelay.lease`); null without one. */
-	get lease(): { lease: string; placeholder: string; env: Record<string, string> } | null {
-		const relay = this.relay;
-		return relay?.lease ? { lease: relay.lease, placeholder: relay.placeholder, env: relay.env } : null;
-	}
-
-	/**
-	 * For a turn a restarted server takes up (turn.ts, `takeUp`): the token is never stored, so the file is
-	 * written again now, through the same relay lease when the turn had one, and replaced on schedule from here.
-	 */
-	async resume(relay: { lease: string; placeholder: string; env: Record<string, string> } | null): Promise<void> {
-		const token = await this.tokens.current(this.sandbox.uid);
-		if (relay !== null) {
-			if (this.sandbox.resumeRelay === undefined)
-				throw new TokenFileError("the model relay's lease cannot be taken up here");
-			this.relay = this.sandbox.resumeRelay(relay);
-		}
-		const written = await this.write(token).catch((error: unknown) => {
-			throw new TokenFileError(errorText(error));
-		});
-		if (!written) return;
-		this.log(
-			`[wlp] token.handed_again sandbox=${this.sandbox.id} uid=${this.sandbox.uid}: the turn taken up after a restart was handed an access token that lasts ${Math.round((token.expiresAt - Date.now()) / 1000)} s more${this.relay ? ", through the model relay" : ""}`,
-		);
-		this.schedule();
-	}
-
-	/** Ends the schedule and waits for a write in progress. The file itself is the caller's to remove. */
-	async stop(): Promise<void> {
-		this.stopped = true;
-		clearTimeout(this.timer);
-		await this.writing.catch(() => undefined);
-		// After the last write: the relay forgets the token, and the placeholder in the file is good for nothing.
-		await this.relay?.close().catch(() => undefined);
-	}
-
-	/** False when the turn has ended meanwhile: nothing was written. */
-	private async write(token: AccessToken): Promise<boolean> {
-		if (this.stopped) return false;
-		// Before the file is there: a command may read it the moment it is. Too short a string would be found everywhere.
-		if (token.accessToken.length >= 16)
-			for (const form of [token.accessToken, JSON.stringify(token.accessToken).slice(1, -1)]) this.handed.add(form);
-		const relay = this.relay;
-		if (relay !== null) this.handed.add(relay.placeholder);
-		// With a relay: the token goes there first, then the file gets the placeholder with the token's expiry.
-		if (relay === null && this.sandbox.profile === "daytona") throw new TokenFileError("Daytona requires a turn relay");
-		const writing =
-			relay === null
-				? this.sandbox.writeSecretFile(this.path, tokenFileContent(token))
-				: relay
-						.hand(token)
-						.then(() =>
-							this.sandbox.writeSecretFile(
-								this.path,
-								tokenFileContent({ accessToken: relay.placeholder, expiresAt: token.expiresAt }),
-							),
-						);
-		this.writing = writing.catch(() => undefined);
-		await writing;
-		const now = Date.now();
-		if (this.expiresAt > 0 && this.expiresAt <= now) this.lapseEndedAt = now;
-		this.expiresAt = token.expiresAt;
-		// When the token has the lead left. One that has no more than that already is as long as tokens come:
-		// replacing it now would only fetch another like it, so it stays until half of what it has is gone.
-		const left = Math.max(0, token.expiresAt - now);
-		this.replaceAt = token.expiresAt - (left > this.leadMs ? this.leadMs : left / 2);
-		return true;
-	}
-
-	/** `retryInMs`: the last try did not give a new token, and the next one comes after this long. */
-	private schedule(retryInMs?: number): void {
-		if (this.stopped) return;
-		const due = this.replaceAt - Date.now();
-		this.timer = setTimeout(() => void this.replace(), retryInMs ?? Math.max(this.retryMs, due));
-		// A turn that has ended otherwise must not be kept alive by this.
-		this.timer.unref?.();
-	}
-
-	private async replace(): Promise<void> {
-		if (this.stopped) return;
-		const who = `sandbox=${this.sandbox.id} uid=${this.sandbox.uid}`;
-		try {
-			const token = await this.tokens.current(this.sandbox.uid);
-			// The same token again: the token source still reuses it. The file is right as it is; look again soon.
-			if (token.expiresAt === this.expiresAt) return this.schedule(this.retryMs);
-			if (!(await this.write(token))) return;
-			this.replaced += 1;
-			this.log(
-				`[wlp] token.replaced ${who}: the turn's access token file holds a new token that lasts ${Math.round((token.expiresAt - Date.now()) / 1000)} s more${this.problem === null ? "" : this.lapseEndedAt !== null ? ", after the one in it had expired" : ", after an earlier try had failed"}`,
-			);
-			this.problem = null;
-			this.refused = 0;
-			this.schedule();
-		} catch (error) {
-			if (this.stopped) return;
-			this.problem = error;
-			// A sign-in that is gone or refused (the token source read that from Windlass's code) does not come back by
-			// asking again; one the network kept from being refreshed (`network_error`) may.
-			this.refused = error instanceof SandboxUserError ? this.refused + 1 : 0;
-			const retryInMs =
-				this.refused === 0
-					? this.retryMs
-					: Math.min(this.retryMs * 2 ** (this.refused - 1), Math.max(this.retryMs, REFUSED_RETRY_MAX_MS));
-			const left = this.expiresAt - Date.now();
-			const message = errorText(error).replace(/\s+/g, " ").trim();
-			this.log(
-				`[wlp] token.replace_failed ${who}: the turn's access token file could not be replaced (${message}); the token in it ${left > 0 ? `lasts ${Math.ceil(left / 1000)} s more` : "has expired"}; trying again in ${Math.round(retryInMs / 1000)} s`,
-			);
-			this.schedule(retryInMs);
-		}
-	}
 }

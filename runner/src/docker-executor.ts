@@ -14,7 +14,6 @@ import { digest, type SnapshotSelection, type SnapshotSource } from "../../serve
 import { availableParallelism, freemem, loadavg, totalmem } from "node:os";
 import { MODEL_PROVIDERS, type HarnessOptions, type ModelProvider } from "../../server/src/contract.js";
 import { innerModesReason, reportedCodexModes } from "../../server/src/sandbox/codex-modes.js";
-import { codexLogin } from "./codex-login.js";
 import { PROFILE_RUN_FLAGS } from "../../server/src/sandbox/docker-flags.js";
 import { commonRunFlags } from "../../server/src/sandbox/profiles.js";
 import { tmpName } from "../../server/src/sandbox/docker.js";
@@ -38,12 +37,7 @@ import { ENVIRONMENT_SLOT_WAIT, SandboxUserError } from "../../server/src/sandbo
 import { LABEL, LABEL_ARG, docker } from "../../server/src/sandbox/docker.js";
 import { DOCKER_BWRAP_PROBE } from "../../server/src/sandbox/docker-flags.js";
 import { NAME, WORKSPACE, type ForwardedKeyLease } from "../../server/src/sandbox/provider.js";
-import {
-	containerName,
-	removeRunningTokenFiles,
-	DockerSandboxes,
-	DockerSandboxHandle,
-} from "../../server/src/sandbox/sandboxes.js";
+import { containerName, DockerSandboxes, DockerSandboxHandle } from "../../server/src/sandbox/sandboxes.js";
 import { tokenFilePath } from "../../server/src/sandbox/token-file.js";
 import { mirrorOwner, saveSessionMirror } from "../../server/src/sandbox/git-mirrors.js";
 import {
@@ -80,6 +74,7 @@ import {
 	loginFileState,
 	dropDetachedLoginVolume,
 	retireClaudeRelay,
+	storeClaudeLogin,
 	withLoginVolume,
 } from "./harness-login.js";
 import { open, type Egress } from "./egress-policy.js";
@@ -89,7 +84,6 @@ import { forget, loadPair, read, Refusal, RunnerError, save, VERSION, type Ident
 // Stop each relay under its own login-volume lock. The pairing keeps the credentials.
 export async function retirePairingRelays(machine: MachineDocker) {
 	await retireClaudeRelay(machine);
-	if (codexLogin(machine)) await withLoginVolume(machine, () => removeRelay(machine, "codex"));
 	if (currentProvider(machine)) await withLoginVolume(machine, () => removeRelay(machine, "opencode"));
 }
 
@@ -358,8 +352,7 @@ export class Executor extends MachineDocker {
 			const env = record.keyEnv(keys);
 			if (env) return { env };
 			const login = record.machineLogin(this) ?? undefined;
-			if (!login && record.needsLogin && !Object.keys(keys).length)
-				throw new Refusal(`Run windlass-runner login ${harness} on this machine.`);
+			if (!login && record.noCredential && !Object.keys(keys).length) throw new Refusal(record.noCredential);
 			const nonce = await this.relayNonce(raw);
 			if (!/^[a-f0-9]{32}$/.test(nonce)) throw new Refusal("Invalid session relay nonce.");
 			return record.credentials(this, nonce, login, keys);
@@ -485,9 +478,7 @@ export class Executor extends MachineDocker {
 
 	private readonly codexPin?: string;
 	private readonly codexProvider?: DockerSandboxes;
-	private codexCredential?: ReturnType<typeof codexLogin>;
 	private codexOptions?: HarnessOptions;
-	private codexGeneration?: string;
 	private nextCodexProbe = 0;
 	private codexInner?: boolean;
 	private readonly opencodePin?: string;
@@ -516,9 +507,7 @@ export class Executor extends MachineDocker {
 	private freeDiskBytes: number | null = null;
 	// A peer without session-volumes expects the shared machine volume and would lose a workspace on the next turn.
 	sessionVolumes = false;
-	modelRelays = false;
 	harnessKeyRelays = false;
-	windlassKeyRelays = false;
 	startTimes = false;
 	blockedNetwork = false;
 	memoryEvents = false;
@@ -664,11 +653,6 @@ export class Executor extends MachineDocker {
 		}
 	}
 	private async refreshLogin() {
-		if (this.codexPin) {
-			const credential = codexLogin(this);
-			this.codexCredential = credential && (await this.ownedVolume(false, this.codexVolume)) ? credential : undefined;
-			if ((this.codexCredential?.generation ?? "signed-out") !== this.codexGeneration) this.codexOptions = undefined;
-		}
 		if (this.opencodePin) {
 			this.opencodeLogin = await installedProvider(this);
 			if ((this.opencodeLogin?.generation ?? "signed-out") !== this.probedLogin) this.opencodeOptions = undefined;
@@ -717,6 +701,15 @@ export class Executor extends MachineDocker {
 		}, delay);
 		this.signInRetry.unref?.();
 	}
+	/**
+	 * The platform's `forget-claude-login` ("Switch back to your plan" on Connections): the Claude Code login kept on
+	 * this machine goes as with `logout claude`, for this pairing, and the report says Claude Code has none.
+	 */
+	async forgetClaudeLogin() {
+		await storeClaudeLogin(this, undefined);
+		await this.serial(() => this.loginChanged(false));
+		this.publishReport?.();
+	}
 	async loginChanged(signedIn: boolean) {
 		await this.refreshLogin();
 		if (signedIn) await this.restoreRelay();
@@ -731,10 +724,7 @@ export class Executor extends MachineDocker {
 	}
 	private async refreshCodexOptions(force = false) {
 		const pin = this.codexPin;
-		const login = this.codexCredential;
-		const generation = login?.generation ?? "signed-out";
-		if (!pin || (!force && generation === this.codexGeneration && Date.now() < this.nextCodexProbe)) return;
-		this.codexGeneration = generation;
+		if (!pin || (!force && Date.now() < this.nextCodexProbe)) return;
 		this.nextCodexProbe = Date.now() + INVENTORY_RETRY_MS;
 		let options: HarnessOptions | undefined;
 		try {
@@ -772,12 +762,9 @@ export class Executor extends MachineDocker {
 				}
 				this.codexInner = passed;
 			}
-			options = await probeHarnessOptions(this, pin, undefined, { login });
-		} catch {
-			// The session can disappear normally if the owner logs out during discovery.
-		}
-		await this.refreshLogin();
-		if ((this.codexCredential?.generation ?? "signed-out") !== generation) return;
+			// Codex has no login here: the signed-out native catalog, read offline.
+			options = await probeHarnessOptions(this, pin, undefined, true);
+		} catch {}
 		if (options) {
 			this.codexOptions = options;
 			this.nextCodexProbe = Date.now() + INVENTORY_TTL_MS;
@@ -815,11 +802,6 @@ export class Executor extends MachineDocker {
 		}
 	}
 	private async restoreRelay() {
-		if (this.codex && this.codexCredential && [...this.boxes.values()].some(b => b.harness === "codex"))
-			await withLoginVolume(this, async () => {
-				const login = codexLogin(this);
-				if (login) await ensureRelay(this, login);
-			});
 		if (this.opencode && this.opencodeLogin && [...this.boxes.values()].some(b => b.harness === "opencode")) {
 			await withLoginVolume(this, async () => {
 				const login = currentProvider(this);
@@ -945,7 +927,6 @@ export class Executor extends MachineDocker {
 		if (this.credentialPathChecked) return;
 		if (this.claude) await withLoginVolume(this, () => stopLegacyClaude(this));
 		else await retireClaudeRelay(this);
-		if (!this.codex && codexLogin(this)) await withLoginVolume(this, () => removeRelay(this, "codex"));
 		if (!this.opencode && currentProvider(this)) await withLoginVolume(this, () => removeRelay(this, "opencode"));
 		const pair = loadPair();
 		if (pair?.current.machineId === this.identity.machineId) {
@@ -1076,7 +1057,9 @@ export class Executor extends MachineDocker {
 		if (harness) {
 			const nonce = await this.relayNonce(raw).catch(() => "");
 			if (nonce) await withLoginVolume(this, () => endHarnessLeases(this, harness, nonce));
-		} else await this.modelRelay.endSandbox(raw).catch(() => {});
+		}
+		// A harness sandbox's plan relay and forwarder are the model relay's too.
+		await this.modelRelay.endSandbox(raw).catch(() => {});
 	}
 
 	private async prepareModelRelay(): Promise<void> {
@@ -1104,9 +1087,8 @@ export class Executor extends MachineDocker {
 				id: "codex",
 				adapter: "codex-acp 2.9.0",
 				image: this.codexPin.split("@").at(-1)!,
-				signIn: !this.dockerHealth.ok ? "unknown" : this.codexCredential ? "token" : "none",
-				loginGeneration: this.codexCredential?.generation,
-				...(this.codexCredential && { method: this.codexCredential.provider === "chatgpt" ? "chatgpt" : "api-key" }),
+				// No login of its own here: a plan or a Settings key pays for its turns.
+				signIn: !this.dockerHealth.ok ? "unknown" : "none",
 				modes: reportedCodexModes(!!this.codexInner),
 				...(!this.codexInner && { modeReason: innerModesReason }),
 				...(this.codexOptions && { options: this.codexOptions }),
@@ -1475,11 +1457,8 @@ export class Executor extends MachineDocker {
 				...(this.screenshots && !box.harness ? { screenshots: true } : {}),
 				...(this.canReseed && { needsSpareSeed: true as const }),
 				...(handle.ownData && this.sessionVolumes ? { ownData: true as const } : {}),
-				...(!box.harness && this.windlassKeyRelays && { windlassKeyRelay: true as const }),
 				// A harness uses its credential relay for forwarded platform leases.
-				...((box.harness ? this.harnessKeyRelays : this.modelRelays && this.modelRelayReady)
-					? { modelRelay: true as const }
-					: {}),
+				...((box.harness ? this.harnessKeyRelays : this.modelRelayReady) ? { modelRelay: true as const } : {}),
 				...(this.blockedNetwork && box.egress === "restricted" ? { blockedNetwork: true as const } : {}),
 				...(this.memoryEvents && { memoryEvents: true as const }),
 				...(this.startTimes && box.startTimes
@@ -1546,11 +1525,6 @@ export class Executor extends MachineDocker {
 				audit(b.sessionId, id, "idle-suspend", "done");
 			}
 		}
-	}
-	override async logout() {
-		const { uid, machineId } = this.identity;
-		await removeRunningTokenFiles(uid, machineId, raw => externalId(machineId, raw));
-		await super.logout(); // Files left on the volume by previous runner versions.
 	}
 	async suspendAll() {
 		await this.discover();

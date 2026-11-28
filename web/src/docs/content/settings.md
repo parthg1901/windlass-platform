@@ -7,18 +7,65 @@ Choose **Settings** in the top bar (in the account menu on a phone). What you sa
 Three places choose what runs, each saving as soon as you change it:
 
 - **Machines → Where work runs**: the default place, Hosted or one of your machines. For a machine, its isolation and what happens when it is offline: **Wait for it**, or **Offer Hosted**, where the item asks you before it moves. Nothing moves to another place, payer or sandbox without asking. See [Where work runs](/docs/machines#where-work-runs).
+- **Connections**: what pays for each agent, hosted and on each of your machines: your plans and your API keys, or an agent's own login on a machine. See [Connections](#connections).
 - **Settings → Models** has two choices. **Builds with** sets the agent, model and effort. **Plans & reviews with** sets the Windlass model and effort for planning, review and summaries. **Same as building** uses the usual Windlass model.
 - **A repository's Overrides**: a different place, build agent, planning model or hosted sandbox for that repository only.
 
 An item's own choice comes first, then the repository's, then yours, then the deployment's. The composer, the **New work item** form and each part of a plan show one line of what will run and where it comes from, for example "nas · Codex · Astra — your default", with **Change** for that item only.
 
+### Connections
+
+Choose **Connections** in the top bar (in the account menu on a phone). The grid has a row for each agent (Windlass, Claude Code, Codex, OpenCode) and a column for **Hosted** and for each paired machine. Each cell says what pays for that agent there now: a plan, one of your API keys, the agent's own login on that machine, or **Not connected**. A cell that is not connected has one button that leads to the right connect: the plan's command, the key's entry, or the Machines page. On a machine, Claude Code and Codex pay as on Hosted, by **Who pays** below, unless Claude Code's own login is kept on that machine. A machine's Claude Code cell offers both: **Your Claude plan, from Windlass**, or **This machine's own login — it never leaves this machine**, with the command to run there and **Switch back to your plan** while that login is kept. See [Claude Code's own login on this machine](/docs/machines#claude-codes-own-login-on-this-machine).
+
+Hosted uses a connected plan first, then a key. **Who pays** has, for Claude Code and Codex, two choices that every turn follows from its start, hosted and on your machines:
+
+- **Pay with**: **Plan first, then key** (the default), **Plan only**, or **Key only**.
+- **When limited**: what a turn does when the plan hits its limit: **Wait for the reset**, **Use my key**, or **Ask me**. By default work items wait and your own sessions ask. Without a saved key a limited plan always waits.
+
+A plan pays only for your own work, never a teammate's, and only for the real Claude Code or Codex. An item filed from Slack, Linear or Jira by someone whose account there is not linked to yours never runs on your plan: it uses your key, or asks. A plan runs a few turns at once (three by default); more wait for one to finish, like a limit.
+
+A plan's cell shows how the platform last saw it:
+
+- **Limited until 14:00**: the plan reached its 5-hour or weekly limit, and the provider said when it resets. **Limited · trying again at 14:00**: the provider named no time, so the platform tries again then, and waits longer each time it is still limited.
+- **Stopped working**: the provider refused the plan's token twice in a row. Choose **Reconnect** and run the command again. Until then, turns use your key where Pay with allows, or say so.
+
+A work item waiting for a limited plan says so on its page, for example "Your Claude plan is limited until 14:00 UTC. This item starts by itself then." It starts by itself at that time. Where a saved key could pay, **Use my key now** runs its next turn on the key instead, once; **Change rule** leads to Who pays.
+
+In your own session, a prompt sent while the plan is limited asks first when your rule is **Ask me** (the default): **Use my key this time** sends it on your key, and **Wait** keeps it in the composer so you can send it after the reset. With **Wait for the reset** the composer says until when and keeps your message.
+
+Windlass has no **Who pays** choice: the model you pick decides. Its ChatGPT models run on your ChatGPT plan, and a model under a provider (such as `openai/gpt-5`) runs on that key. When the ChatGPT plan is limited, hosted Windlass does what the defaults say: a work item waits for the reset, and your own session asks. **Use my key this time** (or **Use my key now** on an item) runs that one turn on your OpenAI key's version of the same model, such as `openai/gpt-5` for `gpt-5`, where your OpenAI key offers it; the next turn is on the plan again. Without such a key, it always waits. Windlass's turns do not count toward the plan's few turns at once. Windlass's limits on the ChatGPT plan show in the plan's cell, as Codex's do.
+
+When a hosted agent in the composer is not connected, it says so and links to its cell.
+
 ### Model providers
 
-**Connect**, on the ChatGPT plan row under Models, opens a model connection for your signed-in Windlass account. Follow **Authorize your plan at OpenAI**, approve it, then copy the full loopback address from the page that fails to load. Paste it into Settings and choose **Finish connecting** within ten minutes. **Disconnect** removes this model connection. Your platform login and sessions stay with your GitHub or Google identity.
+**Connect**, on the ChatGPT plan row under **Connections → Plans**, shows a command to run in a terminal on your own computer (Node 18 or later):
 
-In **Settings → Model keys**, choose **Add key…** for OpenAI, Anthropic, Google (Gemini) or OpenRouter. You can save one key per provider. Windlass stores it encrypted, checks it with the provider and shows its last four characters and the number of models found. Use **Check**, **Replace…** or **Remove…** to manage it later.
+```sh
+npx @windlassai/cli connect codex
+```
 
-These keys authorize model requests on your behalf. The platform stores them encrypted, shows only the last four characters, and uses a per-turn relay to keep the key outside the sandbox. Removing or replacing a key stops new requests through leases for the old key. Hosted sandboxes always use these keys: Claude Code your Anthropic key, Codex your OpenAI key, and OpenCode the key for the selected provider. On a paired machine, an agent signed in there (a Claude subscription, a ChatGPT plan for Codex, an OpenCode provider login) uses that sign-in first, and a key only for providers the machine is not signed in to. To have it use your key instead, choose “Use your … key” under the agent on the Machines page. Windlass uses your API key for the models listed under that provider, and your ChatGPT sign-in for your plan's models.
+The command shows a code and opens a Windlass page in your browser. Check that the page shows the same code, then choose **Approve**. The command then runs Windlass's sign-in, which opens ChatGPT's sign-in in your browser. On a computer without a browser it prints a link instead: open it anywhere, approve, and paste the address the browser ends on back into the terminal. The command hands the sign-in to your account; your own Windlass sign-in on that computer is untouched. The platform keeps the sign-in encrypted and refreshes it itself. **Reconnect** replaces it and **Disconnect** removes it. Your platform login and sessions stay with your GitHub or Google identity.
+
+This connection is your **ChatGPT plan**. Windlass's ChatGPT models run on it. Where the platform offers plans, hosted Codex runs on it too, before an OpenAI key, and the row says "Also pays for hosted Codex". Codex's models on the plan come from ChatGPT's own list, read when you connect; **Check again** reads it anew. Until it has been read, Codex offers only **Agent default**. The plan's tokens never enter a sandbox, and turns already running on an old connection stop within a minute of a reconnect or disconnect.
+
+### Connect your Claude plan
+
+Where the platform offers it, the **Claude plan** row under **Connections → Plans** lets hosted Claude Code run on your Claude Pro or Max plan instead of an API key. Choose **Connect**, then run the command it shows in a terminal on your own computer:
+
+```sh
+npx @windlassai/cli connect claude
+```
+
+The command shows a code and opens a Windlass page in your browser. Check that the page shows the same code, then choose **Approve**; choose **Deny** if you did not just run the command yourself. After you approve, the command runs `claude setup-token` (installing Claude Code through npx if needed). Sign in to Claude there, and the command hands the token it prints to your account. Windlass checks it with Anthropic, keeps it encrypted, and shows the account it belongs to, for example "Connected as a@b.com · Max". The token never enters a sandbox, and the command does not save it. A code expires after three minutes if you do not approve it; once approved, the command has ten minutes to hand the token over. **Reconnect** replaces the token and **Disconnect** removes it; turns already running on the old one stop within a minute.
+
+Claude Code's models on the plan are the ones it offers in its first turn on the plan; until then it offers only **Agent default**.
+
+For a self-hosted platform, add `--platform https://your-platform` to the command.
+
+In **Connections → API keys**, choose **Add key…** for OpenAI, Anthropic, Google (Gemini) or OpenRouter. You can save one key per provider. Windlass stores it encrypted, checks it with the provider and shows its last four characters and the number of models found. Use **Check**, **Replace…** or **Remove…** to manage it later.
+
+These keys authorize model requests on your behalf. The platform stores them encrypted, shows only the last four characters, and uses a per-turn relay to keep the key outside the sandbox. Removing or replacing a key stops new requests through leases for the old key. Hosted sandboxes use these keys where no connected plan pays: Claude Code your Anthropic key, Codex your OpenAI key, and OpenCode the key for the selected provider. On a paired machine, Claude Code and Codex use your plans and keys as on Hosted, and OpenCode uses its own logins there and your keys for the other providers. Windlass uses your API key for the models listed under that provider, and your ChatGPT sign-in for your plan's models.
 
 ### MCP servers
 
@@ -223,7 +270,7 @@ An agent asks before it starts an MCP server that the repository names: **Start 
 
 ## Usage
 
-The **Usage** page shows your effective limits, model tokens, hosted sandbox time and kept sandboxes. The deployment operator sets account limits.
+The **Usage** page shows your effective limits, hosted sandbox time, what your work items' model turns cost today and kept sandboxes. **Models today** prices the day's turns as an item's cost is priced: what your API keys paid, and, where a plan carried turns, what they are worth at API prices, for example "$1.20 on your keys + ≈ $3.40 included in your plans". Model tokens are under **Details**. The deployment operator sets account limits.
 
 ### Daily model tokens
 
@@ -254,6 +301,7 @@ Where the platform's sandboxes are billed by the second, as on E2B, the page sho
 - **Today by agent**: the day's time, agent by agent.
 - **On your machines**: agents on your machines. They are not counted against your daily sandbox time, running agents or kept sandboxes.
 - **Work items**: what the Factory may run for you at once, and what each item may spend.
+- **Summary**: what finished work cost over the last 7, 30 or 90 days, by size and by type, with what was spent on retries and on items that did not finish. See [What finished work costs](/docs/factory#what-finished-work-costs).
 - **The last 14 days**.
 
 ## Limits

@@ -1,7 +1,7 @@
 /**
  * This server's sign-in machinery: where Windlass's sign-in commands run, and what the sandbox provider
- * adds to a user's sign-in. The `user` and `login` actors and the sandbox layer's `logins` and `tokens`
- * all take it from here, so there is one of it per server process.
+ * adds to a user's sign-in. The `user` actor and the sandbox layer's `logins` and `tokens` all take it
+ * from here, so there is one of it per server process.
  *
  * Where the commands run is independent of where sandboxes run:
  *

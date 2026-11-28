@@ -19,7 +19,7 @@ Run the formatter before committing; editors with the Biome extension do it on s
 ## Key files
 
 - `package.json` defines the typecheck, lint and test scripts.
-- `pnpm-workspace.yaml` lists the workspace packages: `server`, `runner` and `web`.
+- `pnpm-workspace.yaml` lists the workspace packages: `server`, `runner`, `web` and `cli`.
 - `biome.json` holds the format settings, lint rules and the files they skip.
 
 ## Architecture map
@@ -29,6 +29,7 @@ Run the formatter before committing; editors with the Biome extension do it on s
 - `server/` is the platform: one RivetKit node plus its own HTTP routes (`server/src/index.ts`).
 - `web/` is the React app. It calls actors through the Rivet gateway and imports server types via `@contract`.
 - `runner/` is the CLI on a user's machine. It pairs with the server and runs sandbox operations locally.
+- `cli/` is `@windlassai/cli`, run with npx: `connect claude` and `connect codex` connect a Claude or ChatGPT plan ([CLI guide](cli/AGENTS.md)).
 - `scripts/` holds standalone checks, stand-ins for external services and the CI selector.
 - `sandbox/` builds the Docker and E2B images, harness wrappers and the model relay; `fixtures/` feeds the checks.
 - `docs/` is operator documentation; `deploy/selfhost` is the self-hosting setup.
@@ -91,7 +92,7 @@ cd web && npx tsc --noEmit -p .
 
 Always run **both** before merging server changes. Web follows imports into `server/src`
 under stricter settings, including unused locals and parameters. Server can pass while web fails.
-Runner changes also need `cd runner && npx tsc --noEmit -p .`.
+Runner changes also need `cd runner && npx tsc --noEmit -p .`; CLI changes `cd cli && npx tsc --noEmit -p .`.
 
 ## If you change X, run Y
 

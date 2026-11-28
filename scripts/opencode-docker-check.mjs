@@ -305,23 +305,26 @@ await symlink(join(root, "fixtures/claude-relay/docker.cjs"), join(dir, "docker"
 async function settingsKeyTurns() {
 	const id = await owner.create("keys", profile, false, "opencode");
 	const anth = "anthropic/claude-opus-4-6";
-	await channelTurn(owner, "keys", id, "default", undefined, undefined, { providers: ["anthropic"], source: "key" });
+	await channelTurn(owner, "keys", id, "default", undefined, undefined, { providers: ["anthropic"] });
+	// One turn can send more than one request (OpenCode also asks for a title), so compare counts rather than fix one.
+	const keyRequests = async () =>
+		(await cmd(["logs", upstream])).split("settings POST /model-relay/v1/messages").length - 1;
+	const keyed = await keyRequests();
+	assert.ok(keyed >= 1, "the Settings key did not pay without a machine login");
 	await storeProvider(owner, { provider: "anthropic", key: token + "-key" });
 	await storeProvider(owner, { provider: "openai", key: token + "-key" });
 	await owner.loginChanged(true);
 	const offered = owner.report().harnesses.find(entry => entry.id === "opencode");
 	assert.equal(offered.signIn, "token");
 	assert.deepEqual([...offered.machineProviders].sort(), ["anthropic", "openai"]);
-	await channelTurn(owner, "keys", id, anth, undefined, undefined, {
-		providers: ["anthropic", "google"],
-		source: "key",
-	});
+	// The machine's own logins win for their providers; a key pays only for a provider it has no login for.
+	await channelTurn(owner, "keys", id, anth, undefined, undefined, { providers: ["anthropic", "google"] });
 	await channelTurn(owner, "keys", id, "openai/gpt-5.4", undefined, undefined, { providers: ["anthropic", "openai"] });
 	await channelTurn(owner, "keys", id, anth);
+	assert.equal(await keyRequests(), keyed, "a Settings key paid where the machine has its own login");
 	const log = await cmd(["logs", upstream]);
-	assert.ok(log.split("settings POST /model-relay/v1/messages").length >= 3);
 	assert.match(log, /authorized api.openai.com \/v1\/responses/);
-	ok("Settings-key turns without and with a machine login, mixed providers and machine-only fallback.");
+	ok("A Settings key pays without a machine login; the machine's own logins win once it has them.");
 	const raw = "opencode-" + id.slice(-12),
 		name = containerName(raw);
 	const lease = await owner.openTurnKey(raw, "opencode", {

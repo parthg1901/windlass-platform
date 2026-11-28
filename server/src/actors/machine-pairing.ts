@@ -143,6 +143,17 @@ export const machinePairing = actor({
 			if (!r) throw pairingGone();
 			return { details: JSON.parse(r.details), publicKey: r.public_key, machineId: r.machine_id, expires: r.expires };
 		},
+		/** Ends a pairing this user looked up: its runner's next poll finds it gone. */
+		internalDeny: async (c, uid: string): Promise<void> => {
+			requireServiceFor(c, "call");
+			const ended = await c.db.execute(
+				"UPDATE pairing SET expires = 0 WHERE uid = ? AND expires > ? RETURNING 1",
+				uid,
+				Date.now(),
+			);
+			if (!ended.length) throw pairingGone();
+			c.destroy();
+		},
 		internalPoll: async (c, pollHash: string): Promise<PairStatus> => {
 			requireServiceFor(c, "call");
 			const [r] = await c.db.execute<{ uid: string | null; machine_id: string; expires: number; poll_hash: string }>(

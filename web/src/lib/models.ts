@@ -175,14 +175,16 @@ export function credentialWords(
 	const key = `${SOURCE_NAMES[source]} key`;
 	if (harness === "windlass" || !entry || !machine) return key;
 	if (entry.platformKeys?.includes(source)) return key;
+	// Paid with the account's plan or key (Connections → Pay with), as hosted.
+	if (entry.paysWith) {
+		if (entry.signIn === "none") return "not connected";
+		return harness === "claude" ? "Claude plan" : "ChatGPT plan";
+	}
 	if (entry.id === "opencode" && !entry.machineProviders && !entry.keyRelay && entry.signIn === "token")
 		return `login on ${machine}`;
 	if (!entry.machineSignIns?.includes(source))
 		return entry.signIn === "unknown" ? `sign-in unchecked · ${machine}` : "sign in needed";
 	if (harness === "claude") return `Claude subscription · ${machine}`;
-	const chatgpt =
-		harness === "codex"
-			? entry.method === "chatgpt"
-			: source === "openai" && entry.machineProviders?.includes("chatgpt");
+	const chatgpt = source === "openai" && entry.machineProviders?.includes("chatgpt");
 	return chatgpt ? `ChatGPT plan · ${machine}` : `${SOURCE_NAMES[source]} login · ${machine}`;
 }

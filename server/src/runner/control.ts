@@ -27,8 +27,12 @@
  *                                      machine's volume of copies; only to a runner whose report said
  *                                      `sessionBackups`; answered with `backup-forgotten`
  *   backup-forgotten  runner → actor   that copy is gone, or there was none
- *   logout     actor → runner   the user's ChatGPT sign-in was forgotten: remove the access token files
- *                               of running turns
+ *   forget-claude-login     actor → runner   remove the Claude Code login kept on the machine (`windlass-runner
+ *                                            login claude`), so its Claude Code pays through Pay with again;
+ *                                            answered with `claude-login-forgotten`. Every runner from
+ *                                            MIN_RUNNER_VERSION (0.3.13) reads it, so it is not gated
+ *   claude-login-forgotten  runner → actor   `ok`: the login is gone (or there was none); false: Docker could not
+ *                                            remove it
  *
  * What a refusal leads to on the runner: it says the sentence, never exits (a container that exits is
  * started again by Docker, which would only repeat the refusal), and asks again after REFUSED_RETRY_MS.
@@ -42,7 +46,14 @@
 import { createHash, createPublicKey } from "node:crypto";
 import { endpointShape, helloFields, removalFields, welcomeFields } from "./frame-auth.js";
 import { MACHINE_HARNESS_IDS, type HarnessOptions, type MachineProbe, type PlatformConnection } from "../contract.js";
-import { MACHINE_PROFILES, machineProfile, type MachineProfile, positiveLimit } from "./protocol.js";
+import {
+	MACHINE_PROFILES,
+	MIN_RUNNER_VERSION,
+	machineProfile,
+	outdatedRunner,
+	type MachineProfile,
+	positiveLimit,
+} from "./protocol.js";
 import {
 	type Assert,
 	type Of,
@@ -63,9 +74,7 @@ import {
 } from "./check.js";
 import { MAX_STORE_BYTES, type StoreCaps } from "../sandbox/store-limits.js";
 
-/** The oldest runner release this server serves: raise it when the server stops reading what older runners send. */
-export const MIN_RUNNER_VERSION = "0.2.0";
-export const LEGACY_MIN_RUNNER_VERSION = "0.1.0";
+export { MIN_RUNNER_VERSION, outdatedRunner } from "./protocol.js";
 export const MAX_CONTROL_FRAME_BYTES = 64 * 1024;
 // Only a paired runner's inventory report needs room for full provider catalogs.
 const MAX_HARNESS_OPTIONS_BYTES = 768 * 1024;
@@ -185,10 +194,9 @@ const probe = either(object({ ok: oneOf(true) }), object({ ok: oneOf(false), rea
  *   egress-domains   the report's `egressDomains`
  *   session-volumes  the report's `sessionVolumes` and a connect's `ownData`; without it, a runner
  *                    gives no hardened sandbox a data volume of its own
- *   model-relay      the report's `modelRelay`, a connect's `modelRelay`, and the `modelRelay`,
- *                    `modelRelayToken` and `modelRelayClose` operations (docs/model-relay.md); without
- *                    it, or from a runner that says neither, a turn's token goes into the sandbox
- *   windlass-key-relay  a connect's `windlassKeyRelay`: the runner accepts forwarded Settings-key leases for Windlass
+ *
+ * Every runner from MIN_RUNNER_VERSION on has the machine's model relay for Settings keys and the plan relay
+ * (docs/machines.md, "Plans on this machine"), so neither is named here.
  *   start-times      the first connect's `startTimes` after a create (docs/architecture.md, "Start times")
  *   store-limits     the report's `storeLimits`: the snapshot and Git mirror limits in force (docs/machines.md)
  *   memory-events    a connect's `memoryEvents`: the session can read its container's memory limit and OOM kills
@@ -213,8 +221,6 @@ export const SERVER_CAPABILITIES = [
 	"git-mirrors",
 	"egress-domains",
 	"session-volumes",
-	"model-relay",
-	"windlass-key-relay",
 	"harness-key-relay",
 	"start-times",
 	"store-limits",
@@ -318,14 +324,14 @@ const serverFrame = either(
 				}),
 			),
 		),
-		either(refusal, object({ kind: oneOf("heartbeat", "logout") })),
+		either(refusal, object({ kind: oneOf("heartbeat") })),
 	),
 	either(
 		/** `ticket` goes into the session socket's hello as it is (protocol.ts limits it to 1024). */
 		object({ kind: oneOf("attach"), sessionId: name, ticket: text(1024) }),
 		either(
 			object({ kind: oneOf("remove"), sandbox: sandboxId }),
-			object({ kind: oneOf("forget-backup"), sessionId: name }),
+			either(object({ kind: oneOf("forget-backup"), sessionId: name }), object({ kind: oneOf("forget-claude-login") })),
 		),
 	),
 );
@@ -394,7 +400,6 @@ const harnessEntry = object({
 	keyRelay: optional(oneOf(true)),
 	machineProviders: optional(list(line(128), 512)),
 	loginGeneration: optional(is<string>(v => typeof v === "string" && /^[0-9a-f]{32}$/.test(v))),
-	method: optional(oneOf("api-key", "chatgpt")),
 	modes: optional(list(line(64), 16)),
 	modeReason: optional(line(500)),
 	optionsDigest: optional(digest),
@@ -411,7 +416,7 @@ const harnesses = list(
 			harnessEntry(v) &&
 			(v.id === "codex"
 				? !v.options || boundedCodexOptions(v.options)
-				: v.method === undefined && v.modes === undefined && v.modeReason === undefined),
+				: v.modes === undefined && v.modeReason === undefined),
 	),
 	4,
 );
@@ -457,7 +462,7 @@ const report = object({
 	/** A Windlass session in a new hardened sandbox gets a data volume of its own (SESSION_VOLUME_PROFILES). */
 	sessionVolumes: optional(boolean),
 	blockedNetwork: optional(boolean),
-	/** Windlass's turns can send their model requests through the machine's model relay (docs/model-relay.md). */
+	/** Windlass's Settings-key turns can send their model requests through the machine's model relay (docs/model-relay.md). */
 	modelRelay: optional(boolean),
 	/** A resumed conversation keeps its processes, output and relay leases through the grace (`resumable-conversation`). */
 	resumableConversation: optional(boolean),
@@ -492,7 +497,10 @@ const runnerFrame = either(
 		object({ kind: oneOf("heartbeat") }),
 		either(
 			object({ kind: oneOf("removed"), sandbox: sandboxId }),
-			object({ kind: oneOf("backup-forgotten"), sessionId: name }),
+			either(
+				object({ kind: oneOf("backup-forgotten"), sessionId: name }),
+				object({ kind: oneOf("claude-login-forgotten"), ok: boolean }),
+			),
 		),
 	),
 );
@@ -509,7 +517,6 @@ export function reportFor<R extends Report>(report: R, named: readonly string[] 
 		"git-mirrors": "gitMirrors",
 		"egress-domains": "egressDomains",
 		"session-volumes": "sessionVolumes",
-		"model-relay": "modelRelay",
 		"store-limits": "storeLimits",
 		"resumable-conversation": "resumableConversation",
 		"session-backups": "sessionBackups",
@@ -573,16 +580,11 @@ export function parseServerFrame(data: unknown, strict = false): ServerFrame | n
 /** The refusal, with the sentence the runner prints: made here so the actor and its stand-in say the same. */
 export function refuse(
 	reason: "outdated" | "removed" | "key-in-use" | "unknown" | "bad-frame",
-	detail: { minimum?: string; runnerVersion?: string; removeSandboxes?: boolean } = {},
+	detail: { runnerVersion?: string; removeSandboxes?: boolean } = {},
 ): Refusal {
 	switch (reason) {
 		case "outdated":
-			return {
-				kind: "refused",
-				reason,
-				minimum: detail.minimum ?? MIN_RUNNER_VERSION,
-				message: `This runner is ${detail.runnerVersion ?? "too old"}; the platform needs ${detail.minimum ?? MIN_RUNNER_VERSION} or later. Update it with the command on the Machines page.`,
-			};
+			return { kind: "refused", reason, minimum: MIN_RUNNER_VERSION, message: outdatedRunner(detail.runnerVersion) };
 		case "removed":
 			return {
 				kind: "refused",

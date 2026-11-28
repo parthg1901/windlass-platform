@@ -32,7 +32,7 @@ import { sizeLabel, sizeName } from "../lib/sizes";
 import { linkProps } from "../lib/router";
 import { useMachines } from "../state/machines";
 import { useApp, useAuth } from "../state/app";
-import { useCatalogs, useHostedProviders, useModels, type AccountState } from "../state/hooks";
+import { useCatalogs, useHostedCredentials, useModels, type AccountState } from "../state/hooks";
 import { CloudIcon, MachineIcon } from "./Icons";
 import { EffortSelect, ModelSelect } from "./ModelPicker";
 import { AgentGlyph } from "./ui/Pill";
@@ -73,7 +73,7 @@ function useRunInputs() {
 	const info = platform.info;
 	const machines = useMachines(!!info?.machines);
 	const models = useModels();
-	const keys = useHostedProviders();
+	const keys = useHostedCredentials();
 	const catalogs = useCatalogs(machines.list);
 	const list = machines.list ?? (info?.machines ? null : []);
 	const keyProfile = !!info?.profiles.some(p => p.available && p.platformKeys);
@@ -484,8 +484,8 @@ export function DefaultPlace({ account }: { account: AccountState }) {
 				Reading your defaults…
 			</p>
 		);
-	const run = runOf({ account: defaults, machines: inputs.list, sizes: inputs.sizes });
-	const hosted = runOf({ account: defaults, item: { place: "hosted" }, machines: inputs.list, sizes: inputs.sizes });
+	const run = runOf({ account: defaults, sizes: inputs.sizes });
+	const hosted = runOf({ account: defaults, item: { place: "hosted" }, sizes: inputs.sizes });
 	const change = (patch: AccountDefaultsPatch) =>
 		save(async () => {
 			const next = await client.user(auth).saveAccountDefaults(patch);
@@ -528,8 +528,8 @@ export function DefaultAgent({ account }: { account: AccountState }) {
 				Reading your defaults…
 			</p>
 		);
-	const run = runOf({ account: defaults, machines: inputs.list, sizes: inputs.sizes });
-	const planning = runOf({ account: defaults, machines: inputs.list, sizes: inputs.sizes }, "planner");
+	const run = runOf({ account: defaults, sizes: inputs.sizes });
+	const planning = runOf({ account: defaults, sizes: inputs.sizes }, "planner");
 	const change = (patch: AccountDefaultsPatch) =>
 		save(async () => {
 			const next = await client.user(auth).saveAccountDefaults(patch);

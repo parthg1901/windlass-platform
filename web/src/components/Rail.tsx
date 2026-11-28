@@ -96,7 +96,7 @@ export function useSearchKey(
 /**
  * The rail and the main side; folded, a button brings the rail back. The rail stays drawn while it
  * folds, inert, so its width can slide and its rows fade (workspace.css). A phone has no rail here:
- * its page offers its own way.
+ * its page offers its own way. Without a rail (null), the main side has the whole width.
  */
 export function RailFrame({
 	label,
@@ -107,21 +107,23 @@ export function RailFrame({
 	children,
 }: {
 	label: string;
-	rail: ReactNode;
+	rail: ReactNode | null;
 	folded: boolean;
 	phone: boolean;
 	onUnfold(): void;
 	children: ReactNode;
 }) {
+	// One shape with or without the rail, so the main side is not mounted again when it goes.
+	const bare = rail === null;
 	return (
-		<div className={`ws${folded && !phone ? " ws-folded" : ""}`}>
-			{phone ? null : (
+		<div className={`ws${bare ? " ws-bare" : folded && !phone ? " ws-folded" : ""}`}>
+			{phone || bare ? null : (
 				<nav className="ws-rail" aria-label={label} inert={folded}>
 					<div className="ws-rail-inner">{rail}</div>
 				</nav>
 			)}
 			<div className="ws-main">
-				{folded && !phone ? (
+				{folded && !phone && !bare ? (
 					<button
 						type="button"
 						className="ws-unfold"

@@ -34,6 +34,8 @@ export interface DockerSandboxLayer extends SandboxLayer {
 	tokens: SignInTokens;
 	/** The sign-ins kept in this process, with `signIns: "memory"`; null on a server, where the users' actors hold them. */
 	signIns: MemorySignInDirectory | null;
+	/** The layer's model relay, if it has one: the relay's own check opens a machine's access-token leases on it, as a runner does. */
+	modelRelay?: DockerModelRelay;
 }
 
 /** For the layer's own checks; the server takes the defaults. */
@@ -54,10 +56,10 @@ export interface SandboxLayerOptions {
 	/** With "memory": more `docker run` flags for that helper (a volume a stand-in for the sign-in service reads its plan from). */
 	signInHelperFlags?: string[];
 	/**
-	 * Windlass's model relay (docs/model-relay.md). Left out: the server's layer has it unless
-	 * WLP_MODEL_RELAY=off, and a check's layer (`signIns: "memory"`) does not, so the checks of the token
-	 * file in the sandbox, which runners older than `model-relay` still use, go on checking that. "off":
-	 * none. Options: a relay with them (the relay's own checks).
+	 * The model relay (docs/model-relay.md). Left out: the server's layer has it unless WLP_MODEL_RELAY=off, and
+	 * a check's layer (`signIns: "memory"`) does not, so the checks of the token file in the sandbox, which
+	 * runners older than `model-relay` still use, go on checking that. "off": none. Options: a relay with them
+	 * (the relay's own checks).
 	 */
 	modelRelay?: "off" | Partial<DockerModelRelayOptions>;
 }
@@ -108,10 +110,11 @@ export function createSandboxLayer(options: SandboxLayerOptions = {}): DockerSan
 			dropDataVolume: dropSessionVolume,
 			ownVolumeName: sessionVolume,
 		}),
-		windlass: new DockerWindlass(signIns.tokens, { image }),
+		windlass: new DockerWindlass({ image }),
 		logins: signIns.logins,
 		tokens: signIns.tokens,
 		signIns: signIns.directory,
+		modelRelay,
 	};
 }
 

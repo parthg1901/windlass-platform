@@ -1,7 +1,9 @@
 /** The account's settings, secrets, model providers and API tokens. */
 
-import type { SandboxProfileId } from "../contract.js";
+import type { HarnessId, SandboxProfileId } from "../contract.js";
+import type { PlanProvider } from "./connect.js";
 import type { RepositoryAutonomy, RepositoryDefaults, SecretReach, SecretScope } from "./repository.js";
+import type { UsageWindow } from "./timeline.js";
 
 /** Account defaults apply after explicit launch and repository choices. Ignore unavailable profiles and models. */
 export type AccountDefaults = Omit<RepositoryDefaults, keyof RepositoryAutonomy | "screenshots">;
@@ -76,7 +78,7 @@ export function isModelProvider(value: unknown): value is ModelProvider {
 
 const MODEL_KEY_SHAPES: Record<ModelProvider, RegExp> = {
 	openai: /^sk-(?:(?:proj|svcacct)-[A-Za-z0-9_-]{16,512}|[A-Za-z0-9]{16,512})$/,
-	anthropic: /^sk-ant-[A-Za-z0-9_-]{16,600}$/,
+	anthropic: /^sk-ant-(?!oat)[A-Za-z0-9_-]{16,600}$/,
 	google: /^(?:AIza[A-Za-z0-9_-]{35}|AQ\.[A-Za-z0-9_.-]{16,1024})$/,
 	openrouter: /^sk-or-v1-[A-Za-z0-9]{16,512}$/,
 };
@@ -98,6 +100,96 @@ export interface ModelProviderStatus {
 
 /** A failed check leaves the key saved and returns a message safe to display. */
 export type ModelProviderCheck = ModelProviderStatus & { message?: string };
+
+export interface ModelPlanStatus {
+	provider: PlanProvider;
+	/** The account the plan belongs to, as the provider names it ("a@b.com · Max"); never the token. */
+	account: string | null;
+	addedAt: number;
+	/** When `models` was last learned; a plan without a check offers only the agent's default. */
+	checkedAt: number | null;
+	ok: boolean;
+	/** The models the plan offers, as its provider or agent reported them: none until one did. */
+	models?: string[];
+	/** What the relays last saw of it (credentials/plan-health.ts): usable, at its limit, or refused twice in a row. */
+	health: PlanHealth;
+	/** While `limited`: when it is tried again, the provider's reset or, where it named none, a backoff probe. */
+	limitedUntil: number | null;
+	/** Whether `limitedUntil` is the provider's own reset time rather than a probe. */
+	resetKnown: boolean;
+	/** The plan's usage windows as last seen (5-hour and weekly: % used and reset), one per kind. */
+	windows: UsageWindow[];
+	/** When the relays last saw a request of it; null before any. */
+	healthAt: number | null;
+}
+
+/** A plan as the relays see it: `invalid` after two refusals of its token in a row, until it is connected again. */
+export type PlanHealth = "ok" | "limited" | "invalid";
+
+/**
+ * What a relay saw of one answer from a plan's provider, for its health: the upstream status, the rate-limit headers
+ * (`limitHeaders`: numbers and status words only), and from an error body only its code and, for a limit that names
+ * one, its reset (unix ms).
+ */
+export interface RelaySeen {
+	status: number;
+	headers: Record<string, string>;
+	code?: string | null;
+	resetsAt?: number | null;
+}
+
+export interface ModelPlans {
+	/** Whether this account may connect plans (WLP_PLAN_USERS). */
+	allowed: boolean;
+	plans: ModelPlanStatus[];
+}
+
+/**
+ * What pays for a turn's model requests: the saved key of `provider`, or with `plan` the user's connected
+ * plan there. `generation` pins the saved one, so replacing or removing it ends every lease of the old one.
+ */
+export interface CredentialRef {
+	provider: ModelProvider;
+	generation: string;
+	plan?: true;
+}
+
+/**
+ * What pays for an agent's hosted turns where a connected plan and a saved key both could (Connections → Pay with):
+ * the plan, then the key once the plan cannot; only the plan; or only the key.
+ */
+export const PAY_WITH = ["plan-then-key", "plan", "key"] as const;
+export type PayWith = (typeof PAY_WITH)[number];
+
+/** What a turn does when the plan paying for it is limited: wait for the reset, switch to the saved key, or ask. */
+export const WHEN_LIMITED = ["wait", "key", "ask"] as const;
+export type WhenLimited = (typeof WHEN_LIMITED)[number];
+
+/** Where a turn comes from, which decides `WhenLimited` when the user chose none. */
+export type TurnOrigin = "item" | "interactive";
+
+/** The owner's defaults: a work item waits for the reset, an interactive session asks. */
+export const WHEN_LIMITED_DEFAULTS: Record<TurnOrigin, WhenLimited> = { item: "wait", interactive: "ask" };
+
+/** One agent's Pay-with choice, for each agent that can pay with a plan. */
+export interface PayWithChoice {
+	harness: HarnessId;
+	payWith: PayWith;
+	/** Null keeps the defaults by origin (`WHEN_LIMITED_DEFAULTS`). */
+	whenLimited: WhenLimited | null;
+	/** When it was saved, ms since the epoch; null for an agent still on the defaults. */
+	updatedAt: number | null;
+}
+
+export type PayWithPatch = Pick<PayWithChoice, "harness" | "payWith" | "whenLimited">;
+
+/**
+ * UserError codes of a hosted turn Pay with held back (pay-with.ts `decidePayer`): `plan_ask`, the plan is limited or
+ * at its parallel-turn cap and the person may wait or pay with the key this time (send again with `payWith: "key"`);
+ * `plan_limited`, it is and the rule is to wait. The message says until when.
+ */
+export const PLAN_ASK = "plan_ask";
+export const PLAN_LIMITED = "plan_limited";
 
 export interface AccountSecrets {
 	secrets: AccountSecret[];

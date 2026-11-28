@@ -205,20 +205,23 @@ opens a per-attempt actor. The attempt binds its OAuth state and PKCE verifier t
 and, for an account link, the signed-in UID. The user actor checks the resulting platform token
 on connection and again on each action.
 
-From Settings, a signed-in user can also connect a ChatGPT plan. Windlass runs `windlass login start`,
-the user pastes the loopback callback, and `finishChatgpt` runs `windlass login finish`. The user
-actor stores the model credentials encrypted. See [Sign-ins](#sign-ins).
+A signed-in user connects a ChatGPT plan with `npx @windlassai/cli connect codex` (`cli/`): after the user
+approves its code on the connect page, Windlass signs in on the user's own computer (OpenAI's sign-in takes
+only a loopback callback there), and the command posts the files it saved to `/platform/connect`
+(`server/src/connect-route.ts`), sealed in transit to the user's actor, which stores them encrypted.
+See [Sign-ins](#sign-ins).
 
 ### No sandbox holds the sign-in
 
 It is in the user's actor and nowhere else, and that actor is the one place
 that asks Windlass for an access token: `windlass login token --json --valid-for 20m` prints a token of the
 user's that is good for at least twenty minutes more, and refreshes the sign-in first when the saved token
-has less left. With the [model relay](model-relay.md), the token goes to the relay and the sandbox receives a turn-scoped placeholder. Without the relay, the turn receives the token in a sandbox file
-(`access-token-<sandbox id>.json`, mode 0600, in Docker's private `/dev/shm` tmpfs or the E2B guest's Windlass data directory), and
-Windlass is started with `WINDLASS_ACCESS_TOKEN_FILE` naming it. The file is removed when the turn ends. Demo
+has less left. The token goes to a turn's plan relay ([model relay](model-relay.md)), hosted or on a machine, and
+the sandbox receives only a turn-scoped placeholder, in a file (`access-token-<sandbox id>.json`, mode 0600, in
+Docker's private `/dev/shm` tmpfs or the microVM's Windlass data directory) that Windlass is started with
+(`WINDLASS_ACCESS_TOKEN_FILE`). The file is removed when the turn ends. No sandbox is handed an access token. Demo
 turns are handed nothing. When the sign-in is gone, has expired or its token is rejected, the turn ends by
-asking the user to reconnect their ChatGPT plan in Settings; when the platform could not get or replace the token for
+asking the user to reconnect their ChatGPT plan on Connections; when the platform could not get or replace the token for
 another reason, it ends by saying so and that the sign-in is untouched.
 
 ### Keeping the token fresh
@@ -230,7 +233,7 @@ inside Windlass:
 | Duration | Value | What follows from it |
 |---|---|---|
 | Time a token has left when it is handed to a turn or written as a replacement | at least 20 minutes | it is what Windlass is asked for |
-| Time left before a turn’s token is replaced (at the relay or in the sandbox file) | 10 minutes | a turn's file is not replaced in its first ten minutes, and a replacement that fails has ten minutes to be tried again |
+| Time left before a turn’s token is replaced at its relay | 10 minutes | a turn's token is not replaced in its first ten minutes, and a replacement that fails has ten minutes to be tried again |
 | Time a fetched token has left when it stops serving the user's other sessions | 20 minutes | a new token is shared for its first forty minutes |
 
 When a file is due, the token in it has less than what is asked for, so asking gives another token whenever
@@ -252,13 +255,13 @@ from that code what a failure means, never from the words of the message (`serve
 
 | Windlass's code | Reported by | The turn ends as | Which says |
 |---|---|---|---|
-| `handed_in_missing`, `handed_in_unreadable`, `handed_in_empty`, `handed_in_malformed` | the turn | `token_unavailable` | Windlass could not read the token it was handed; the sign-in is untouched, send the prompt again. (`auth_required` when the token source says there is no sign-in any more: forgetting a sign-in removes the token files of running turns) |
-| `handed_in_expired` | the turn | `auth_required` when the token source says the sign-in is gone or no longer accepted, otherwise `token_unavailable` | reconnect the ChatGPT plan in Settings; or: the token ran out and the platform did not replace it in time (with the reason, when there is one), the sign-in is untouched |
-| `handed_in_rejected` | the turn | `auth_required` | ChatGPT rejected the token: reconnect the ChatGPT plan in Settings. (When the token had run out as well by the platform's clock, as for `handed_in_expired`) |
+| `handed_in_missing`, `handed_in_unreadable`, `handed_in_empty`, `handed_in_malformed` | the turn | `token_unavailable` | Windlass could not read the token it was handed; the sign-in is untouched, send the prompt again. (`auth_required` when the plan's token is refused) |
+| `handed_in_expired` | the turn | `auth_required` when the token source says the sign-in is gone or no longer accepted, otherwise `token_unavailable` | reconnect the ChatGPT plan on Connections; or: the token ran out and the platform did not replace it in time (with the reason, when there is one), the sign-in is untouched |
+| `handed_in_rejected` | the turn | `auth_required` | ChatGPT rejected the token: reconnect the ChatGPT plan on Connections. (When the token had run out as well by the platform's clock, as for `handed_in_expired`) |
 | `network_error` | the turn | what Windlass reported (`execution_failed`) | Windlass's own sentence: a connection problem, not a sign-in problem |
 | `network_error` | the token source | `token_unavailable` | the sign-in service could not be reached; the sign-in is untouched, send the prompt again |
-| `signed_out` | the token source | `auth_required` | connect a ChatGPT plan in Settings |
-| `invalid_grant`, `invalid_client`, `unauthorized_client`, `access_denied`, `invalid_request`, `invalid_scope`, `http_400`, `http_401`, `http_403` | the token source | `auth_required` | the sign-in is no longer accepted: reconnect the ChatGPT plan in Settings. A turn that is running tries its token file again more and more slowly |
+| `signed_out` | the token source | `auth_required` | connect a ChatGPT plan on Connections |
+| `invalid_grant`, `invalid_client`, `unauthorized_client`, `access_denied`, `invalid_request`, `invalid_scope`, `http_400`, `http_401`, `http_403` | the token source | `auth_required` | the sign-in is no longer accepted: reconnect the ChatGPT plan on Connections. A turn that is running tries its token file again more and more slowly |
 | any other code of a refresh (`refresh_locked`, `bad_token_response`, `server_error`, ...) | the token source | `token_unavailable` | the sign-in could not be refreshed, with Windlass's sentence and the code; the sign-in is untouched |
 | a `handed_in_...` code the platform does not know | the turn | `token_unavailable` | Windlass could not use the token: send the prompt again, and sign in again if it ends the same way |
 | any other code | the turn | what Windlass reported | Windlass's own sentence |
@@ -277,12 +280,8 @@ what each would need (`server/src/sandbox/profiles.ts`).
 | Docker + Windlass sandbox | container, non-root, no capabilities | Windlass's bubblewrap sandbox | `--approval auto` | no network, cannot read the turn's access token |
 | Docker, hardened | container under Docker's default seccomp and AppArmor | none | `--approval full` | network, can read the turn's access token |
 
-In neither profile can a command read the ChatGPT sign-in: it is not in the container. The access token a command
-can read in the hardened profile expires about an hour after issue. During a turn, an unsandboxed command or an approved local MCP server can also read replacements. When such a command
-prints the token as it is, the platform takes it out of the turn's events, so it does not reach the timeline.
-
-With the model relay ([model-relay.md](model-relay.md)), on by default for hosted Docker and for machines whose
-runner offers it, the container never holds the token in either profile. The token file holds a placeholder
+In neither profile can a command read the ChatGPT sign-in or its access token: neither is in the container.
+With the model relay ([model-relay.md](model-relay.md)), the container never holds the token in either profile. The token file holds a placeholder
 that only the turn's own relay connection accepts, and "can read the turn's access token" means only that
 placeholder. The profiles' `commandsCanReadAccessToken` stays as the table says. It also decides how saved
 secrets and MCP questions are treated, and a command can still use the model on the user's plan through the relay.
@@ -328,12 +327,12 @@ tokens itself. It stores the files and lends them to Windlass for one command at
 
 The identity directory keys GitHub accounts by API origin and numeric user ID, and Google accounts by issuer and OpenID Connect subject. A new identity creates a fresh UID after admission. A signed-in account can link another provider, and an operator can [recover a signed-out owner](operating.md#recover-a-platform-login). Email is an admission attribute only.
 
-The signed-in user can authorize a ChatGPT plan from Settings. The user actor owns the pending model connection and adopts the finished credentials under its own UID.
+The signed-in user connects a ChatGPT plan with the connect command. The user actor adopts the uploaded sign-in under its own UID.
 
 | What | Where | Sealed for | Until |
 |---|---|---|---|
-| the user's sign-in (`auth.json`, `host-id`) | `user` actor, table `signin`, column `sealed` | that uid | it is replaced or forgotten |
-| a pending model connection (`auth-pending.json`, `host-id`) | `user` actor, table `model_attempt` | that uid | ten minutes, until superseded, or until completion or disconnect |
+| the user's sign-in (`auth.json`, `host-id`) | `user` actor, table `model_plan` (row `openai`), column `sealed` | that uid | it is replaced or forgotten |
+| an uploaded sign-in on its way from the connect route to the user's actor | not stored: an action's argument | that uid and that connect request | it is opened |
 | an access token on its way to the server that runs the turn | not stored: an actor's answer, through the engine | that uid and that request | it is read |
 
 Each is AES-256-GCM (`server/src/signin/seal.ts`) under a key derived with HKDF-SHA256 from `WLP_SIGNIN_KEY`,
@@ -357,7 +356,7 @@ hold on a Rivet Cloud cluster, where Rivet also runs the servers and keeps their
 (`rivet cluster secret set WLP_SECRET`): there the encryption protects a copy of the actor storage, such as a
 backup, and not against whoever runs the cluster. The key must be the same on every server and must not
 change: with another key a stored sign-in does not open, the server logs `[wlp] sign-in.unreadable`, and the
-user is asked to reconnect the ChatGPT plan in Settings.
+user is asked to reconnect the ChatGPT plan on Connections.
 
 **Running Windlass's commands.** For each command a runner makes a private directory (mode 0700), writes the
 sign-in's files into it (0600), runs `windlass login ...` with `XDG_DATA_HOME` pointing there (Windlass looks
@@ -395,11 +394,11 @@ case: what Windlass had saved is still read back and stored.
 **Replacing and forgetting.** A new sign-in replaces the old one in the same queue the token requests wait in,
 and a `windlass login token` that is running for the old one is stopped rather than waited for: once `adopt`
 or `logout` has returned, no token of the old sign-in is handed out. `user.forgetChatgpt()` forgets the
-caller's sign-in; the web app has no button for it yet. Forgetting also has the sandbox provider remove the
-token files of the user's running turns. Docker removes each private file in its session container and clears
+caller's sign-in; the web app has no button for it yet. Forgetting also has the hosted sandbox provider remove the
+placeholder files of the user's running turns. Docker removes each private file in its session container and clears
 legacy copies on the data volume. E2B lists the user's running sandboxes by the metadata `wlp_uid` and removes
-the file from each guest's Windlass data directory. A connected machine runner removes the files from its
-own sessions. A copy already taken remains usable until its expiry.
+the file from each guest's Windlass data directory. Machines are not told: none holds a ChatGPT token. A relay
+already handed a token keeps it until its turn ends or it expires.
 
 The variables of the sign-in runners (`WLP_SIGNIN_KEY`, `WLP_WINDLASS_BIN`, `WLP_SIGNIN_RUNNER`,
 `WLP_SIGNIN_TMPDIR`) are in [configuration.md](configuration.md#sign-ins).

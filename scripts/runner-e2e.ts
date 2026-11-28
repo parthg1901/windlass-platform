@@ -174,7 +174,9 @@ class Server {
  * The server's process: the real server, whose machine actor fails `internalRemoveSandbox` while
  * `Server.refusal` exists, as one whose storage is away; and whose session has one action more,
  * `e2eMeta`, which reads its stored meta for a check (no page shows the machine's name kept at launch), and
- * `e2eCheckpoint`, the turn whose checkpoint is stored (runner/journal.ts), or null.
+ * `e2eCheckpoint`, the turn whose checkpoint is stored (runner/journal.ts), or null, and `e2ePaying`, which makes a
+ * session no demo's so that its turns pay. With WLP_TEST_MACHINE_PLAN the user's ChatGPT plan is a fixed stand-in:
+ * its generation and an access token that lasts an hour, opened as the credential actions open a real one.
  */
 async function serverNode(): Promise<void> {
 	if (process.env.WLP_TEST_MODEL_SCRIPT) {
@@ -199,6 +201,12 @@ async function serverNode(): Promise<void> {
 			c.vars.meta.run.paused.at -= 16 * 60_000;
 		},
 		e2eMeta: (c: { vars: { meta: unknown } }) => c.vars.meta,
+		e2ePaying: async (c: never, paying: boolean) => {
+			const { writeMeta } = await import("../server/src/actors/agent-session/timeline.js");
+			const meta = (c as { vars: { meta: { demo?: boolean } } }).vars.meta;
+			meta.demo = !paying;
+			await writeMeta(c, meta as never);
+		},
 		e2eCheckpoint: async (c: { db: { execute<T>(sql: string): Promise<T[]> } }) =>
 			(await c.db.execute<{ turn: number }>("SELECT turn FROM turn_checkpoint"))[0]?.turn ?? null,
 	});
@@ -233,6 +241,25 @@ async function serverNode(): Promise<void> {
 		}
 		return changed(c, id, facts);
 	};
+	if (process.env.WLP_TEST_MACHINE_PLAN) {
+		const { sealCredentialTransit } = await import("../server/src/credentials/transit.js");
+		const openai = (ref: unknown) => {
+			const r = ref as { provider?: string; plan?: boolean };
+			return r?.provider === "openai" && r.plan === true;
+		};
+		const generation = userActions.internalCredentialGeneration;
+		userActions.internalCredentialGeneration = async (c, ref, onMachine) =>
+			openai(ref) && onMachine ? "e2e-plan" : generation(c, ref, onMachine);
+		const credential = userActions.internalCredential;
+		userActions.internalCredential = async (c, ref, nonce, onMachine) =>
+			openai(ref) && onMachine
+				? sealCredentialTransit(c.key[0]!, { provider: "openai", plan: true }, nonce, {
+						secret: `e2e-access-${randomBytes(16).toString("hex")}`,
+						generation: "e2e-plan",
+						expiresAt: Date.now() + 3_600_000,
+					})
+				: credential(c, ref, nonce, onMachine);
+	}
 	const readSecrets = userActions.internalSessionSecrets;
 	userActions.internalSessionSecrets = async (c, id) => {
 		const sealed = await readSecrets(c, id);
@@ -1372,10 +1399,10 @@ async function claudeChecks(
 				);
 				return JSON.stringify(end.context);
 			});
-			await check("Claude's error and last reported sign-out give the machine login command", async () => {
+			await check("Claude's error and last reported sign-out say nothing pays for it on the machine", async () => {
 				const { end } = await play("signedout");
 				const name = (await user.machines()).find(m => m.machineId === place.machineId)!.name;
-				const sentence = `Claude Code on “${name}” is not signed in. Run windlass-runner login claude there.`;
+				const sentence = `Nothing can pay for Claude Code on “${name}” yet. Connect a plan or add a key on Connections.`;
 				assert(
 					end.outcome === "error" && end.message?.includes("Authentication required") && end.message.includes(sentence),
 					JSON.stringify(end),
@@ -1397,7 +1424,9 @@ async function claudeChecks(
 							() => "",
 							e => e.message,
 						);
-					assert(refused.includes(sentence), "signed-out prompt was not refused with the login command");
+					// Pay with decides the next prompt: with no plan connected, a key would pay.
+					const payWith = "Add an Anthropic key on the Connections page to run Claude Code here.";
+					assert(refused.includes(payWith), `signed-out prompt was not refused by Pay with: ${refused}`);
 				} finally {
 					entry.signIn = "token";
 					runner.report();
@@ -2240,7 +2269,7 @@ async function main(): Promise<void> {
 		);
 
 		// Turns that survive a restart (WLP_RUNNER_DURABLE_TURNS, runner/journal.ts): the same engine carries on, each event once.
-		const durable = { ...github.env(), WLP_ITEMS: "1", WLP_RUNNER_DURABLE_TURNS: "1" };
+		const durable = { ...github.env(), WLP_ITEMS: "1", WLP_RUNNER_DURABLE_TURNS: "1", WLP_TEST_MACHINE_PLAN: "1" };
 		const eventSeqs = (timeline: TimelineItem[], number: number) =>
 			timeline.flatMap(item =>
 				item.kind === "windlass" && item.turn === number && typeof item.event.seq === "number" ? [item.event.seq] : [],
@@ -2329,6 +2358,59 @@ async function main(): Promise<void> {
 		);
 
 		await check(
+			"a plan-paid machine turn killed with its server is taken up with its plan relay, handed its token again, and the relay closed only at its end",
+			async () => {
+				await server.stop();
+				await server.start(durable);
+				await machineIs("online");
+				runner.paying = true;
+				const paying = client.agentSession.get([uid, main.id], { params: { token } }) as unknown as {
+					e2ePaying(paying: boolean): Promise<void>;
+				};
+				await paying.e2ePaying(true);
+				try {
+					// The session reads the report when its link is made: a sleep makes a new one.
+					await forceSleep(main.id);
+					const relays = runner.planRelays;
+					const before = { ...relays };
+					const first = await turn(main.id, "Write the primes");
+					assert(
+						first.ended.outcome === "succeeded",
+						`the plan turn ended ${first.ended.outcome}: ${first.ended.message}`,
+					);
+					const expected = eventSeqs((await snapshotOf(client, uid, main.id, token)).timeline, first.ended.turn);
+					assert(relays.opened === before.opened + 1, `${relays.opened - before.opened} plan relay(s) for one turn`);
+					assert(relays.closed === before.closed + 1, "the ordinary plan turn's relay was not closed");
+					assert(relays.limits.at(-1)! > 0, "the machine's plan relay was given no request limit");
+					const opened = relays.opened;
+					const ends = relays.ends.length;
+					const taken = await acrossRestart(() => server.kill());
+					assert(
+						taken.end.kind === "turn.ended" && taken.end.outcome === "succeeded",
+						`turn ${taken.number} ended ${taken.end.kind === "turn.ended" ? `${taken.end.outcome}: ${taken.end.message}` : "?"}`,
+					);
+					assert(taken.newEngines === 0, `${taken.newEngines} engine(s) started after the restart`);
+					assert(taken.seqs.join() === expected.join(), `events ${taken.seqs.join(",")}, not ${expected.join(",")}`);
+					assert(!taken.notes.some(text => /cut short|resumed/i.test(text)), `notes: ${taken.notes.join(" | ")}`);
+					assert(relays.opened === opened + 1, `${relays.opened - opened} plan relay(s) opened for the taken-up turn`);
+					assert(relays.tokens >= 1, "the taken-up turn's relay was not handed its token again");
+					const [openEnd, ...handEnds] = relays.ends.slice(ends);
+					assert(
+						openEnd !== undefined && handEnds.length > 0 && handEnds.every(end => end > openEnd),
+						"handing the taken-up turn's relay its token did not move its end on",
+					);
+					assert(relays.closed === before.closed + 2 && relays.leases.size === 0, "a plan relay was left open");
+					assert(server.log().includes(`turn.take_up session=${main.id}`), "no take-up in the server's log");
+					return `one relay, kept through the restart, handed ${relays.tokens} token(s), closed at the end`;
+				} finally {
+					runner.paying = false;
+					await paying.e2ePaying(false);
+					await forceSleep(main.id);
+				}
+			},
+		);
+
+		await check(
 			"a graceful restart keeps a machine turn running when the runner says it keeps conversations, and the turn finishes with each event once",
 			async () => {
 				runner.fake.report.resumableConversation = true;
@@ -2353,6 +2435,40 @@ async function main(): Promise<void> {
 		);
 		delete runner.fake.report.resumableConversation;
 		runner.report();
+
+		await check(
+			"a graceful restart keeps a plan-paid machine turn and its plan relay, which the next server hands a token again",
+			async () => {
+				runner.fake.report.resumableConversation = true;
+				runner.paying = true;
+				runner.report();
+				const paying = client.agentSession.get([uid, main.id], { params: { token } }) as unknown as {
+					e2ePaying(paying: boolean): Promise<void>;
+				};
+				await paying.e2ePaying(true);
+				try {
+					await forceSleep(main.id);
+					const relays = runner.planRelays;
+					const before = { ...relays };
+					const taken = await acrossRestart(() => server.stop());
+					assert(
+						taken.end.kind === "turn.ended" && taken.end.outcome === "succeeded",
+						`turn ${taken.number} ended ${taken.end.kind === "turn.ended" ? `${taken.end.outcome}: ${taken.end.message}` : "?"}`,
+					);
+					assert(taken.newEngines === 0, `${taken.newEngines} engine(s) started after the restart`);
+					assert(server.log().includes(`turn.kept session=${main.id}`), "the turn was not kept through SIGTERM");
+					assert(relays.opened === before.opened + 1, `${relays.opened - before.opened} plan relay(s) for one turn`);
+					assert(relays.tokens > before.tokens, "the next server did not hand the relay its token again");
+					assert(relays.closed === before.closed + 1 && relays.leases.size === 0, "the relay was not closed once");
+					return `turn ${taken.number} kept with its relay through SIGTERM`;
+				} finally {
+					runner.paying = false;
+					runner.report();
+					await paying.e2ePaying(false);
+					await forceSleep(main.id);
+				}
+			},
+		);
 
 		await check(
 			"a machine turn whose runner let the conversation go before the server came back ends cleanly, and the next turn works",

@@ -53,11 +53,11 @@ The **agent** control shows the agent's logo, its name, the model and the effort
 There are four agents, each shown by its own logo. The row of logos at the top of the **agent** menu switches to another agent the place offers in one press, on that agent's default model.
 
 - **Windlass** runs everywhere.
-- **Claude Code** uses your Anthropic Settings key on hosted. On a machine it uses the runner’s Claude sign-in.
-- **OpenCode** uses your saved OpenAI, Anthropic, Google or OpenRouter keys on hosted. On a machine it uses the providers configured there.
-- **Codex** uses your OpenAI Settings key on hosted. On a machine it uses the ChatGPT sign-in or API key configured there.
+- **Claude Code** uses your Claude plan or your Anthropic Settings key, as **Connections → Pay with** says, hosted and on a machine.
+- **OpenCode** uses your saved OpenAI, Anthropic, Google or OpenRouter keys on hosted. On a machine it uses the providers signed in there, and your keys for the rest.
+- **Codex** uses your ChatGPT plan or your OpenAI Settings key, as **Connections → Pay with** says, hosted and on a machine.
 
-Choose **Hosted sandbox** under **where** to use your Settings keys. The agent menu explains which key to add for a disabled agent. Hosted agents run in hardened Docker or the E2B microVM-only profile. For a machine sign-in, choose that machine under **where** first. The platform runs the repository’s matching saved checks after either agent changes files. The **agent** menu groups the models under each agent's name, with its sign-in state. An agent offered only on another machine of yours says "choose that machine first". Under **Terminal sign-in commands** are the commands that sign each one in.
+The agent menu explains what to connect for a disabled agent. Hosted agents run in hardened Docker or the E2B microVM-only profile. The platform runs the repository’s matching saved checks after either agent changes files. The **agent** menu groups the models under each agent's name, with its sign-in state. An agent offered only on another machine of yours says "choose that machine first". For OpenCode on a machine, **Sign-in command** shows the command that signs it in there.
 
 On machines with the updated runner, Claude Code reads the repository’s `CLAUDE.md` and `.claude/` settings, skills and commands. New sandboxes start with bundled skills such as `/deep-research`, the plugin-authoring plugin, dynamic workflows and account skill and plugin sync turned off. The built-in tools for code-review findings and loop wakeups are disabled. Claude uses shorter tool descriptions and keeps the platform tools and their usual approvals.
 
@@ -103,7 +103,7 @@ OpenCode starts in **build**. Its modes are the ones OpenCode reports, for examp
 
 ### Codex modes
 
-Codex's modes depend on the sandbox: **Container access** on Docker, hardened or the hosted E2B microVM-only profile, and **Read-only** or **Workspace access** (the default) on Docker + Windlass sandbox. See [Codex sign-in](/docs/runner#codex-sign-in) for what each allows.
+Codex's modes depend on the sandbox: **Container access** on Docker, hardened or the hosted E2B microVM-only profile, and **Read-only** or **Workspace access** (the default) on Docker + Windlass sandbox. See [Codex](/docs/runner#codex) for what each allows.
 
 **Plan mode** is a separate choice in the session's composer, beside the effort and the model. With **Plan mode · on**, the next prompt asks Codex for a plan and it changes nothing. Set it back to **off** to have it do the work. It applies to a prompt that starts a turn, not to a message that steers a running one, and it can't be changed while a turn runs. It is not the work items' **Plan first**.
 
@@ -115,9 +115,9 @@ The sandbox sets where the agent's files live and its commands run. Choose it in
 
 - whether it runs what the sandbox contains and refuses the rest, or runs every call without asking;
 - whether commands can reach the network;
-- whether commands can read the session's access token. Your ChatGPT sign-in itself is never in the sandbox. Hosted Claude Code, Codex and OpenCode receive a per-turn relay placeholder. In a Claude Code or OpenCode session on your own machine, commands can use the machine's login through the session's model relay, but cannot read it. Older runners may also expose the Claude setup token.
+- whether commands can read the session's access token. Your ChatGPT sign-in itself is never in the sandbox. Hosted Claude Code, Codex and OpenCode receive a per-turn relay placeholder. In an OpenCode session on your own machine, commands can use the machine's login through the session's model relay, but cannot read it. A plan's token stays in its turn's relay on the machine.
 
-The **lock** in the line, and the foot of **Options**, say the chosen sandbox's facts in full. For Claude Code and OpenCode, they show the mode in place of the first fact. On hosted it shows **Settings key via relay**. On a machine, for OpenCode it says **OpenCode relay** where commands have no other network, and **credentials on machine**: "Commands can use the OpenCode model relay. Provider credentials stay on the machine." For Claude Code it says **Claude relay only** where commands have no other network, and **Claude login via relay**, or **Claude login readable** on an older runner without a relay.
+The **lock** in the line, and the foot of **Options**, say the chosen sandbox's facts in full. For Claude Code and OpenCode, they show the mode in place of the first fact. On hosted it shows **Settings key via relay**. On a machine, for OpenCode it says **OpenCode relay** where commands have no other network, and **credentials on machine**: "Commands can use the OpenCode model relay. Provider credentials stay on the machine." For Claude Code it says **Claude relay only** where commands have no other network, and **Claude login via relay**.
 
 The sandboxes on offer depend on the platform and on the machine. Read [Sandboxes and security](/docs/security) for what each one protects. A sandbox that cannot be used is listed under **Listed, but not usable on this deployment**, with the reason.
 

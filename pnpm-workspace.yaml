@@ -2,6 +2,7 @@ packages:
   - server
   - runner
   - web
+  - cli
 allowBuilds:
   esbuild: true
   cbor-extract: true

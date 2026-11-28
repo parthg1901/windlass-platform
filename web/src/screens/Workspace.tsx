@@ -88,6 +88,9 @@ export function Workspace({ selection, items }: { selection: Selection; items: I
 				: "Agents",
 	);
 	const [sheet, setSheet] = useState(false);
+	// While the first-run setup is on Home, the rail has nothing to list and is left out with its meter.
+	const [firstRun, setFirstRun] = useState(false);
+	const bare = firstRun && selection.kind === "everything";
 	const openSheet = useCallback(() => setSheet(true), []);
 
 	useSearchKey(search, { phone, folded, fold, onPhone: openSheet });
@@ -120,13 +123,15 @@ export function Workspace({ selection, items }: { selection: Selection; items: I
 				phone={phone}
 				onUnfold={() => fold(false)}
 				rail={
-					<>
-						{body(false)}
-						{meter}
-					</>
+					bare ? null : (
+						<>
+							{body(false)}
+							{meter}
+						</>
+					)
 				}
 			>
-				{phone ? <PhoneSwitcher rail={rail} selection={selection} onOpen={() => setSheet(true)} /> : null}
+				{phone && !bare ? <PhoneSwitcher rail={rail} selection={selection} onOpen={() => setSheet(true)} /> : null}
 				{selection.kind === "repository" ? (
 					<RepositorySide
 						key={selection.id}
@@ -147,6 +152,8 @@ export function Workspace({ selection, items }: { selection: Selection; items: I
 						filters={filters}
 						onFilters={setFilters}
 						machines={machineList}
+						firstRun={bare}
+						onFirstRun={setFirstRun}
 					/>
 				)}
 			</RailFrame>

@@ -19,7 +19,7 @@
 
 import { GithubProblem } from "./problem.js";
 export { GithubProblem };
-import type { GithubId, GithubRepository } from "../contract.js";
+import type { GithubId, GithubRepository, StarterIssue } from "../contract.js";
 import { type GithubApp, GithubError, type Repository } from "./app.js";
 import type { ConfirmedConnection } from "./state.js";
 
@@ -421,6 +421,25 @@ export async function listBranches(
 		const rest = branches.filter(branch => branch !== repository.defaultBranch).sort((a, b) => a.localeCompare(b));
 		// An empty repository has no branch at all; the default is named all the same, so the form has one to show.
 		return { branches: [repository.defaultBranch, ...rest], defaultBranch: repository.defaultBranch, more: truncated };
+	} catch (error) {
+		throw problemOf(error, installation.account.login, `${repository.owner}/${repository.name}`);
+	}
+}
+
+/** Up to three of the repository's oldest open issues labelled "bug": starter tasks for a first work item. */
+export async function listStarterIssues(
+	app: GithubApp,
+	connection: StoredConnection,
+	repositoryId: GithubId,
+): Promise<StarterIssue[]> {
+	const { installation, repository } = await resolveRepository(app, connection, repositoryId, "read");
+	try {
+		const issues = await app.withToken(
+			installation.id,
+			{ repositoryId, permissions: { metadata: "read", issues: "read" } },
+			token => app.openIssues(token, repository.owner, repository.name, "bug"),
+		);
+		return issues.slice(0, 3);
 	} catch (error) {
 		throw problemOf(error, installation.account.login, `${repository.owner}/${repository.name}`);
 	}

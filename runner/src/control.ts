@@ -188,7 +188,7 @@ export async function pair(
 			return { paired };
 		}
 	}
-	return { idle: `The pairing code expired, so ${again}` };
+	return { idle: `The pairing code expired or was denied, so ${again}` };
 }
 
 async function openSocket(opening: Promise<WebSocket>, signal: AbortSignal) {
@@ -239,9 +239,7 @@ async function openSocket(opening: Promise<WebSocket>, signal: AbortSignal) {
 function applyCapabilities(owner: Executor, named: readonly string[] | undefined, signed: boolean) {
 	const has = (capability: Capability) => named?.includes(capability) === true;
 	owner.sessionVolumes = has("session-volumes");
-	owner.modelRelays = has("model-relay");
-	owner.windlassKeyRelays = owner.modelRelays && has("windlass-key-relay");
-	owner.harnessKeyRelays = owner.modelRelays && has("harness-key-relay");
+	owner.harnessKeyRelays = has("harness-key-relay");
 	owner.blockedNetwork = has("blocked-network");
 	owner.memoryEvents = has("memory-events");
 	owner.warmSpares = signed && has("warm-spares");
@@ -542,9 +540,16 @@ export async function control(
 						}
 						audit(f.sessionId, null, "forget-backup", "done");
 						if (ws.readyState === 1) send({ kind: "backup-forgotten", sessionId: f.sessionId });
-					} else if (f.kind === "logout") {
-						await owner.serial(() => owner.logout());
-						audit(null, null, "logout", "done");
+					} else if (f.kind === "forget-claude-login") {
+						let ok = true;
+						try {
+							await owner.forgetClaudeLogin();
+						} catch (error) {
+							ok = false;
+							audit(null, null, "forget-claude-login", category(error));
+						}
+						if (ok) audit(null, null, "forget-claude-login", "done");
+						if (ws.readyState === 1) send({ kind: "claude-login-forgotten", ok });
 					} else if (f.kind !== "heartbeat") {
 						reason = "Unexpected control frame";
 						disconnect();

@@ -7,7 +7,15 @@ import { BackLink, PageTrail } from "./components/Nav";
 import { TopBar } from "./components/TopBar";
 import { repoAddress } from "../../server/src/codehost/ref.js";
 import { accountTrail, factoryLabel, itemTrail, sectionOfPage } from "./lib/nav";
-import { navigate, pageFrom, rememberAppPage, usePageLabel, useRoute, type Route } from "./lib/router";
+import {
+	navigate,
+	pageFrom,
+	rememberAppPage,
+	returnAfterSignIn,
+	usePageLabel,
+	useRoute,
+	type Route,
+} from "./lib/router";
 import { useTheme } from "./lib/theme";
 import { Factory } from "./screens/Factory";
 import { Item, useItem } from "./screens/Item";
@@ -16,9 +24,10 @@ import { useItems, type ItemsState } from "./state/items";
 import { Machines } from "./screens/Machines";
 import { NewAgent } from "./screens/NewAgent";
 import { Session, SessionCrumb, useSessionMachine } from "./screens/Session";
+import { Connect } from "./screens/Connect";
+import { Connections } from "./screens/Connections";
 import { Settings } from "./screens/Settings";
 import { Plans } from "./screens/Plans";
-import { MockAuthorize } from "./components/ChatgptPlan";
 import { LinkCallback, SignIn } from "./screens/SignIn";
 import { Usage } from "./screens/Usage";
 import { Workspace, type Selection } from "./screens/Workspace";
@@ -154,7 +163,7 @@ function FactoryRoute({
 
 export function App() {
 	const route = useRoute();
-	const { auth, client, platform } = useApp();
+	const { auth, platform } = useApp();
 	const [theme, toggleTheme] = useTheme();
 	// The user's work items, read once for every page: the bar's needs-you count on each, the Agents home and the Factory.
 	const offered = Boolean(platform.info?.items);
@@ -177,9 +186,11 @@ export function App() {
 		route.name === "settings" ||
 		route.name === "plans" ||
 		route.name === "machines" ||
+		route.name === "connections" ||
 		route.name === "session" ||
 		route.name === "item" ||
-		route.name === "repository";
+		route.name === "repository" ||
+		route.name === "connect";
 	/** A deployment that does not offer machines has no such page. While its information loads, the page says it is loading. */
 	const noMachines = route.name === "machines" && auth !== null && platform.info !== null && !platform.info.machines;
 	/** Nor one that does not offer work items an item's page. */
@@ -192,7 +203,10 @@ export function App() {
 	const repositoryId =
 		route.name === "repository" ? route.id : route.name === "new" ? (route.repository ?? null) : null;
 	useEffect(() => {
-		if (needsAuth && !auth) navigate({ name: "signin" }, { replace: true });
+		if (!needsAuth || auth) return;
+		// The connect page is opened by a terminal; after signing in, the visitor comes back to its code.
+		if (route.name === "connect") returnAfterSignIn();
+		navigate({ name: "signin" }, { replace: true });
 	}, [needsAuth, auth, route.name]);
 
 	useEffect(() => {
@@ -214,20 +228,22 @@ export function App() {
 							? "Usage · Windlass"
 							: route.name === "settings"
 								? "Settings · Windlass"
-								: route.name === "plans"
-									? "Plans · Windlass"
-									: route.name === "machines"
-										? "Machines · Windlass"
-										: route.name === "new"
-											? "New agent · Windlass"
-											: "Agents · Windlass";
+								: route.name === "connect"
+									? "Connect · Windlass"
+									: route.name === "plans"
+										? "Plans · Windlass"
+										: route.name === "machines"
+											? "Machines · Windlass"
+											: route.name === "connections"
+												? "Connections · Windlass"
+												: route.name === "new"
+													? "New agent · Windlass"
+													: "Agents · Windlass";
 	}, [route.name, repositoryId, noMachines, noItems]);
 
 	useEffect(() => {
 		if (route.name === "home" && !auth) document.title = LANDING_TITLE;
 	}, [route.name, auth]);
-
-	if (route.name === "mock-authorize" && client.kind === "mock") return <MockAuthorize />;
 
 	// Open to everyone, signed in or not.
 	if (route.name === "docs") {
@@ -238,7 +254,7 @@ export function App() {
 		);
 	}
 
-	if (route.name === "notfound" || route.name === "mock-authorize" || noMachines || noItems) {
+	if (route.name === "notfound" || noMachines || noItems) {
 		return (
 			<div className="app">
 				<TopBar {...bar} />
@@ -258,6 +274,9 @@ export function App() {
 		// While the redirect above is on its way, the sign-in screen is the right thing to show.
 		return auth ? <LinkCallback /> : <SignIn theme={theme} onToggleTheme={toggleTheme} />;
 	}
+
+	if (route.name === "connect")
+		return <Connect code={route.code} plan={route.plan} kind={route.kind} theme={theme} onToggleTheme={toggleTheme} />;
 
 	if (route.name === "session") return <SessionRoute key={route.id} sessionId={route.id} bar={bar} />;
 
@@ -302,6 +321,15 @@ export function App() {
 			<div className="app">
 				<TopBar {...bar} current="machines" />
 				<Machines adding={route.add === true} />
+			</div>
+		);
+	}
+
+	if (route.name === "connections") {
+		return (
+			<div className="app">
+				<TopBar {...bar} current="connections" />
+				<Connections />
 			</div>
 		);
 	}

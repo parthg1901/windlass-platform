@@ -24,11 +24,9 @@ import {
 } from "../server/src/sandbox/harnesses.js";
 import { modelKeyCaller } from "../server/src/actors/internal.js";
 import { MODEL_PROVIDERS, validModelKey, type MachineSummary, type ModelProvider } from "../server/src/contract.js";
-import {
-	MODEL_PROVIDER_TABLES,
-	openModelKeyTransit,
-	modelProviderActions as actions,
-} from "../server/src/model-providers.js";
+import { modelProviderActions as actions } from "../server/src/credentials/keys.js";
+import { CREDENTIAL_TABLES, credentialActions as credentials } from "../server/src/credentials/index.js";
+import { openCredentialTransit } from "../server/src/credentials/transit.js";
 import type { DefaultsDb } from "../server/src/repository-defaults.js";
 import { createSealer, serverSealer } from "../server/src/signin/seal.js";
 import { issueServiceToken, issueUserToken } from "../server/src/tokens.js";
@@ -43,7 +41,7 @@ const makeKeys = () => ({
 
 function account(uid: string) {
 	const sql = new DatabaseSync(":memory:");
-	for (const table of MODEL_PROVIDER_TABLES) sql.exec(table);
+	for (const table of CREDENTIAL_TABLES) sql.exec(table);
 	const db: DefaultsDb = {
 		async execute<Row>(query: string, ...args: unknown[]) {
 			return sql.prepare(query).all(...(args as SQLInputValue[])) as Row[];
@@ -163,10 +161,13 @@ test("model provider actions keep keys sealed and check with the provider", asyn
 
 	const save = (provider: ModelProvider, key: string) => actions.saveModelProvider(c, { provider, key });
 	const nonce = hex();
-	await assert.rejects(actions.internalModelKeyGeneration(c, "openai"), /internal/);
-	await assert.rejects(actions.internalModelKey(c, "openai", nonce), /internal/);
+	await assert.rejects(credentials.internalCredentialGeneration(c, { provider: "openai" }), /internal/);
+	await assert.rejects(credentials.internalCredential(c, { provider: "openai" }, nonce), /internal/);
 	for (const token of [issueServiceToken(), b.internal.conn.params.token]) {
-		await assert.rejects(actions.internalModelKey({ ...c, conn: { params: { token } } }, "openai", nonce), /internal/);
+		await assert.rejects(
+			credentials.internalCredential({ ...c, conn: { params: { token } } }, { provider: "openai" }, nonce),
+			/internal/,
+		);
 	}
 	for (const call of [
 		() => actions.modelProviders(a.internal),
@@ -183,6 +184,8 @@ test("model provider actions keep keys sealed and check with the provider", asyn
 		});
 		// Anthropic issues more than the apiNN- shape; the check call decides, not the prefix.
 		if (provider === "anthropic") assert.ok(validModelKey(provider, "sk-ant-xyz-a-" + "b".repeat(40)));
+		// A Claude plan's setup token is not an API key: it is connected as a plan.
+		if (provider === "anthropic") assert.ok(!validModelKey(provider, "sk-ant-oat01-" + "b".repeat(40)));
 		const saved = await save(provider, keys[provider]);
 		clean(saved);
 		assert.equal(saved.last4, keys[provider].slice(-4));
@@ -205,7 +208,7 @@ test("model provider actions keep keys sealed and check with the provider", asyn
 		assert.ok(!failed.ok && failed.message?.includes("check the key") && !failed.models);
 		assert.deepEqual(await actions.modelProviders(c), [checked]);
 		await actions.removeModelProvider(c, provider);
-		assert.equal(await actions.internalModelKey(a.internal, provider, nonce), null);
+		assert.equal(await credentials.internalCredential(a.internal, { provider }, nonce), null);
 	}
 	assert.deepEqual(await actions.modelProviders(c), []);
 
@@ -225,28 +228,28 @@ test("model provider actions keep keys sealed and check with the provider", asyn
 	const owner = JSON.stringify([c.key[0], "openai"]);
 	const oldBlob = old.seal("model-key", owner, keys.openai);
 	a.sql.prepare("UPDATE model_provider SET sealed = ? WHERE provider = 'openai'").run(oldBlob);
-	const sealed = await actions.internalModelKey(a.internal, "openai", nonce);
+	const sealed = await credentials.internalCredential(a.internal, { provider: "openai" }, nonce);
 	assert.ok(sealed);
 	clean(sealed);
 	now += 59_999;
-	const payload = openModelKeyTransit(c.key[0], "openai", nonce, sealed);
+	const payload = openCredentialTransit(c.key[0], { provider: "openai" }, nonce, sealed);
 	const [row] = await c.db.execute<{ sealed: string; generation: string }>(
 		"SELECT sealed, generation FROM model_provider WHERE provider = 'openai'",
 	);
-	assert.equal(await actions.internalModelKeyGeneration(a.internal, "openai"), row.generation);
+	assert.equal(await credentials.internalCredentialGeneration(a.internal, { provider: "openai" }), row.generation);
 	assert.ok(
-		serverSealer().isCurrent(row.sealed) && payload.key === keys.openai && payload.generation === row.generation,
+		serverSealer().isCurrent(row.sealed) && payload.secret === keys.openai && payload.generation === row.generation,
 	);
 	assert.ok(serverSealer().open("model-key", owner, row.sealed) === keys.openai);
 	for (const subject of [JSON.stringify([b.context.key[0], "openai"]), JSON.stringify([c.key[0], "google"])]) {
 		assert.throws(() => serverSealer().open("model-key", subject, row.sealed));
 	}
 	assert.throws(() => serverSealer().open("secret", owner, row.sealed));
-	assert.throws(() => openModelKeyTransit(c.key[0], "openai", hex(), sealed));
-	assert.throws(() => openModelKeyTransit(b.context.key[0], "openai", nonce, sealed));
-	assert.throws(() => openModelKeyTransit(c.key[0], "google", nonce, sealed));
+	assert.throws(() => openCredentialTransit(c.key[0], { provider: "openai" }, hex(), sealed));
+	assert.throws(() => openCredentialTransit(b.context.key[0], { provider: "openai" }, nonce, sealed));
+	assert.throws(() => openCredentialTransit(c.key[0], { provider: "google" }, nonce, sealed));
 	now++;
-	assert.throws(() => openModelKeyTransit(c.key[0], "openai", nonce, sealed), /expired/);
+	assert.throws(() => openCredentialTransit(c.key[0], { provider: "openai" }, nonce, sealed), /expired/);
 
 	mode = "hold";
 	const started = once(gate, "started");
@@ -400,7 +403,7 @@ test("machine readiness and the OpenCode model menu use the owner's available pr
 		catalog?.models.map(m => m.id),
 		["default", "google/gemini", "openai/gpt"],
 	);
-	const unchecked = listedHarness({ ...entry, signIn: "unknown" }, saved, "key");
+	const unchecked = listedHarness({ ...entry, signIn: "unknown" }, saved);
 	assert.deepEqual(
 		availableCatalog({ models, defaultModel: "default", modes: [], checkedAt: 1 }, unchecked)?.models.map(m => m.id),
 		["default", "google/gemini"],
@@ -415,35 +418,55 @@ test("machine readiness and the OpenCode model menu use the owner's available pr
 		"api-key",
 	);
 	assert.equal(withSettingsKeys({ id: "codex", signIn: "none" }, ["google"]).signIn, "none");
-	// The Machines page: the machine's sign-in first, the owner's key on request, a signed-out machine on its key.
+	// The Machines page. Claude Code's own login kept on the machine wins there, over the plan and the key.
 	const claude = { keyRelay: true as const, id: "claude" as const, signIn: "token" as const };
-	assert.deepEqual(listedHarness(claude, ["anthropic"]), {
+	assert.deepEqual(listedHarness(claude, ["anthropic"], ["anthropic"]), {
 		...claude,
 		method: "subscription",
 		machineSignIns: ["anthropic"],
 	});
-	assert.deepEqual(listedHarness(claude, ["anthropic"], "key"), {
-		...claude,
+	// With no login of its own, Pay with decides: the plan's method first, the key's otherwise, and nothing to pay for.
+	const signedOut = { ...claude, signIn: "none" as const };
+	assert.deepEqual(listedHarness(signedOut, ["anthropic"], ["anthropic"]), {
+		...signedOut,
+		signIn: "token",
+		method: "subscription",
+		platformKeys: ["anthropic"],
+		paysWith: true,
+	});
+	assert.deepEqual(listedHarness(signedOut, ["anthropic"]), {
+		...signedOut,
+		signIn: "token",
 		method: "api-key",
 		platformKeys: ["anthropic"],
-		machineSignIns: ["anthropic"],
-		source: "key",
+		paysWith: true,
 	});
-	assert.deepEqual(listedHarness({ ...claude, signIn: "none" }, ["anthropic"]), { ...claude, signIn: "none" });
+	assert.deepEqual(listedHarness(signedOut, [], ["openai"]), { ...signedOut, paysWith: true });
+	// Codex keeps no login on a machine: the ChatGPT plan pays for it there, with no login present.
+	const codex = { keyRelay: true as const, id: "codex" as const, signIn: "none" as const };
+	assert.deepEqual(listedHarness(codex, [], ["openai"]), {
+		...codex,
+		signIn: "token",
+		method: "chatgpt",
+		paysWith: true,
+	});
+	assert.equal(listedHarness({ ...codex, signIn: "unknown" }, ["openai"]).method, "api-key");
+	// OpenCode pays with its own logins on the machine, and a key for each provider it has none for.
 	const opencode = {
 		keyRelay: true as const,
 		id: "opencode" as const,
 		signIn: "token" as const,
 		machineProviders: ["chatgpt", "free"],
 	};
-	assert.deepEqual(listedHarness(opencode, ["openai", "google"]).platformKeys, undefined);
+	assert.deepEqual(listedHarness(opencode, ["openai"], ["openai"]).platformKeys, undefined);
+	assert.deepEqual(listedHarness(opencode, ["openai", "google"]).platformKeys, ["google"]);
 	assert.deepEqual(listedHarness(opencode, ["openai", "google"]).machineSignIns, ["openai"]);
-	// An old runner relays no key, whatever the choice.
-	assert.equal(listedHarness({ ...claude, keyRelay: undefined }, ["anthropic"], "key").platformKeys, undefined);
+	assert.equal(listedHarness(opencode, ["google"], ["openai"]).paysWith, undefined, "no plan pays for OpenCode");
+	// A runner without a key relay relays no key.
+	assert.equal(listedHarness({ ...signedOut, keyRelay: undefined }, ["anthropic"]).platformKeys, undefined);
 });
 
-test("machine credential source lifecycle", async t => {
-	const { user } = await import("../server/src/actors/user.js");
+test("what pays on a machine: Pay with, unless Claude Code's own login is kept there", async t => {
 	const { listMachines, machineTables } = await import("../server/src/actors/user-machines.js");
 	const { config } = await import("../server/src/config.js");
 	const before = config.machines;
@@ -451,19 +474,26 @@ test("machine credential source lifecycle", async t => {
 	t.after(() => {
 		config.machines = before;
 	});
-	const { sql, context, internal } = account("owner");
+	const { sql, context } = account("owner");
 	t.after(() => sql.close());
+	// The per-machine "Paid by" choice of before is dropped with its table.
+	sql.exec("CREATE TABLE credential_sources (machine TEXT, harness TEXT, source TEXT)");
 	await machineTables(context.db as never);
-	const report = {
-		docker: { ok: true },
-		commandSandbox: { ok: true },
-		sandboxes: [],
-		freeDiskBytes: 8e9,
-		harnesses: [{ id: "claude", signIn: "token", keyRelay: true, adapter: "fixture", image: "fixture" }],
+	assert.equal(sql.prepare("SELECT name FROM sqlite_master WHERE name = 'credential_sources'").get(), undefined);
+	const machineWith = (claude: "token" | "none") => {
+		const report = {
+			docker: { ok: true },
+			commandSandbox: { ok: true },
+			sandboxes: [],
+			freeDiskBytes: 8e9,
+			harnesses: [{ id: "claude", signIn: claude, keyRelay: true, adapter: "fixture", image: "fixture" }],
+		};
+		sql.exec("DELETE FROM machines");
+		sql
+			.prepare("INSERT INTO machines(id,name,os,arch,facts) VALUES ('desk','Desk','linux','x64',?)")
+			.run(JSON.stringify({ report, status: "online" }));
 	};
-	sql
-		.prepare("INSERT INTO machines(id,name,os,arch,facts) VALUES ('desk','Desk','linux','x64',?)")
-		.run(JSON.stringify({ report, status: "online" }));
+	machineWith("none");
 	sql.exec(
 		"INSERT INTO model_provider(provider,generation,sealed,last4,added_at,check_ok) VALUES ('anthropic','first','fixture','1234',1,1)",
 	);
@@ -482,34 +512,7 @@ test("machine credential source lifecycle", async t => {
 		},
 	};
 	sql.prepare("INSERT INTO provider_usage VALUES ('settings','anthropic','first',?)").run(JSON.stringify(usage));
-	const retried: number[] = [];
-	const item = {
-		id: "feature",
-		revision: 7,
-		state: "waiting",
-		step: { kind: "subtasks" },
-		wait: { reason: "provider", accountKey: usage.account.key },
-	};
-	const ctx = {
-		...context,
-		vars: {
-			...context.vars,
-			sessions: new Map(),
-			machines: new Map(),
-			items: {
-				slots: new Map(),
-				requests: new Map(),
-				items: new Map([[item.id, item]]),
-			},
-		},
-		broadcast() {},
-		client: () => ({
-			workItem: { get: () => ({ internalProviderChanged: async (revision: number) => retried.push(revision) }) },
-		}),
-	};
-	const actions = user.config.actions!;
-	const choice = { machineId: "desk", harness: "claude", source: "key" as const };
-	const set = (input = choice) => actions.setCredentialSource(ctx as never, input);
+	const ctx = { ...context, vars: { ...context.vars, sessions: new Map() } };
 	const { plannerMachines } = await import("../server/src/machines/details.js");
 	const { choosePlacement } = await import("../server/src/factory/placement.js");
 	const place = async (machine: MachineSummary) =>
@@ -531,40 +534,37 @@ test("machine credential source lifecycle", async t => {
 				limited: limitedAccounts(await providerAccounts(context.db as never, Date.now())),
 			},
 		);
-	await t.test("only the owner can set a known agent and source on a paired machine", async () => {
-		await assert.rejects(actions.setCredentialSource(internal as never, choice), /for users/);
-		for (const input of [
-			{ ...choice, harness: "constructor" },
-			{ ...choice, harness: "windlass" },
-			{ ...choice, source: "anthropic" },
-		]) {
-			await assert.rejects(set(input as typeof choice), { code: "bad_input" });
-		}
-		await assert.rejects(set({ ...choice, harness: "codex" }), { code: "bad_input" });
-		await assert.rejects(set({ ...choice, machineId: "foreign" }), { code: "machine_not_found" });
-		await assert.rejects(actions.internalCredentialSource(ctx as never, "desk", "claude"), /internal/);
-		await assert.rejects(actions.internalCredentialSource(internal as never, "foreign", "claude"), {
-			code: "machine_not_found",
-		});
-	});
-	await t.test("the machine lists limits only for usable Settings keys", async () => {
-		const [machine] = await listMachines(ctx as never);
-		assert.deepEqual(machine.providerAccounts, []);
-		assert.equal((await place(machine)).decision?.name, "Desk");
-	});
-	await t.test("source changes wake work waiting on its previous account", async () => {
-		const [machine] = await set();
-		assert.equal(machine.providerAccounts?.[0]?.provider, "anthropic");
-		assert.deepEqual(retried, [7]);
-		assert.equal((await place(machine)).accountKey, usage.account.key);
-	});
-	await t.test("deleting the selected key stops the agent and unpairing retires the preference", async () => {
+	await t.test(
+		"with no login of its own, the account's key pays, and its limits hold the machine's agent",
+		async () => {
+			const [machine] = await listMachines(ctx as never);
+			assert.equal(machine.harnesses?.[0]?.paysWith, true);
+			assert.equal(machine.harnesses?.[0]?.method, "api-key");
+			assert.equal(machine.providerAccounts?.[0]?.provider, "anthropic");
+			assert.equal((await place(machine)).accountKey, usage.account.key);
+		},
+	);
+	await t.test(
+		"Claude Code's own login kept on the machine wins: no key is used and its limits don't hold it",
+		async () => {
+			machineWith("token");
+			const [machine] = await listMachines(ctx as never);
+			assert.equal(machine.harnesses?.[0]?.paysWith, undefined);
+			assert.equal(machine.harnesses?.[0]?.method, "subscription");
+			assert.equal(machine.harnesses?.[0]?.platformKeys, undefined);
+			assert.deepEqual(machine.providerAccounts, []);
+			assert.equal((await place(machine)).decision?.name, "Desk");
+		},
+	);
+	await t.test("with nothing to pay, the agent says so instead of asking for a machine login", async () => {
+		machineWith("none");
 		sql.exec("DELETE FROM model_provider");
 		const [machine] = await listMachines(ctx as never);
-		assert.equal(machine.harnesses?.[0]?.method, "subscription");
-		assert.equal(machine.harnesses?.[0]?.platformKeys, undefined);
-		sql.exec("DELETE FROM machines");
-		assert.deepEqual(sql.prepare("SELECT * FROM credential_sources").all(), []);
-		await assert.rejects(set(), { code: "machine_not_found" });
+		assert.equal(machine.harnesses?.[0]?.signIn, "none");
+		assert.equal(machine.harnesses?.[0]?.paysWith, true);
+		assert.match(
+			JSON.stringify(await place(machine)),
+			/nothing can pay for Claude Code there \(connect a plan or add a key on Connections\)/,
+		);
 	});
 });

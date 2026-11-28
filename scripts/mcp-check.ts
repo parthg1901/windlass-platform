@@ -576,7 +576,7 @@ async function checkMissingHostTools(): Promise<void> {
 		console.log(JSON.stringify({ jsonrpc: "2.0", id, result: { agentCapabilities: { _meta: { windlass: { notifications: ["_windlass/event"], openMeta: ["requiredChecks"] } } } } }));
 	})`,
 	];
-	const windlass = new DockerWindlass(layer.tokens, { engineCommand: command });
+	const windlass = new DockerWindlass({ engineCommand: command });
 	const result = await windlass.runTurn(handle, { prompt: "hello", script: scripted(say("Done.")), onEvent: () => {} });
 	expect(
 		"initialize without host tools refuses the turn before it opens a session",
@@ -1389,7 +1389,7 @@ async function checkOtherServers(): Promise<void> {
 	await section("a server reported while the turn runs (a stand-in for the engine)", async () => {
 		const handle = await sandbox(uidOther, "docker-windlass-sandbox", "mcp-stand-in");
 		await handle.writeTextFile("/tmp/mcp-stand-in.mjs", STAND_IN);
-		const windlass = new DockerWindlass(layer.tokens, {
+		const windlass = new DockerWindlass({
 			image: IMAGE_USED,
 			engineCommand: ["node", "/tmp/mcp-stand-in.mjs"],
 		});

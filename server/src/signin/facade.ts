@@ -2,10 +2,6 @@
  * `ChatgptLogins` and `AccessTokens` (sandbox/api.ts) for every sandbox layer: what the actors and the
  * code that runs a turn call. Nothing here knows a sandbox provider, and nothing here stores anything:
  *
- *   start, finish   run Windlass's own sign-in commands (commands.ts) on the attempt's material, which
- *                   the caller keeps between the two, sealed for that attempt. They may be served by
- *                   different servers: all that connects them is the blob
- *   adopt           seals the finished sign-in for the user and hands it to the user's holder
  *   status, logout  ask the user's holder
  *   current         asks the user's holder for the access token
  *
@@ -13,33 +9,16 @@
  * the layer's own checks.
  */
 
-import { createHash, randomBytes } from "node:crypto";
-import {
-	type AccessToken,
-	type AccessTokens,
-	type ChatgptAccount,
-	type ChatgptLogins,
-	SandboxUserError,
-} from "../sandbox/api.js";
-import { ATTEMPT_UNKNOWN, type SignInCommands } from "./commands.js";
+import { randomBytes } from "node:crypto";
+import { type AccessToken, type AccessTokens, type ChatgptAccount, type ChatgptLogins } from "../sandbox/api.js";
+import type { SignInCommands } from "./commands.js";
 import { ActorSignInDirectory, MemorySignInDirectory, type SignInDirectory } from "./directory.js";
 import type { StoredSignIn } from "./holder.js";
-import { getSignIns } from "./index.js";
-import { type SignInMaterial, accountOf, assertName, cleanMaterial, hasSignIn, signInOnly } from "./material.js";
-import { SealError, type Sealer, createSealer, serverSealer } from "./seal.js";
-
-/** What a sealed attempt holds: the material, and once it is finished, which pasted address finished it. */
-interface AttemptState {
-	files: SignInMaterial["files"];
-	/** SHA-256 of the address that finished the attempt: the same address may be sent again when adopting failed, no other. */
-	finishedWith?: string;
-}
+import { assertName } from "./material.js";
+import { type Sealer, createSealer, serverSealer } from "./seal.js";
 
 export interface SignInFacadeOptions {
-	/** Windlass's sign-in commands, made when first needed. */
-	commands: () => Promise<SignInCommands>;
 	directory: SignInDirectory;
-	sealer: Sealer;
 	/** The provider's part of a new user: the place Windlass's own data of that user's sessions is kept (Docker: a volume). */
 	ensureUserData?: (uid: string) => Promise<void>;
 	/** How many times `windlass login token` ran in this process, where that is known. */
@@ -48,51 +27,6 @@ export interface SignInFacadeOptions {
 
 export class SignInLogins implements ChatgptLogins {
 	constructor(private readonly options: SignInFacadeOptions) {}
-
-	async start(attemptId: string): Promise<{ url: string; redirectPrefix: string; attempt: string }> {
-		assertName(attemptId, "sign-in attempt id");
-		const commands = await this.options.commands();
-		const { url, redirectPrefix, material } = await commands.start();
-		return { url, redirectPrefix, attempt: this.seal(attemptId, { files: material.files }) };
-	}
-
-	async finish(
-		attemptId: string,
-		attempt: string,
-		pastedUrl: string,
-	): Promise<{ account: ChatgptAccount; attempt: string }> {
-		assertName(attemptId, "sign-in attempt id");
-		const state = this.open(attemptId, attempt);
-		// Whether it is the address the browser ended on is the commands' to say: Windlass's rules are theirs.
-		const pasted = typeof pastedUrl === "string" ? pastedUrl.trim() : "";
-		const digest = createHash("sha256").update(pasted).digest("hex");
-		const material = cleanMaterial(state.files);
-		// Finished before, and adopting it failed: the address that finished it is accepted once more,
-		// without a second exchange (OpenAI takes a code once). Any other address is a new attempt's.
-		if (state.finishedWith !== undefined) {
-			const account = accountOf(material);
-			if (state.finishedWith !== digest || account === null)
-				throw new SandboxUserError(
-					"This sign-in attempt is no longer waiting for an address. Start the sign-in again.",
-				);
-			return { account, attempt: this.options.sealer.isCurrent(attempt) ? attempt : this.seal(attemptId, state) };
-		}
-		const commands = await this.options.commands();
-		const finished = await commands.finish(material, pasted);
-		return {
-			account: finished.account,
-			attempt: this.seal(attemptId, { files: signInOnly(finished.material).files, finishedWith: digest }),
-		};
-	}
-
-	async adopt(attemptId: string, attempt: string, uid: string, pendingId?: string): Promise<void> {
-		assertName(attemptId, "sign-in attempt id");
-		assertName(uid, "user id");
-		const material = signInOnly(cleanMaterial(this.open(attemptId, attempt).files));
-		if (!hasSignIn(material)) throw new SandboxUserError("This sign-in is not finished yet.");
-		await this.options.ensureUserData?.(uid);
-		await this.options.directory.adopt(uid, this.options.sealer.seal("user", uid, JSON.stringify(material)), pendingId);
-	}
 
 	async status(uid: string): Promise<ChatgptAccount | null> {
 		assertName(uid, "user id");
@@ -107,20 +41,6 @@ export class SignInLogins implements ChatgptLogins {
 	async ensureUserVolume(uid: string): Promise<void> {
 		assertName(uid, "user id");
 		await this.options.ensureUserData?.(uid);
-	}
-
-	private seal(attemptId: string, state: AttemptState): string {
-		return this.options.sealer.seal("attempt", attemptId, JSON.stringify(state));
-	}
-
-	/** An attempt's blob that does not open is not this attempt's: to the user, an attempt that is unknown. */
-	private open(attemptId: string, attempt: string): AttemptState {
-		try {
-			return JSON.parse(this.options.sealer.open("attempt", attemptId, attempt)) as AttemptState;
-		} catch (error) {
-			if (error instanceof SealError) throw new SandboxUserError(ATTEMPT_UNKNOWN);
-			throw error;
-		}
 	}
 }
 
@@ -163,11 +83,8 @@ export function actorSignIns(options: { ensureUserData?: (uid: string) => Promis
 	logins: SignInLogins;
 	tokens: SignInTokens;
 } {
-	const sealer = serverSealer();
 	return signInFacade({
-		commands: async () => (await getSignIns()).commands,
-		directory: new ActorSignInDirectory(sealer),
-		sealer,
+		directory: new ActorSignInDirectory(serverSealer()),
 		ensureUserData: options.ensureUserData,
 	});
 }
@@ -204,9 +121,7 @@ export function memorySignIns(options: MemorySignInsOptions): {
 		rows: options.rows,
 	});
 	const facade = signInFacade({
-		commands: async () => options.commands,
 		directory,
-		sealer,
 		ensureUserData: options.ensureUserData,
 		asked: () => options.commands.asked,
 	});

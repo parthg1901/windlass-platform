@@ -17,18 +17,13 @@ import { image, type MachineHarness, type MachineDocker } from "./policy.js";
 import { loadPair, Refusal, RunnerError } from "./state.js";
 
 declare const CLAUDE_RELAY_SCRIPT: string;
-declare const CODEX_RELAY_SCRIPT: string;
 declare const OPENCODE_RELAY_SCRIPT: string;
+/** OpenCode's logins on this machine (opencode-login.ts). */
 export interface ProviderLogin {
-	harness?: "codex";
 	provider: string;
 	providers?: string[];
 	generation: string;
-	sessionGeneration?: string;
 }
-// Pre-upgrade metadata used its credential generation as the signing epoch.
-const sessionDomain = (login: ProviderLogin) =>
-	"windlass-codex-relay-v1-" + (login.sessionGeneration ?? login.generation);
 export function localProviders(machine: string[], keys: string[]) {
 	return machine.filter(id => !keys.includes(id === "chatgpt" ? "openai" : id));
 }
@@ -143,8 +138,8 @@ interface RelayKind {
 	/** The relay's bundled server, read when used: checks swap the globals at run time. */
 	script: () => string;
 	envPrefix: string;
-	/** The login volume it serves. */
-	credentials: (m: MachineDocker) => string;
+	/** The login volume it serves; none for an agent whose relay only takes Settings keys (Codex). */
+	credentials?: (m: MachineDocker) => string;
 	/** Whether a logout leaves a signed-out marker for its sessions. */
 	signedOutMarker: boolean;
 	/** Whether it is given time to save a refresh before removal (RELAY_STOP_SECONDS). */
@@ -160,13 +155,13 @@ const RELAYS: Record<MachineHarness, RelayKind> = {
 		signedOutMarker: false,
 		gracefulStop: false,
 	},
+	// Only its key relay: server.cjs serves `WLP_HARNESS_KEYS=codex` on the relay's port 17892.
 	codex: {
 		name: "Codex",
-		script: () => CODEX_RELAY_SCRIPT,
+		script: () => CLAUDE_RELAY_SCRIPT,
 		envPrefix: "WLP_CODEX_RELAY_",
-		credentials: m => m.codexVolume,
-		signedOutMarker: true,
-		gracefulStop: true,
+		signedOutMarker: false,
+		gracefulStop: false,
 	},
 	opencode: {
 		name: "OpenCode",
@@ -255,18 +250,18 @@ export async function stopLegacyClaude(m: MachineDocker) {
 export async function ensureRelay(
 	m: MachineDocker,
 	login?: ProviderLogin,
-	harness: MachineHarness = login ? (login.harness ?? "opencode") : "claude",
+	harness: MachineHarness = login ? "opencode" : "claude",
 	keys = false,
 ) {
 	const relay = RELAYS[harness];
 	const script = relay.script();
 	const prefix = relay.envPrefix;
-	const credentials = relay.credentials(m);
+	const credentials = relay.credentials?.(m);
 	const pair = loadPair();
 	if (!pair?.key || pair.current.machineId !== m.identity.machineId || pair.current.uid !== m.identity.uid)
 		throw new Refusal("The machine pairing changed while preparing the credential relay.");
 	const mountLogin = !keys;
-	if (mountLogin && !(await m.ownedVolume(!login, credentials)))
+	if (mountLogin && (!credentials || !(await m.ownedVolume(!login, credentials))))
 		throw new Refusal(`Run windlass-runner login ${harness} on this machine.`);
 	await m.ensureImage();
 	const socketVolume = relaySocketVolume(m, harness);
@@ -327,23 +322,14 @@ export async function ensureRelay(
 				identity,
 				"-e",
 				prefix + "MACHINE=" + m.identity.machineId,
-				...(login?.harness === "codex"
+				...(login
 					? [
 							"-e",
-							"WLP_CODEX_SESSION_DOMAIN=" + sessionDomain(login),
+							"WLP_OPENCODE_GENERATION=" + login.generation,
 							"-e",
-							"WLP_CODEX_GENERATION=" + login.generation,
-							"-e",
-							"WLP_CODEX_PROVIDER=" + login.provider,
+							"WLP_OPENCODE_PROVIDER=" + (login.providers ?? [login.provider]).join(","),
 						]
-					: login
-						? [
-								"-e",
-								"WLP_OPENCODE_GENERATION=" + login.generation,
-								"-e",
-								"WLP_OPENCODE_PROVIDER=" + (login.providers ?? [login.provider]).join(","),
-							]
-						: []),
+					: []),
 				image,
 				"node",
 				"-e",
@@ -365,17 +351,13 @@ export async function ensureRelay(
 	return { key: pair.key, box: box.Id as string };
 }
 
-export async function prepareRelay(m: MachineDocker, login?: ProviderLogin, nonce = randomBytes(16).toString("hex")) {
-	const { key, box } = await ensureRelay(m, login);
+/** Claude Code's relay for a login kept on this machine (`login claude`), with the session's signed placeholder. */
+export async function prepareRelay(m: MachineDocker, nonce = randomBytes(16).toString("hex")) {
+	const { key } = await ensureRelay(m);
 	if (!/^[a-f0-9]{32}$/.test(nonce)) throw new Refusal("Invalid session relay nonce.");
-	const domain = login ? sessionDomain(login) : "windlass-claude-relay-v2";
-	const signature = sign(null, Buffer.from(domain + "\n" + m.identity.machineId + "\n" + nonce), key);
+	const signature = sign(null, Buffer.from("windlass-claude-relay-v2\n" + m.identity.machineId + "\n" + nonce), key);
 	const placeholder = nonce + "." + signature.toString("base64url");
-	const env: Record<string, string> = login
-		? { WLP_SESSION_BEARER: placeholder }
-		: { ANTHROPIC_BASE_URL: relayUrl, CLAUDE_CODE_OAUTH_TOKEN: placeholder };
-	if (login) await docker(["exec", box, "rm", "-f", "/workspace/" + nonce + ".key"], { check: true });
-	return { env, nonce };
+	return { env: { ANTHROPIC_BASE_URL: relayUrl, CLAUDE_CODE_OAUTH_TOKEN: placeholder }, nonce };
 }
 
 /** Scope the fallback bearer to this turn's projected machine providers. */
@@ -427,19 +409,11 @@ export async function openHarnessKey(
 	const placeholder = "wlp-model." + randomBytes(16).toString("hex");
 	const path = "/run/wlp-keys/" + nonce + "." + placeholder;
 	await writeRecord(box, path, forward);
-	const marker = "/workspace/" + nonce + ".key";
-	try {
-		if (harness === "codex") await writeRecord(box, marker, { placeholder });
-	} catch (error) {
-		await docker(["exec", box, "rm", "-f", path]);
-		throw error;
-	}
 	return {
 		placeholder,
 		env: {},
 		close: async () => {
 			await docker(["exec", box, "rm", "-f", path]);
-			if (harness === "codex") await withLoginVolume(m, () => removeRecord(box, marker, placeholder));
 		},
 	};
 }
@@ -449,10 +423,7 @@ export async function endHarnessLeases(m: MachineDocker, harness: MachineHarness
 	if (!/^[a-f0-9]{32}$/.test(nonce)) return;
 	const keys = await ownedRelay(m, harness, true);
 	if (keys?.State.Running) {
-		await docker(
-			["exec", keys.Id, "sh", "-c", 'rm -f /run/wlp-keys/"$1".wlp-model.* /workspace/"$1".key', "sh", nonce],
-			{ check: true },
-		);
+		await docker(["exec", keys.Id, "sh", "-c", 'rm -f /run/wlp-keys/"$1".wlp-model.*', "sh", nonce], { check: true });
 	}
 	if (harness === "opencode") {
 		const login = await ownedRelay(m, harness);

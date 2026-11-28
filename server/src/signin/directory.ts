@@ -16,7 +16,7 @@
  * server made up), so an answer cannot be replayed as the answer to another request or another user.
  */
 
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createClient } from "rivetkit/client";
 import { isActorGone } from "../actors/internal.js";
 import { serviceParams } from "../auth.js";
@@ -31,7 +31,7 @@ import { errorText } from "../util.js";
 
 export interface SignInDirectory {
 	/** Replaces the user's sign-in with `sealed`: a finished sign-in, sealed for that user. */
-	adopt(uid: string, sealed: string, pendingId?: string): Promise<void>;
+	adopt(uid: string, sealed: string): Promise<void>;
 	status(uid: string): Promise<ChatgptAccount | null>;
 	logout(uid: string): Promise<void>;
 	accessToken(uid: string): Promise<AccessToken>;
@@ -73,7 +73,7 @@ export const tokenSubject = (uid: string, nonce: string) => `${uid}/${nonce}`;
 
 /** The actions of the `user` actor this directory calls (actors/user.ts). They accept a service token only. */
 interface UserSignInActions {
-	internalAdoptSignIn(sealed: string, pendingId?: string): Promise<SignInAnswer<null>>;
+	internalAdoptSignIn(sealed: string): Promise<SignInAnswer<null>>;
 	internalSignInStatus(): Promise<SignInAnswer<ChatgptAccount | null>>;
 	internalSignOut(): Promise<SignInAnswer<null>>;
 	internalAccessToken(nonce: string): Promise<SealedTokenAnswer>;
@@ -104,8 +104,8 @@ export class ActorSignInDirectory implements SignInDirectory {
 		return this.actors().user.get([uid], { params: serviceParams() }) as UserSignInActions;
 	}
 
-	async adopt(uid: string, sealed: string, pendingId?: string): Promise<void> {
-		const answer = await this.existing(uid).internalAdoptSignIn(sealed, pendingId);
+	async adopt(uid: string, sealed: string): Promise<void> {
+		const answer = await this.existing(uid).internalAdoptSignIn(sealed);
 		if (!answer.ok) throw errorOf(answer.problem);
 	}
 
@@ -203,8 +203,8 @@ export class MemorySignInDirectory implements SignInDirectory {
 		return holder;
 	}
 
-	adopt(uid: string, sealed: string, pendingId?: string): Promise<void> {
-		return this.holder(uid).adopt(sealed, pendingId);
+	adopt(uid: string, sealed: string): Promise<void> {
+		return this.holder(uid).adopt(sealed);
 	}
 
 	status(uid: string): Promise<ChatgptAccount | null> {
@@ -229,10 +229,9 @@ export class MemorySignInDirectory implements SignInDirectory {
 	 * dropped: `forget` does that. For checks, with made-up material.
 	 */
 	put(uid: string, material: SignInMaterial): void {
-		const row = this.rows.get(uid);
 		this.rows.set(uid, {
 			sealed: this.options.sealer.seal("user", uid, JSON.stringify(signInOnly(material))),
-			generation: (row?.generation ?? 0) + 1,
+			generation: randomUUID(),
 			shortNoted: false,
 		});
 	}

@@ -432,6 +432,32 @@
 .item-now-when {
 	margin-top: 4px;
 }
+/* An item waiting for its plan: its next turn on the key, or the rule. */
+.plan-wait {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 16px;
+	margin-top: 12px;
+	padding: 10px 10px 10px 14px;
+	border: 1px solid var(--needs-edge);
+	border-radius: var(--r-control);
+	background: var(--needs-wash);
+}
+.plan-wait-ask {
+	flex: 1 1 24ch;
+	font-size: var(--text-13);
+	color: var(--ink);
+}
+.plan-wait-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.plan-wait > .field-note {
+	flex-basis: 100%;
+	margin: 0;
+}
 
 /* The facts under it, and in a verdict: the usage page's rows, with room for words. */
 .item-facts {
@@ -1052,7 +1078,12 @@
 	margin-top: 0;
 }
 .item-meter-reached {
-	background: var(--ink-dim);
+	background: var(--needs);
+}
+/* "reached", after a full bar. */
+.item-cost-meter > .tone-dim {
+	font-size: var(--text-12);
+	color: var(--needs);
 }
 
 /* A draft in someone else's words: whose they are, the text as the agent gets it, then Start. */
@@ -3310,43 +3341,100 @@ a.subtask-chip:hover {
 	background: var(--ink-faint);
 }
 
+/*
+ * Cost (screens/Item.tsx `Cost`): the total large on the left with its models' and sandbox's shares under it, the
+ * budgets it counts against on the right, turns and working time along the foot. A feature's parts span the card.
+ */
 .item-cost-card {
+	display: grid;
+	grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
 	margin-top: 12px;
 	overflow: hidden;
 }
+.item-cost-card > .item-dollars {
+	display: contents;
+}
 .item-cost-card .item-cost {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	align-content: start;
+	gap: 0;
+	margin: 0;
 	border: 0;
 	border-radius: 0;
 	background: none;
 	box-shadow: none;
 }
 .item-cost-card .item-cost > div {
-	grid-template-columns: minmax(0, 1fr);
+	grid-template-columns: 96px minmax(0, 1fr);
+	align-items: baseline;
 	row-gap: 4px;
-	padding: 14px 18px;
-	border-bottom: 0;
-}
-.item-cost-card .item-cost > div + div {
-	border-left: 1px solid var(--line);
+	padding: 5px 20px;
+	border: 0;
 }
 .item-cost-card .item-cost dt {
 	font-size: var(--text-12);
+	font-weight: var(--weight-regular);
 	color: var(--ink-faint);
 }
 .item-cost-card .item-cost .usage-number {
-	font-size: var(--text-14);
+	font-size: var(--text-13);
+	font-family: var(--font-text);
+	text-align: left;
+}
+/* The dollars: the total on a line of its own, large, its label above it. */
+.item-dollars > .item-cost {
+	padding: 14px 0 16px;
+	grid-column: 1;
+	grid-row: 1;
+}
+.item-dollars > .item-cost > div:first-child {
+	grid-template-columns: minmax(0, 1fr);
+	padding-bottom: 10px;
+}
+.item-total .cost-figure-amount {
+	font-size: var(--text-32);
+}
+/* The budgets: each figure against its budget with a thin bar, beside the dollars. */
+.item-cost-card > .item-cost {
+	grid-column: 2;
+	grid-row: 1;
+	align-content: center;
+	padding: 14px 0;
+	border-left: 1px solid var(--line);
+}
+.item-cost-card > .item-cost > div {
+	grid-template-columns: minmax(0, 1fr) auto;
+	padding: 8px 20px;
+}
+.item-cost-card > .item-cost .usage-number {
+	text-align: right;
+}
+.item-cost-card > .item-cost .item-cost-meter {
+	grid-column: 1 / -1;
 }
 .item-cost-card .item-cost-meter .usage-meter {
 	max-width: none;
+	height: 4px;
+	margin-top: 2px;
+}
+.item-dollars > .item-dollars-table,
+.item-cost-foot {
+	grid-column: 1 / -1;
+}
+.item-dollars > .item-dollars-table {
+	border-top: 1px solid var(--line);
+	border-radius: 0;
+	box-shadow: none;
+	border-inline: 0;
+	border-bottom: 0;
 }
 .item-cost-foot {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 4px 20px;
-	padding: 10px 18px;
+	padding: 10px 20px;
 	border-top: 1px solid var(--line);
+	background: var(--bg-sunk);
 	font-size: var(--text-13);
 }
 .item-cost-foot > div {
@@ -3361,10 +3449,30 @@ a.subtask-chip:hover {
 	font-variant-numeric: tabular-nums;
 }
 @media (max-width: 760px) {
-	.item-cost-card .item-cost > div + div {
+	.item-cost-card {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.item-cost-card > .item-cost {
+		grid-column: 1;
+		grid-row: auto;
 		border-left: 0;
 		border-top: 1px solid var(--line);
 	}
+}
+.item-dollars-table {
+	width: 100%;
+	margin: 0;
+}
+.item-dollars-wait {
+	margin: 0;
+	padding: 14px 20px;
+}
+/* By model, inside "How this is counted": who paid and the tokens behind each figure. */
+.item-cost-how .item-dollars-models {
+	margin: 10px 0 12px;
+}
+.item-cost-how .item-dollars-models > p {
+	margin-top: 8px;
 }
 /* A plan question's way to the plan below it, and what a re-plan changed. */
 .plan-jump {
@@ -3398,4 +3506,14 @@ a.subtask-chip:hover {
 }
 @media (prefers-reduced-motion: reduce) {
 	.plan-flash > .feature-plan { animation: none; }
+}
+.item-cost-card > .item-dollars-wait {
+	grid-column: 1;
+	grid-row: 1;
+}
+.item-cost-card > .item-cost:empty {
+	display: none;
+}
+.item-cost-card:has(> .item-cost:empty) {
+	grid-template-columns: minmax(0, 1fr);
 }

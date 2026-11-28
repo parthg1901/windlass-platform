@@ -54,7 +54,7 @@ import {
 	markTurnSandbox,
 } from "./provider.js";
 import { TOKEN_FILE_PREFIX, tokenFilePath } from "./token-file.js";
-import { type DockerModelRelay, type DockerTurnRelay, MODEL_RELAY_WINDLASS } from "./model-relay.js";
+import { type DockerModelRelay, MODEL_RELAY_WINDLASS } from "./model-relay.js";
 import { readsModelRelay } from "../model-relay-url.js";
 import { probeImage } from "./tokens.js";
 import { sleep } from "../util.js";
@@ -110,7 +110,7 @@ export class DockerSandboxHandle implements TurnSandbox {
 		readonly helperImage = IMAGE,
 		/** Its data directory is a volume of its own (`SandboxHandle.ownData`). */
 		readonly ownData = false,
-		/** Windlass's model relay of this provider (docs/model-relay.md); none: the turn's token goes into the sandbox. */
+		/** The model relay of this provider (docs/model-relay.md), for key- and plan-paid turns; none: they cannot run here. */
 		relay?: DockerModelRelay,
 		/** The free bytes below which a mirror save writes nothing (`StoreLimits.free`); the default limits' when left out. */
 		private readonly mirrorFloor?: () => number,
@@ -121,7 +121,6 @@ export class DockerSandboxHandle implements TurnSandbox {
 		markTurnSandbox(this);
 		// The user names the lease in the relay, whose ceiling per user counts by it.
 		if (relay) {
-			this.modelRelay = () => relay.open(this.container, this.id, this.uid);
 			this.modelKeyRelay = (sessionId, key, signal, takeRequest) => {
 				if (sessionId !== session) throw new Error("This model relay belongs to another session.");
 				return relay.openKey(this.container, this.id, this.uid, sessionId, key, signal, takeRequest);
@@ -129,8 +128,6 @@ export class DockerSandboxHandle implements TurnSandbox {
 		}
 	}
 
-	/** `TurnSandbox.modelRelay`, where the provider has a relay. */
-	readonly modelRelay?: () => Promise<DockerTurnRelay>;
 	readonly modelKeyRelay?: TurnSandbox["modelKeyRelay"];
 
 	get approval(): "auto" | "full" {
@@ -494,7 +491,7 @@ export type DockerSandboxOptions = {
 	cpus?: number;
 	slots?: MachineSlotCapacity;
 	network?: { name: string; env: Record<string, string>; mode: string };
-	/** Windlass's model relay (docs/model-relay.md) for the Windlass sandboxes of this provider; none: their turns' tokens go into the sandbox. */
+	/** The model relay (docs/model-relay.md) for this provider's key- and plan-paid turns; none: those turns cannot run here. */
 	modelRelay?: DockerModelRelay;
 	hostedKeys?: boolean;
 	/** The Windlass version of the image, which decides whether `modelRelay` is used (0.7.1 or later): the one the layer's `windlass.problem()` reads. */
@@ -693,13 +690,13 @@ export class DockerSandboxes implements Sandboxes {
 	async prepareModelRelay(): Promise<string> {
 		const relay = this.options.modelRelay;
 		if (relay === undefined)
-			return "[wlp] model_relay: off (WLP_MODEL_RELAY=off): each turn's access token is written into its sandbox";
+			return "[wlp] model_relay: off (WLP_MODEL_RELAY=off): hosted turns on a Settings key or a plan cannot run";
 		const on = await this.modelRelayReady();
 		const removed = await relay.sweep().catch(() => 0);
 		const left = removed ? `; removed ${removed} forwarder(s) and the relay's token files a stopped server left` : "";
 		return on
-			? `[wlp] model_relay: Windlass's model requests go through the relay container ${relay.relayName}; sandboxes never hold the access token${left}`
-			: `[wlp] model_relay: off (the image's Windlass is not ${MODEL_RELAY_WINDLASS} or later, or could not be read): each turn's access token is written into its sandbox${left}`;
+			? `[wlp] model_relay: key- and plan-paid model requests go through the relay container ${relay.relayName} to the platform relay; sandboxes never hold a credential${left}`
+			: `[wlp] model_relay: off (the image's Windlass is not ${MODEL_RELAY_WINDLASS} or later, or could not be read): hosted Windlass turns on a Settings key or a plan cannot run${left}`;
 	}
 
 	profile(id: SandboxProfileId): SandboxProfile {

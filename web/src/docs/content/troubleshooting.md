@@ -8,15 +8,12 @@ Ask the operator to invite your platform UID or your verified provider email.
 **"This sign-in attempt has expired. Start again."**\
 A sign-in attempt lasts 10 minutes. Choose your provider again.
 
-**"That is not the address the browser ended on. It starts with http://127.0.0.1:1455/auth/callback?code="**\
-In Settings → Model providers, paste the full loopback address from the tab where you approved the ChatGPT connection.
-
 **"Your sign-in is no longer accepted. Sign in again to carry on."**\
 Your sign-in on the platform ended, or you were taken off its list. Sign in again.
 
 **"You are not signed in with ChatGPT. Sign in with ChatGPT, then send the prompt again."**\
 **"Your ChatGPT sign-in is no longer accepted: it expired or was withdrawn. Sign in with ChatGPT again, then send the prompt once more."**\
-The platform could not get a ChatGPT token for the turn. Reconnect your ChatGPT plan in Settings → Model providers, then send the prompt again.
+The platform could not get a ChatGPT token for the turn. Reconnect your ChatGPT plan on **Connections**, then send the prompt again.
 
 ## GitHub
 
@@ -137,7 +134,13 @@ The runner was started without that agent's `--harness`. The runner does not sav
 
 **"OpenCode on “…” is not signed in. Run windlass-runner login opencode there."**\
 **"Run windlass-runner login opencode on this machine."**\
-Sign OpenCode in on the machine with `docker exec -it windlass-runner windlass-runner login opencode`. Claude Code says the same with `login claude`. See [Sign agents in](/docs/machines#sign-agents-in).
+Sign OpenCode in on the machine with `docker exec -it windlass-runner windlass-runner login opencode`. See [Sign OpenCode in](/docs/machines#sign-opencode-in).
+
+**"Nothing can pay for … on “…” yet. Connect a plan or add a key on Connections."**\
+Claude Code and Codex on a machine pay with your plan or key. Connect a plan or add a key on **Connections**.
+
+**"Update your runner to 0.3.13 or later."**\
+The machine's runner is older than this platform serves, so it cannot connect. Run the update command on the Machines page.
 
 **"Add an Anthropic key in Settings to run Claude Code here."**
 
@@ -185,8 +188,23 @@ The provider had an error, or the relay could not reach it. Try again later. Che
 **"The provider rejected the request."**\
 The provider refused it for another reason, and the relay does not pass that reason on. Try another model, or check your account with the provider.
 
+**"Your Claude plan is limited until … UTC. Wait for it, or pay for this turn with your Anthropic key."**\
+Your plan reached its limit, and your rule for a limited plan is **Ask me**. Choose **Use my key this time** to send the prompt on your key, or **Wait** to keep it and send it after the reset. Change the rule under **Connections → Who pays**.
+
+**"Your Claude plan is limited until … UTC. Send this again then."**\
+Your plan reached its limit and your rule is to wait, or no saved key could pay instead. Your message stays in the composer.
+
+**"Your ChatGPT plan is limited until … UTC. Wait, or use your key for this turn?"** (Windlass)\
+Windlass's ChatGPT model is on your limited ChatGPT plan, and your OpenAI key offers the same model. **Use my key this time** runs this one turn on the key's version of the model (for `gpt-5`, `openai/gpt-5`); the next prompt is on the plan again. **Wait** keeps the message so you can send it after the reset. Without an OpenAI key that offers the model, the composer says until when and keeps your message.
+
+**"… was stopped: this turn used what was left of the item's budget."**\
+A work item's turn reached its budget while it ran. Its work so far is kept. The item asks for more; **Give it more** goes on from where it stopped.
+
+**A plan's cell says "Stopped working"**\
+The provider refused the plan's token twice in a row: it was revoked, expired, or replaced elsewhere. Choose **Reconnect** in that cell and run the command again.
+
 **"ChatGPT did not accept the saved sign-in. Sign in with ChatGPT again, then send the prompt once more."**\
-Reconnect your ChatGPT plan in Settings → Model providers, then send the prompt again.
+Reconnect your ChatGPT plan on **Connections**, then send the prompt again.
 
 ## Work items
 
@@ -198,6 +216,12 @@ GitHub and Linear filings share the daily issue limit. Wait for the next UTC day
 
 **"Waiting for one of your … hosted sandboxes that run at once: … running now. Your machines don't count toward this."**\
 Not an error. The item waits for a free place on this platform and starts by itself. Items on your machines never wait for it.
+
+**"Your Claude plan is limited until … UTC. This item starts by itself then."**\
+Not an error. The item waits for your plan's reset, as your rule for a limited plan says. Choose **Use my key now** to run its next turn on your key instead (shown only where a saved key can pay), or **Change rule**.
+
+**"Waiting for your Claude plan: … turns already run on it at once, the most it runs together."**\
+Not an error. A plan runs a few turns at once; this one starts when one of them finishes.
 
 **"This item has used … of its … tokens (cost-weighted, …)."**\
 The item paused at its budget. Its work is kept. Choose **Give it … more tokens** to go on in the same sandbox, **Hand it over as it is**, or **Give up**. See [When the budget is used](/docs/factory#when-the-budget-is-used).

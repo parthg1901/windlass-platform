@@ -2,7 +2,7 @@ import type { LoginProvider } from "@contract";
 import { useEffect, useRef, useState } from "react";
 import { InfoIcon, Mark, WarnIcon } from "../components/Icons";
 import { ThemeToggle, Wordmark } from "../components/TopBar";
-import { linkProps, navigate } from "../lib/router";
+import { linkProps, navigate, takeReturnAfterSignIn } from "../lib/router";
 import type { Theme } from "../lib/theme";
 import { useApp, useAuth } from "../state/app";
 
@@ -179,7 +179,7 @@ export function LinkCallback() {
 		handled.current = true;
 		const callback = new URL(location.href);
 		if (!callback.searchParams.has("code") && !callback.searchParams.has("error")) {
-			navigate({ name: "home" }, { replace: true });
+			navigate(takeReturnAfterSignIn() ?? { name: "home" }, { replace: true });
 			return;
 		}
 		history.replaceState(history.state, "", callback.pathname);

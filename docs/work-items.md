@@ -138,10 +138,14 @@ or hand over the commit the run already pushed.
   agents at work and the items' hosted turns together ("Usage and limits"). A machine item's turn never
   counts and never waits for it: the machine's runner bounds it with its own slots, and queues turns past
   them. Kept-sandbox and time caps apply only to hosted items.
-- **The cost of an item** is its tokens, cost-weighted (cached input at a tenth, `CACHED_INPUT_WEIGHT` in
-  factory/budget.ts), and its hosted sandbox time, against its budget, with the tokens as reported, its turns
-  and its working time beside them, on the item's page and the usage page. A machine item has zero hosted
-  seconds. A budget used up is a question: "Give it N more" goes on in the same session and sandbox (a
+- **The budget of an item** is dollars of work: every turn at API prices, whoever pays (a key's turns at their
+  cost, a plan's at what the same tokens would cost on a key; a plan's "% used" is the whole account's, so it is
+  never an item's measure), and its hosted sandbox time. A turn that cannot be priced leaves cost-weighted tokens
+  holding too (cached input at a tenth, `CACHED_INPUT_WEIGHT` in factory/budget.ts). A running turn is stopped at
+  what is left plus 5% of the budget. Its **cost** is shown split by who carried it: turns included in a plan (with
+  their value at API prices), dollars a key paid, and hosted time included in the Windlass plan or extra (billing
+  off: an estimate at the rate card). A machine item has zero hosted seconds. A budget used up is a question: "Used
+  $5.10 of work of its $5 budget", "Give it $2 more" goes on in the same session and sandbox (a
   subtask's extra adds to its feature's budget), "Hand it over as it is" pushes the workspace first when
   nothing is pushed, "Give up". No choice throws work away.
 - **One stuck detector.** Rounds of fixing are not capped. A fix turn for a failure the run already had a
@@ -520,7 +524,7 @@ setting that is not a whole number in its range stops the server when it starts.
 | Limit | Setting | Default |
 |---|---|---|
 | A user's hosted sandboxes at work at once, their own agents and their items' together | `WLP_FACTORY_HOSTED_RUNNING` | 3 (at most 100) |
-| A new item's budget: cost-weighted tokens, hosted sandbox seconds | `WLP_FACTORY_ITEM_TOKENS`, `WLP_FACTORY_ITEM_HOSTED_SECONDS` | 2,000,000 tokens, 7200 (2 hours) |
+| A new item's budget: dollars of work at API prices, whoever pays; cost-weighted tokens while a turn can't be priced; hosted sandbox seconds | `WLP_FACTORY_ITEM_USD`, `WLP_FACTORY_ITEM_TOKENS`, `WLP_FACTORY_ITEM_HOSTED_SECONDS` | $5, 2,000,000 tokens, 7200 (2 hours) |
 | Items a user files from GitHub and Linear together in a UTC day, drafts among them | `WLP_FACTORY_GITHUB_ITEMS_PER_DAY` | 20 |
 
 An item's hosted sandbox counts against the user's daily allowance and kept sandboxes as any other ("Usage

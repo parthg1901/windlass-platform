@@ -600,6 +600,11 @@ exports.createRelay = function createRelay({
 				const lease = nonce ? await provider.authorize(bearer, nonce, req.url) : false;
 				if (!lease) return unauthorized(res);
 				if (typeof lease === "object" && typeof lease.user === "string") user = lease.user;
+				// A reachability check the provider answers itself, once the bearer is known (Claude Code's HEAD /api/hello).
+				if (provider.answersLocally?.(req.method, req.url)) {
+					res.writeHead(200, { "cache-control": "no-store" });
+					return res.end();
+				}
 			} else {
 				const match = /^Bearer ([a-f0-9]{32})\.([A-Za-z0-9_-]{86})$/.exec(bearer ?? "");
 				if (
@@ -633,7 +638,8 @@ exports.createRelay = function createRelay({
 			if (provider) {
 				target = await provider.target(req.url, req.headers, nonce);
 				if (!target) return unauthorized(res);
-				if (target.refused) return reject(res, 403);
+				// A refusal may name its own status and sentence (a turn's request limit); otherwise not allowed.
+				if (target.refused) return reject(res, target.status ?? 403, target.message ? { message: target.message } : {});
 				({ secrets: own, ...target } = target);
 			} else {
 				const token = await readToken().catch(() => undefined);
@@ -655,10 +661,17 @@ exports.createRelay = function createRelay({
 					contentType: diagnostic(reply.headers["content-type"]?.split(";")[0].trim().toLowerCase(), mediaTypes),
 					contentEncoding: diagnostic(reply.headers["content-encoding"]?.toLowerCase(), encodings),
 				};
+				// What the provider said of the credential's health (a plan's: plan.cjs), from its status and limit headers only.
+				const observe = text => {
+					try {
+						provider?.observe?.(reply.statusCode, limitHeaders(reply.headers, secrets()), text);
+					} catch {}
+				};
 				// No redirects, reflected upstream error bodies, cookies, or diagnostic headers.
 				if (reply.statusCode !== 200) {
 					const status = reply.statusCode >= 400 && reply.statusCode < 600 ? reply.statusCode : 502;
 					note({ event: "upstream_error", ...described, answered: status });
+					if (!provider?.errorBody || status === 502) observe();
 					if (provider?.errorBody && status !== 502) {
 						// The provider's own error, cut down to what the client classifies it by: read whole, bounded, then rewritten.
 						const parts = [];
@@ -679,6 +692,7 @@ exports.createRelay = function createRelay({
 							try {
 								text = decodeError(Buffer.concat(parts), reply.headers["content-encoding"]);
 							} catch {}
+							observe(text);
 							res.writeHead(status, {
 								...([429, 503, 529].includes(status) ? limitHeaders(reply.headers, secrets()) : {}),
 								"content-type": "application/json",
@@ -695,6 +709,7 @@ exports.createRelay = function createRelay({
 					reply.destroy();
 					return;
 				}
+				observe();
 				let type = reply.headers["content-type"]?.split(";")[0].trim().toLowerCase();
 				// A provider may name the type of an answer that comes without one (or as text/plain) on its streaming route.
 				const given = type;

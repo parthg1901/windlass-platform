@@ -19,7 +19,6 @@ const context: RunContext = {
 		machineEffort: "high",
 		machineProfile: "docker-hardened",
 	},
-	machinePayers: { mac: { opencode: "key" } },
 	item: { hostedSize: "small" },
 };
 
@@ -33,7 +32,7 @@ test("each field has its own precedence and source", () => {
 		effort: "high",
 		profile: "docker-hardened",
 		size: "small",
-		payer: "key",
+		payer: "machine",
 		sources: {
 			place: "account",
 			fallback: "account",
@@ -42,7 +41,7 @@ test("each field has its own precedence and source", () => {
 			effort: "repository",
 			profile: "repository",
 			size: "item",
-			payer: "account",
+			payer: "deployment",
 		},
 	});
 	assert.equal(resolveRun({ deployment: context.deployment }, "planner").model, "deployment-model");

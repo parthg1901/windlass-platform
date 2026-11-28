@@ -57,6 +57,7 @@ import {
 	startingProfile,
 } from "../lib/repositories";
 import { linkProps, navigate } from "../lib/router";
+import { cellId } from "../lib/connections";
 import { submissionOf, type Submission } from "../lib/submission";
 import { perHour, sizeName, sizeSpec, startingSize } from "../lib/sizes";
 import { useMachines } from "../state/machines";
@@ -64,7 +65,7 @@ import { useApp, useAuth } from "../state/app";
 import { takeLaunchDraft, useGithub } from "../state/github";
 import { handOver } from "../state/handover";
 import {
-	useHostedProviders,
+	useHostedCredentials,
 	allowanceState,
 	useAccount,
 	useAllowance,
@@ -77,7 +78,9 @@ import { ArrowUpIcon, CheckIcon, CloudIcon, MachineIcon, PlusIcon, RepoIcon, Sli
 import { modeMenu } from "./Modes";
 import { codexModes } from "../../../server/src/sandbox/codex-modes.js";
 import {
+	anyOf,
 	hostedAgentProblem,
+	hostedPayer,
 	capabilitiesOf,
 	subtaskHarnessProblem,
 	usesAccountModels,
@@ -480,7 +483,6 @@ export function StartComposer({
 	const itemLayers = {
 		account: account.settings?.defaults,
 		repository: saved.defaults,
-		machines: machinesReading ? null : mine,
 		sizes: info?.hostedSizes,
 	};
 	const itemPlace =
@@ -524,7 +526,7 @@ export function StartComposer({
 			(itemMachineId && !chosenMachine && !machinesReading
 				? "The machine chosen can no longer be used, so this work item runs hosted."
 				: null));
-	const keys = useHostedProviders();
+	const keys = useHostedCredentials();
 	const placeProfiles = chosenMachine ? chosenMachine.profiles : (info?.profiles ?? []);
 	const hardened = placeProfiles.some(candidate => candidate.id === HARNESS_PROFILE && candidate.available);
 	const wantedHarness = harnessChoice ?? (item ? (destination?.harness ?? "windlass") : defaultRun.agent);
@@ -1251,6 +1253,12 @@ export function StartComposer({
 	} else {
 		for (const id of ["claude", "codex", "opencode"] as const) agentButtons.push({ id, reason: hostedProblem(id) });
 	}
+	// Hosted agents that nothing pays for: each says so and leads to its cell on the Connections page.
+	const unconnected =
+		chosenMachine || keys === null
+			? []
+			: (["claude", "codex", "opencode"] as const).filter(id => !hostedPayer(id, undefined, keys));
+	const connectRoute = (id: HarnessId) => ({ name: "connections" as const, section: cellId(id, "hosted") });
 
 	const shownList = other && machineProblem ? null : modelList;
 	const bySource = modelsBySource(harness, shownList);
@@ -1317,7 +1325,14 @@ export function StartComposer({
 				{agentButtons.map(({ id, reason }) => {
 					const chosen = harness === id;
 					return (
-						<Tooltip key={id} content={reason ? `${HARNESS_NAMES[id]}: ${reason}` : HARNESS_NAMES[id]}>
+						<Tooltip
+							key={id}
+							content={
+								reason
+									? `${HARNESS_NAMES[id]}: ${reason}${unconnected.some(one => one === id) ? " Select it to connect." : ""}`
+									: HARNESS_NAMES[id]
+							}
+						>
 							<button
 								type="button"
 								className={`agent-switch-button${chosen ? " agent-switch-chosen" : ""}`}
@@ -1325,7 +1340,10 @@ export function StartComposer({
 								aria-label={HARNESS_NAMES[id]}
 								aria-disabled={!!reason || undefined}
 								onPointerDown={event => event.preventDefault()}
-								onClick={() => !reason && chooseAgent(id)}
+								onClick={() => {
+									if (!reason) chooseAgent(id);
+									else if (unconnected.some(one => one === id)) navigate(connectRoute(id));
+								}}
 							>
 								<AgentLogo id={id} size={17} />
 							</button>
@@ -1339,6 +1357,20 @@ export function StartComposer({
 					{chosenMachine ? `on ${machineName}` : harness === "windlass" ? "hosted or any machine" : "hosted"}
 				</span>
 			</span>
+			{unconnected.length > 0 ? (
+				<p className="picker-connect" role="note">
+					{anyOf(unconnected.map(id => HARNESS_NAMES[id]))} {unconnected.length === 1 ? "is" : "are"} not connected for
+					Hosted:{" "}
+					{unconnected.map((id, index) => (
+						<span key={id}>
+							{index > 0 ? " · " : null}
+							<a className="link" {...linkProps(connectRoute(id))}>
+								Connect {HARNESS_NAMES[id]}
+							</a>
+						</span>
+					))}
+				</p>
+			) : null}
 		</div>
 	);
 	const providerTabs =
@@ -1410,14 +1442,29 @@ export function StartComposer({
 								: ""}
 					</p>
 				) : null}
-				{other && !chosenMachine ? <p className="ui-menu-note">Hosted agents always use your Settings keys.</p> : null}
+				{other && !chosenMachine ? (
+					<p className="ui-menu-note">
+						Hosted agents use the plans and keys on{" "}
+						<a className="link" {...linkProps(connectRoute(harness))}>
+							Connections
+						</a>
+						.
+					</p>
+				) : null}
 				{other && chosenMachine ? (
 					<p className="ui-menu-note">
-						Choose whose sign-in it uses on the{" "}
-						<a className="link" {...linkProps({ name: "machines" })}>
-							Machines
-						</a>{" "}
-						page.{onPullRequest(harness)}
+						{machineEntry?.paysWith ? (
+							<>
+								It pays with your plan or key, as{" "}
+								<a className="link" {...linkProps({ name: "connections" })}>
+									Connections
+								</a>{" "}
+								sets.
+							</>
+						) : (
+							"It uses its own sign-in on this machine."
+						)}
+						{onPullRequest(harness)}
 					</p>
 				) : null}
 				{!other && modelList && modelList.source !== "account" ? (
@@ -1425,7 +1472,7 @@ export function StartComposer({
 				) : null}
 				{other && chosenMachine && machineEntry && machineEntry.signIn !== "token" ? (
 					<details className="agent-commands">
-						<summary>Sign-in command</summary>
+						<summary>{machineEntry.paysWith ? "What pays" : "Sign-in command"}</summary>
 						<HarnessStatus harness={machineEntry} />
 					</details>
 				) : null}

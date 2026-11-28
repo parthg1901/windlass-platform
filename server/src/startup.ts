@@ -37,6 +37,15 @@ export function startupProblem(
 }
 
 /**
+ * The warning the server starts with when `WLP_PLAN_USERS` names nobody (unset or empty), or null: plans then pay for
+ * no one's hosted turns, Windlass's own ChatGPT models included, which is easy to miss on a new deployment.
+ */
+export function planUsersWarning(config: Pick<Config, "plans">): string | null {
+	if (config.plans === "all" || config.plans.size > 0) return null;
+	return "[wlp] WARNING: WLP_PLAN_USERS is not set, so hosted Windlass on ChatGPT and plan-paid turns are refused for everyone. Set it to user ids, or * for everyone, to allow them.";
+}
+
+/**
  * Asks the engine for the first connection token now, so that an admin token the engine refuses, or
  * an engine address that does not answer, is said when the server starts and not to its first
  * visitor: `[wlp] WARNING: ...`. The server starts all the same, and asks again when a browser does.

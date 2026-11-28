@@ -5,7 +5,7 @@ import { budgetProblems, featureTotal, parseTokenInput, sumBudgets, tokenInput }
 import { placeChanged, placeDraftOf, withPlace, type PlaceDraft } from "../lib/placement";
 import { agentChanged, cleanAgent, withAgent } from "../lib/subtask-agents";
 import { useApp } from "../state/app";
-import { useCatalogs, useHostedProviders, useModels } from "../state/hooks";
+import { useCatalogs, useHostedCredentials, useModels } from "../state/hooks";
 import { useMachines } from "../state/machines";
 
 export interface PlanActing {
@@ -64,7 +64,7 @@ export function usePlanReview(view: ItemView | null, acting: PlanActing) {
 		platform.info?.machines != null && view?.mode === "orchestrate" && plan !== null && plan.status !== "superseded",
 	).list;
 	const accountModels = useModels().list;
-	const hostedKeys = useHostedProviders();
+	const hostedCredentials = useHostedCredentials();
 	const keyProfile = platform.info?.profiles.some(p => p.available && p.platformKeys) === true;
 	const catalogs = useCatalogs(open || plan?.status === "approved" ? machines : null);
 
@@ -131,7 +131,7 @@ export function usePlanReview(view: ItemView | null, acting: PlanActing) {
 		approve,
 		machines,
 		catalogs,
-		hostedKeys,
+		hostedCredentials,
 		keyProfile,
 		accountModels,
 		unattended,

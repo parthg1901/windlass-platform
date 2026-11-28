@@ -104,11 +104,6 @@ function standIn(renamed: Record<string, unknown>) {
 	return sandbox as unknown as SandboxHandle;
 }
 
-const tokens = {
-	current: async () => {
-		throw new Error("a scripted turn takes no token");
-	},
-} as never;
 const host = { version: async () => "0.6.0", problem: async () => null };
 const script = {
 	responses: [
@@ -121,7 +116,7 @@ const script = {
 
 async function titles(renamed: Record<string, unknown>): Promise<unknown[]> {
 	const seen: unknown[] = [];
-	const result = await new SandboxWindlass(tokens, host).runTurn(standIn(renamed), {
+	const result = await new SandboxWindlass(host).runTurn(standIn(renamed), {
 		prompt: "please look at the failing build and fix it",
 		script,
 		onAcpUpdate: update => {

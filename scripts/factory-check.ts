@@ -36,6 +36,7 @@ import type {
 	ItemState,
 	Outcome,
 	TurnPlan,
+	TurnSpend,
 	Verdict,
 	WaitReason,
 } from "../server/src/factory/types.js";
@@ -51,7 +52,7 @@ mkdirSync(process.env.RIVETKIT_STORAGE_PATH, { recursive: true });
 
 const { advance, createItem, currentKey, plannerCapacityText, RULES, singlePlanAlternative, upgradeSubtaskQuestion } =
 	await import("../server/src/factory/blueprint.js");
-const { admit, budgetStop, FACTORY_DEFAULTS, retryAt } = await import("../server/src/factory/budget.js");
+const { admit, budgetStop, FACTORY_DEFAULTS, partShare, retryAt } = await import("../server/src/factory/budget.js");
 const { gateResult, verdictOf, verdictWords, verdictCi } = await import("../server/src/factory/verdict.js");
 const { CI_POLLING, readCi, rerunJobs, ciState, LOG_TAIL_CHARS, LOG_TAIL_LINES } = await import(
 	"../server/src/github/ci.js"
@@ -173,7 +174,13 @@ const ended =
 	(
 		outcome: Extract<Fact, { kind: "turn_ended" }>["outcome"],
 		evidence: Verified | null,
-		more: { stepLimit?: number; changes?: boolean; report?: AgentReport | string; tokens?: number } = {},
+		more: {
+			stepLimit?: number;
+			changes?: boolean;
+			report?: AgentReport | string;
+			tokens?: number;
+			spend?: Partial<TurnSpend>;
+		} = {},
 	): Row["fact"] =>
 	k => ({
 		kind: "turn_ended",
@@ -184,7 +191,7 @@ const ended =
 		flags: [],
 		changes: more.changes ?? true,
 		report: more.report ?? null,
-		spend: { tokens: more.tokens ?? 100_000, hostedSeconds: 0 },
+		spend: { tokens: more.tokens ?? 100_000, hostedSeconds: 0, ...more.spend },
 	});
 const published =
 	(
@@ -250,6 +257,9 @@ const answer =
 	await call("2");
 	assert.deepEqual(seen, ["mcp"]);
 }
+
+/** An item held to tokens alone: filed without a dollar budget. */
+const inTokens = (tokens: number) => ({ tokens, usd: undefined });
 
 function newItem(
 	more: {
@@ -1258,7 +1268,7 @@ const budgetReview: Row = {
 			"expected the pinned verdict and budget question before delivery",
 		),
 };
-const tight = () => newItem({ reviewer: { on: true }, budget: { tokens: 100_000 } });
+const tight = () => newItem({ reviewer: { on: true }, budget: inTokens(100_000) });
 drive("review: out of budget can hand over", tight(), [...toCi, budgetReview, ...personHandover()]);
 drive("review: raising the budget admits the pinned review", tight(), [
 	...toCi,
@@ -2042,7 +2052,7 @@ print("\n== R4: the second review sends the builder back");
 	]);
 	drive(
 		"R4 12: Hand it over before round 2 runs does not leave a green check",
-		newItem({ reviewer: { on: true }, budget: { tokens: 200_000 } }),
+		newItem({ reviewer: { on: true }, budget: inTokens(200_000) }),
 		[
 			...reviewing,
 			sentBack,
@@ -2534,7 +2544,7 @@ function askedEnd(
 	// 8
 	drive(
 		"ask_person 8: out of budget when the person answers: the budget question keeps the answer for the turn it resumes",
-		newItem({ budget: { tokens: 100_000 } }),
+		newItem({ budget: inTokens(100_000) }),
 		[
 			start,
 			turn,
@@ -2880,7 +2890,7 @@ drive("a step-limit continuation names the failing required check and a repeat t
 			),
 	},
 ]);
-drive("a step-limit continuation waits for more budget", newItem({ budget: { tokens: 100_000 } }), [
+drive("a step-limit continuation waits for more budget", newItem({ budget: inTokens(100_000) }), [
 	...begun.slice(0, 2),
 	{
 		fact: ended("failed", currentFailure, { stepLimit: 60, changes: false, tokens: 130_000 }),
@@ -3416,7 +3426,7 @@ drive("the daily allowance runs out mid-turn: the item waits for 00:00 UTC and r
 	{ fact: ended("succeeded", PASSED), state: "working", effects: ["publish"] },
 ]);
 
-drive("the item's budget runs out, and the person gives it more", newItem({ budget: { tokens: 200_000 } }), [
+drive("the item's budget runs out, and the person gives it more", newItem({ budget: inTokens(200_000) }), [
 	{ fact: () => ({ kind: "start", by: "person:u1" }), state: "queued", effects: ["deliver", "check_turn"] },
 	{ fact: started(), state: "working", effects: ["check_turn"] },
 	{ fact: ended("unresolved", FAILING), state: "working", effects: ["deliver", "check_turn"] },
@@ -3452,7 +3462,7 @@ drive("the item's budget runs out, and the person gives it more", newItem({ budg
 ]);
 drive(
 	"failed checks just past the budget get one fix turn, then the question",
-	newItem({ budget: { tokens: 100_000 } }),
+	newItem({ budget: inTokens(100_000) }),
 	[
 		{ fact: () => ({ kind: "start", by: "person:u1" }), state: "queued", effects: ["deliver", "check_turn"] },
 		{ fact: started(), state: "working", effects: ["check_turn"] },
@@ -3484,7 +3494,7 @@ drive(
 );
 drive(
 	"out of budget before anything was pushed: Hand it over pushes the work as it is",
-	newItem({ budget: { tokens: 100_000 } }),
+	newItem({ budget: inTokens(100_000) }),
 	[
 		{ fact: () => ({ kind: "start", by: "person:u1" }), state: "queued", effects: ["deliver", "check_turn"] },
 		{ fact: started(), state: "working", effects: ["check_turn"] },
@@ -3890,9 +3900,10 @@ expect(
 );
 const spentAll = { tokens: 2_000_000, rawTokens: 18_000_000, turns: 3, activeSeconds: 600, hostedSeconds: 9000 };
 expect(
-	"a budget: tokens used up, names the exhausted budget",
-	budgetStop(FACTORY_DEFAULTS.item, spentAll, { kind: "hosted" })?.sentence === "Used its 2M-token budget.",
-	budgetStop(FACTORY_DEFAULTS.item, spentAll, { kind: "hosted" })?.sentence,
+	"a budget: tokens used up while a turn is unpriced, names the exhausted budget",
+	budgetStop(FACTORY_DEFAULTS.item, { ...spentAll, usdUnknown: true }, { kind: "hosted" })?.sentence ===
+		"Used its 2M-token budget.",
+	budgetStop(FACTORY_DEFAULTS.item, { ...spentAll, usdUnknown: true }, { kind: "hosted" })?.sentence,
 );
 {
 	const { weightedTokens, CACHED_INPUT_WEIGHT } = await import("../server/src/factory/budget.js");
@@ -3918,6 +3929,216 @@ expect(
 		budgetStop(FACTORY_DEFAULTS.item, { ...spentAll, tokens: 0 }, { kind: "hosted" })?.cause === "hostedSeconds",
 );
 
+{
+	const { budgetUnits, crossedStop, turnBudget, turnUsd } = await import("../server/src/factory/budget.js");
+	const { chargeTurn } = await import("../server/src/factory/change.js");
+	const spent = { tokens: 3_000_000, rawTokens: 9_000_000, turns: 2, activeSeconds: 60, hostedSeconds: 10 };
+	expect(
+		"budget units: dollars of work hold an item with a dollar budget, and tokens no longer",
+		budgetStop(FACTORY_DEFAULTS.item, { ...spent, usd: 2 }, { kind: "hosted" }) === null &&
+			budgetStop(FACTORY_DEFAULTS.item, spent, { kind: "hosted" }) === null &&
+			budgetStop(FACTORY_DEFAULTS.item, { ...spent, usd: 5 }, { kind: "hosted" })?.sentence ===
+				"Used $5 of work of its $5 budget.",
+	);
+	expect(
+		"budget units: a turn that could not be priced leaves tokens holding too",
+		budgetStop(FACTORY_DEFAULTS.item, { ...spent, usd: 1, usdUnknown: true }, { kind: "hosted" })?.cause === "tokens" &&
+			JSON.stringify(budgetUnits(FACTORY_DEFAULTS.item, { usdUnknown: true })) ===
+				JSON.stringify({ usd: true, tokens: true, hostedSeconds: true }) &&
+			budgetStop(FACTORY_DEFAULTS.item, { ...spent, usdUnknown: true }, { kind: "hosted" })?.sentence ===
+				"Used its 2M-token budget.",
+	);
+	expect(
+		"budget units: an item filed with tokens only holds to tokens whatever it spent",
+		budgetStop({ tokens: 2_000_000, hostedSeconds: 7200 }, { ...spent, usd: 99 }, { kind: "hosted" })?.cause ===
+			"tokens",
+	);
+	expect(
+		"a part's dollars follow its planned tokens",
+		JSON.stringify(partShare(FACTORY_DEFAULTS.item, 500_000)) === JSON.stringify({ usd: 1.25 }) &&
+			JSON.stringify(partShare({ tokens: 2_000_000, hostedSeconds: 1 }, 500_000)) === "{}",
+	);
+	const meter = {
+		harness: "claude" as const,
+		model: "claude-sonnet-4-5",
+		provider: "anthropic" as const,
+		payer: "key" as const,
+		usage: { inputTokens: 1_000_000, cachedInputTokens: 0, outputTokens: 100_000, reasoningTokens: 0 },
+		agentUsd: null,
+		size: null,
+	};
+	const models = { "anthropic/claude-sonnet-4-5": { input: 3, output: 15 } };
+	expect(
+		"a turn is priced in dollars whoever paid: a key's at its cost, a plan's at the same prices; an unknown price is null",
+		Math.abs((turnUsd(meter, models) ?? 0) - 4.5) < 1e-9 &&
+			Math.abs((turnUsd({ ...meter, payer: "plan" }, models) ?? 0) - 4.5) < 1e-9 &&
+			Math.abs((turnUsd({ ...meter, payer: "machine-plan", agentUsd: 0.7 }, models) ?? 0) - 0.7) < 1e-9 &&
+			turnUsd(meter, {}) === null &&
+			turnUsd(meter, null) === null &&
+			turnUsd(undefined, models) === undefined,
+		String(turnUsd(meter, models)),
+	);
+	{
+		const charge = (...turns: Array<{ payer: "key" | "plan"; usd: number | null }>) => {
+			const item = newItem();
+			for (const turn of turns)
+				chargeTurn(item, { tokens: 10, hostedSeconds: 0, meter: { ...meter, payer: turn.payer }, usd: turn.usd });
+			return item.spent;
+		};
+		const mixed = charge({ payer: "plan", usd: 3 }, { payer: "key", usd: 1.5 });
+		const unpriced = charge({ payer: "plan", usd: 3 }, { payer: "plan", usd: null });
+		expect(
+			"the dollar budget counts a plan's turns at their value and a key's at their cost; an unpriced one sets tokens holding",
+			mixed.usd === 4.5 &&
+				mixed.usdUnknown === undefined &&
+				unpriced.usd === 3 &&
+				unpriced.usdUnknown === true &&
+				budgetStop(FACTORY_DEFAULTS.item, { ...unpriced, tokens: 2_000_000 }, { kind: "hosted" })?.cause === "tokens",
+			JSON.stringify({ mixed, unpriced }),
+		);
+	}
+	const atUsd = turnBudget(FACTORY_DEFAULTS.item, { ...spent, usd: 3.5 });
+	expect(
+		"during a turn: it stops past what was left, with a grace of 5% of the budget",
+		atUsd?.figure === "usd" &&
+			Math.abs(atUsd.stopAt - 1.75) < 1e-9 &&
+			JSON.stringify(crossedStop(atUsd, { usd: 1.75 })) === JSON.stringify({ figure: "usd", running: 1.75 }) &&
+			crossedStop(atUsd, { usd: 1.6 }) === null &&
+			JSON.stringify(turnBudget(FACTORY_DEFAULTS.item, spent)) === JSON.stringify({ figure: "usd", stopAt: 5.25 }) &&
+			JSON.stringify(turnBudget({ tokens: 2_000_000, hostedSeconds: 1 }, spent)) ===
+				JSON.stringify({ figure: "tokens", stopAt: 100_000 }) &&
+			turnBudget({ tokens: 2_000_000, hostedSeconds: 1, usd: 5 }, { ...spent, usd: 5.5 })?.stopAt === 0.25,
+		JSON.stringify(atUsd),
+	);
+	expect(
+		"during a turn: unknown spend never stops it, nor does a turn without a budget",
+		crossedStop(atUsd, { usd: null }) === null &&
+			crossedStop(atUsd, {}) === null &&
+			crossedStop(atUsd, { usd: Number.NaN, tokens: 9e9 }) === null &&
+			crossedStop(undefined, { usd: 99 }) === null &&
+			crossedStop({ figure: "tokens", stopAt: 5 }, { usd: 99, tokens: 5 })?.running === 5,
+	);
+}
+drive("an item on a key asks in dollars when its budget is used", newItem({ budget: { usd: 4 } }), [
+	{ fact: () => ({ kind: "start", by: "person:u1" }), state: "queued", effects: ["deliver", "check_turn"] },
+	{ fact: started(), state: "working", effects: ["check_turn"] },
+	{ fact: ended("unresolved", FAILING, { spend: { usd: 3 } }), state: "working", effects: ["deliver", "check_turn"] },
+	{ fact: started(), state: "working", effects: ["check_turn"] },
+	{
+		fact: ended("unresolved", verified("unresolved", [check("test", "failed", "Error: expected 3, got 4")]), {
+			tokens: 10,
+			spend: { usd: 1.2 },
+		}),
+		state: "waiting",
+		wait: "budget",
+		effects: ["ask"],
+		also: o =>
+			holds(
+				o.item.wait?.sentence ===
+					"Its checks failed, and it used $4.20 of work of its $4 budget. Give it more to continue." &&
+					o.item.question?.choices[0]?.label === "Give it $1 more",
+				`asked in dollars: ${o.item.wait?.sentence} ${o.item.question?.choices[0]?.label}`,
+			),
+	},
+	{
+		fact: answer("raise"),
+		state: "working",
+		effects: ["deliver", "check_turn"],
+		also: o => holds(o.item.budget.usd === 5.2, `one more start's worth on top: ${o.item.budget.usd}`),
+	},
+]);
+const planMeter = {
+	harness: "windlass" as const,
+	model: "gpt-5",
+	provider: "openai" as const,
+	payer: "plan" as const,
+	usage: null,
+	agentUsd: null,
+	size: null,
+};
+drive("an item on a plan asks in dollars of work when its budget is used", newItem(), [
+	{ fact: () => ({ kind: "start", by: "person:u1" }), state: "queued", effects: ["deliver", "check_turn"] },
+	{ fact: started(), state: "working", effects: ["check_turn"] },
+	{
+		fact: ended("unresolved", FAILING, { tokens: 10, spend: { meter: planMeter, usd: 5.1 } }),
+		state: "waiting",
+		wait: "budget",
+		effects: ["ask"],
+		also: o =>
+			holds(
+				o.item.wait?.sentence ===
+					"Its checks failed, and it used $5.10 of work of its $5 budget. Give it more to continue." &&
+					o.item.question?.choices[0]?.label === "Give it $2 more" &&
+					o.item.question?.cause === "usd",
+				`asked in dollars of work: ${o.item.wait?.sentence} ${o.item.question?.choices[0]?.label}`,
+			),
+	},
+	{
+		fact: answer("raise"),
+		state: "working",
+		effects: ["deliver", "check_turn"],
+		also: o =>
+			holds(
+				o.item.budget.usd === 7.1 && o.events.some(e => e.said === "The budget is now $7.10 of work."),
+				`$2 more on what was used: ${o.item.budget.usd}`,
+			),
+	},
+]);
+
+const delivered = (o: Outcome) => o.effects.find(e => e.kind === "deliver") as Extract<Effect, { kind: "deliver" }>;
+drive(
+	"an item's turn stopped at its budget while it ran asks for more, and goes on where it stopped",
+	newItem({ budget: { usd: 4 } }),
+	[
+		{
+			fact: () => ({ kind: "start", by: "person:u1" }),
+			state: "queued",
+			effects: ["deliver", "check_turn"],
+			also: o =>
+				holds(
+					JSON.stringify(delivered(o).budget) === JSON.stringify({ figure: "usd", stopAt: 4.2 }),
+					`the first turn is held in dollars too: ${JSON.stringify(delivered(o).budget)}`,
+				),
+		},
+		{ fact: started(), state: "working", effects: ["check_turn"] },
+		{
+			fact: ended("unresolved", FAILING, { spend: { usd: 3 } }),
+			state: "working",
+			effects: ["deliver", "check_turn"],
+			also: o =>
+				holds(
+					delivered(o).budget?.figure === "usd" && Math.abs(delivered(o).budget!.stopAt - 1.2) < 1e-9,
+					`the next turn may use what is left and the grace: ${JSON.stringify(delivered(o).budget)}`,
+				),
+		},
+		{ fact: started(), state: "working", effects: ["check_turn"] },
+		{
+			fact: k =>
+				({ ...(ended("interrupted", null, { spend: { usd: 1.25 } })(k) as object), budgetStopped: true }) as Fact,
+			state: "waiting",
+			wait: "budget",
+			effects: ["ask"],
+			also: o =>
+				holds(
+					o.item.wait?.sentence === "Used $4.25 of work of its $4 budget. Give it more to continue." &&
+						o.item.question?.choices[0]?.label === "Give it $1 more" &&
+						o.item.run?.step.interruptions === 0,
+					`asked in dollars, not counted as a cut-off: ${o.item.wait?.sentence} ${o.item.question?.choices[0]?.label}`,
+				),
+		},
+		{
+			fact: answer("raise"),
+			state: "working",
+			effects: ["deliver", "check_turn"],
+			also: o =>
+				holds(
+					delivered(o).text.startsWith("You were stopped when you used your budget. Continue from where you were.") &&
+						delivered(o).budget?.figure === "usd",
+					`resumed where it stopped: ${delivered(o).text.slice(0, 80)} ${JSON.stringify(delivered(o).budget)}`,
+				),
+		},
+	],
+);
 const machineItem = { ...newItem(), place: { kind: "machine" as const, machineId: "m1" } };
 drive("a machine out of memory asks how to continue in its slot", machineItem, [
 	{ fact: () => ({ kind: "start", by: "person:u1" }), state: "queued", effects: ["deliver", "check_turn"] },
@@ -4009,8 +4230,11 @@ drive("a queued machine turn asks after six hours offline and starts when its ma
 for (const field of ["tokens"] as const) {
 	expect(
 		`on a machine the ${field} limit still applies`,
-		budgetStop(machineItem.budget, { ...machineItem.spent, [field]: machineItem.budget[field] }, machineItem.place)
-			?.cause === field,
+		budgetStop(
+			machineItem.budget,
+			{ ...machineItem.spent, [field]: machineItem.budget[field], usdUnknown: true },
+			machineItem.place,
+		)?.cause === field,
 	);
 }
 expect(
@@ -4236,7 +4460,7 @@ expect(
 			spend,
 		}).item;
 	};
-	const openCode = afterTurn(agentItem("opencode", { tokens: 6_000 }), turnSpend(usage, openCodeTurn));
+	const openCode = afterTurn(agentItem("opencode", inTokens(6_000)), turnSpend(usage, openCodeTurn));
 	expect(
 		"an OpenCode item's reported tokens trip its token budget, with its cost kept",
 		openCode.spent.tokens === 6_500 &&
@@ -4421,7 +4645,7 @@ expect(
 		JSON.stringify(chatgptSilent.question),
 	);
 	const apiKey = afterTurn(
-		codexItem("api-key", { tokens: 6_000 }),
+		codexItem("api-key", inTokens(6_000)),
 		turnSpend(usage, agentTurn("codex", usage, null, undefined, "api-key")),
 	);
 	expect(
@@ -5311,7 +5535,7 @@ const pushedRun = (head: string) => [
 		assert.equal(advance(ended, start).item, ended);
 		assert.ok(!live({ ...first.item, state }, delivery));
 	}
-	assert.equal(advance({ ...item, budget: { ...item.budget, tokens: item.spent.tokens } }, start).effects.length, 0);
+	assert.equal(advance({ ...item, budget: { ...item.budget, usd: item.spent.usd ?? 0 } }, start).effects.length, 0);
 	expect(
 		"repeated requests for a head admit one turn and one receipt; ended and over-budget items skip the review",
 		true,
@@ -5747,9 +5971,14 @@ const pushedRun = (head: string) => [
 		},
 	} as Parameters<typeof turnChanges>[0];
 	const removed = { kind: "tests_removed", where: ["test/old.test.ts"] };
-	assert.deepEqual(await turnChanges(sandbox, H(1), [], null, []), { taskKind: "other", flags: [removed] });
+	assert.deepEqual(await turnChanges(sandbox, H(1), [], null, []), {
+		taskKind: "other",
+		workType: "feature",
+		flags: [removed],
+	});
 	assert.deepEqual(await turnChanges(sandbox, H(1), [], null, ["src"]), {
 		taskKind: "other",
+		workType: "feature",
 		flags: [removed, { kind: "outside_scope", where: ["test/old.test.ts"] }],
 	});
 	expect("empty owns skips the scope warning and keeps other review flags", true);
@@ -5760,7 +5989,12 @@ const pushedRun = (head: string) => [
 	assert.equal(hosted.budget.hostedSeconds, seconds * 3);
 	assert.deepEqual(
 		hosted.jobs!.map(j => j.budget),
-		hostedTasks.map(t => ({ ...t.budget, hostedSeconds: seconds })),
+		// Each part also gets an item's dollars and plan share in proportion to its tokens (budget.ts `partShare`).
+		hostedTasks.map(t => ({
+			...t.budget,
+			hostedSeconds: seconds,
+			...partShare(hosted.singleBudget!, t.budget.tokens),
+		})),
 	);
 	const limited = start(hostedTasks, undefined, seconds);
 	assert.deepEqual(keys(limited), ["first", "second"]);
@@ -5811,7 +6045,7 @@ const pushedRun = (head: string) => [
 				machines: [],
 				hostedProfiles: ["e2b-open"],
 				keyProfiles: ["e2b-open"],
-				hostedKeys: [{ provider: "anthropic", checkedAt: 1 }],
+				hostedCredentials: [{ provider: "anthropic", checkedAt: 1 }],
 			},
 		},
 	]);
@@ -5936,7 +6170,7 @@ const pushedRun = (head: string) => [
 				machines: [],
 				hostedProfiles: ["e2b-open"],
 				keyProfiles: ["e2b-open"],
-				hostedKeys: [{ provider: "anthropic", checkedAt: 1 }],
+				hostedCredentials: [{ provider: "anthropic", checkedAt: 1 }],
 			},
 		},
 	]);

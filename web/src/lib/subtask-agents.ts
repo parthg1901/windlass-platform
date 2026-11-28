@@ -43,7 +43,7 @@ export interface AgentChoice {
  */
 export function agentChoices(
 	machine: MachineSummary | null,
-	keys: readonly import("@contract").ModelProviderStatus[] | null = [],
+	keys: readonly import("../../../server/src/sandbox/harnesses.js").HostedCredential[] | null = [],
 	keyProfile = false,
 ): AgentChoice[] {
 	const choices: AgentChoice[] = [{ id: "windlass", name: HARNESS_NAMES.windlass, problem: null }];

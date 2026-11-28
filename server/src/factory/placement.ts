@@ -1,5 +1,5 @@
 // Names are a proposal. Only the owner's inventory may turn them into durable destinations.
-import { MAX_PROVIDER_WAIT, WINDLASS_ACCOUNT, providerWait } from "../provider-usage.js";
+import { MAX_PROVIDER_WAIT, providerWait } from "../provider-usage.js";
 import { nextUtcDay, usesPlatformModel } from "../usage.js";
 import { HOSTED_SIZE_NAMES, HOSTED_SIZE_SPECS, hostedSizeFor, isolationName, sandboxSlots } from "../contract.js";
 import type {
@@ -16,15 +16,16 @@ import type {
 } from "../contract.js";
 import type { plannerMachines } from "../machines/details.js";
 import { SIZE_WEIGHT } from "../billing/meter.js";
-import { changesMachinePayer, partRun, runAgent, type RunContext } from "./resolve-run.js";
+import { partRun, runAgent, type RunContext } from "./resolve-run.js";
 import { PlanError, subtaskHarness } from "./feature-plan.js";
 import { retryAt, slotWait } from "./budget.js";
 import {
-	type CheckedProvider,
+	type HostedCredential,
 	usesAccountModels,
 	windlassProvider,
 	hostedCatalog,
 	hostedProvider,
+	hostedProviders,
 	hostedKeyMessage,
 	initialHarnessModels,
 	selectedKey,
@@ -58,7 +59,8 @@ export interface PlacementInventory {
 	machines: Machine[];
 	hostedProfiles: SandboxProfileId[];
 	keyProfiles?: SandboxProfileId[];
-	hostedKeys?: readonly CheckedProvider[];
+	/** What hosted turns can pay with: checked Settings keys and connected plans. */
+	hostedCredentials?: readonly HostedCredential[];
 	/** The hosted sizes the deployment offers (`Sandboxes.sizes`), smallest first. Absent: one size, which takes no `cpus` or `memoryGiB`. */
 	hostedSizes?: HostedSize[];
 	hostedRates?: Partial<Record<HostedSize, number | null>>;
@@ -91,8 +93,9 @@ export interface PlacementRoute {
 	/** Display names at approval, for a destination later removed from inventory. */
 	names?: Record<string, string>;
 }
+/** A limit at `place`, or Windlass's plan's (its ChatGPT models run on the ChatGPT plan at every place). */
 export function limitApplies(limit: NonNullable<PlacementInventory["limited"]>[number], place: string) {
-	return limit.machineId === place || (limit.machineId === WINDLASS_ACCOUNT && limit.harness === "windlass");
+	return limit.machineId === place || (limit.machineId.startsWith("plan/") && limit.harness === "windlass");
 }
 const GiB = 2 ** 30;
 export function placeKey(place: SandboxPlace) {
@@ -233,11 +236,13 @@ function agentFit(machine: Machine, task: PlanSubtask, inventory: PlacementInven
 	if (profile) {
 		const offered = machine.harnesses?.find(h => h.id === harness);
 		if (!offered) return `it does not offer ${profile.name}`;
-		const source = offered.source ?? "machine";
-		const payer = machinePayerProblem(offered, task.agent?.model, source, offered.platformKeys ?? []);
-		if (source === "key" && payer) return payer;
+		// What pays on a machine: its own login, or the account's plans and keys through Pay with (`listedHarness`).
+		const source = "machine";
+		const payer = machinePayerProblem(offered, task.agent?.model, offered.platformKeys ?? []);
 		if (offered.signIn === "none")
-			return `${profile.name} is not signed in there (run windlass-runner login ${profile.id} on it)`;
+			return offered.paysWith
+				? `nothing can pay for ${profile.name} there (connect a plan or add a key on Connections)`
+				: `${profile.name} is not signed in there (run windlass-runner login ${profile.id} on it)`;
 		if (offered.signIn !== "token")
 			return `it could not say whether ${profile.name} is signed in there, and a subtask runs only where it is`;
 		const chosen = task.resolved;
@@ -290,12 +295,7 @@ function capabilityFit(machine: Machine, task: PlanSubtask, inventory: Placement
 
 /** The terms shown for an allowed destination are the terms a child receives there. */
 function destinationTerms(place: SandboxPlace, machine: Machine | undefined, harness: HarnessId) {
-	const payer =
-		harness === "windlass"
-			? "windlass"
-			: place.kind === "hosted"
-				? "key"
-				: (machine?.harnesses?.find(h => h.id === harness)?.source ?? "machine");
+	const payer = harness === "windlass" ? "windlass" : place.kind === "hosted" ? "key" : "machine";
 	return {
 		place,
 		name: machine?.name ?? placeKey(place),
@@ -357,7 +357,7 @@ function candidate(
 		harness === "windlass"
 			? windlassProvider(model)
 			: place.kind === "hosted"
-				? hostedProvider(harness, model, inventory.hostedKeys?.map(k => k.provider) ?? [])
+				? hostedProvider(harness, model, hostedProviders(harness, inventory.hostedCredentials ?? []))
 				: selectedKey(harness, model, keys);
 	const limited = inventory.limited?.find(a =>
 		provider ? a.machineId === "settings/" + provider : limitApplies(a, placeKey(place)) && a.harness === harness,
@@ -382,7 +382,7 @@ function candidate(
 			task.agent,
 			usesAccountModels(harness)
 				? inventory.models?.windlass
-				: initialHarnessModels(hostedCatalog(harness, inventory.hostedKeys ?? [])),
+				: initialHarnessModels(hostedCatalog(harness, inventory.hostedCredentials ?? [])),
 			inventory.featureModel,
 		);
 		if (modelProblem) return { refused: `hosted: ${modelProblem}.`, permanent: true };
@@ -549,9 +549,7 @@ export function choosePlacement(
 		if (!task.resolved || !payer) return false;
 		const reviewed = task.review?.places.find(p => placeKey(p.place) === placeKey(place));
 		if (reviewed && reviewed.payer !== payer) return true;
-		return place.kind === "machine"
-			? changesMachinePayer(task.resolved, place.machineId, payer, inventory.defaults?.machinePayers)
-			: payer !== task.resolved.payer;
+		return payer !== task.resolved.payer;
 	};
 	if ("decision" in first && !changesPayer(first.decision)) return { decision: first.decision } as const;
 	const decided = candidates.flatMap(c =>
@@ -569,9 +567,6 @@ export function choosePlacement(
 	if (ready?.decision.place.kind === "hosted" && route.preferred.kind === "machine") {
 		if (!route.waitForMachine)
 			return { wait: reason, askMachine: true, offerHosted: true, hostedProfile: ready.decision.profile };
-	} else if (ready && changesPayer(ready.decision) && ready.decision.place.kind === "machine" && ready.decision.payer) {
-		const { place, payer, name, profile } = ready.decision;
-		if (!route.waitForMachine) return { wait: reason, askMachine: true, offerPayer: { place, payer, name, profile } };
 	} else if (ready) return { decision: ready.decision } as const;
 	const waits = candidates.filter(c => "wait" in c);
 	const deadline = (wait: (typeof waits)[number]) => placementRetryAt(at, wait.providerUntil, wait.dailyCap);

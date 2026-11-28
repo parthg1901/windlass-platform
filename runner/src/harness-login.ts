@@ -206,6 +206,16 @@ export async function changeClaudeLogin(machine: MachineDocker, login: boolean, 
 	await storeClaudeLogin(machine, token);
 }
 
+/**
+ * `login claude --token-stdin`: one setup token piped in, kept as an interactive login keeps it. This is how
+ * `npx @windlassai/cli connect claude --this-machine` hands over the token it made: never on an argument, never printed.
+ */
+export async function claudeLoginFromStdin(machine: MachineDocker, signal: AbortSignal) {
+	if (!harnessImage("claude")) throw new RunnerError("This runner was built without the Claude Code image.");
+	if (process.stdin.isTTY) throw new RunnerError("Pipe the token to --token-stdin; it is not read from a terminal.");
+	await storeClaudeLogin(machine, await pastedToken(signal), signal);
+}
+
 const generationFile = (m: MachineDocker) => "claude-generation-" + m.identity.machineId + ".json";
 
 export function claudeLoginGeneration(m: MachineDocker) {

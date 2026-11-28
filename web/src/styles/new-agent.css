@@ -78,9 +78,18 @@
  */
 .picker-agents {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	gap: 10px;
 	min-width: 0;
+}
+/* Hosted agents nothing pays for, each with the way to its Connections cell. */
+.picker-connect {
+	flex-basis: 100%;
+	margin: 0;
+	font-size: 11.5px;
+	line-height: 1.45;
+	color: var(--ink-dim);
 }
 .agent-switch {
 	display: flex;

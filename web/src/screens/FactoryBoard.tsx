@@ -1,31 +1,27 @@
-import type { ItemSummary } from "@contract";
+import type { CostRates, ItemSummary } from "@contract";
 import { useCallback, useEffect, useId, useState } from "react";
 import { boardCards, boardTracks, columnName, PIPELINE_COLUMNS, type BoardCard, type BoardColumn } from "../lib/board";
 import { HARNESS_NAMES } from "../lib/acp";
-import { absoluteTime, compact, plural, relativeTime } from "../lib/format";
+import { costWords, summaryCost } from "../lib/cost";
+import { absoluteTime, plural, relativeTime } from "../lib/format";
 import { machineLabel } from "../lib/machines";
 import type { FeedFilters } from "../lib/repositories";
 import { linkProps, useHistoryState } from "../lib/router";
 import { itemDoing, subtaskState } from "../lib/subtasks";
 import { EndedFoot, useEndedPages } from "./Items";
+import { CostFigure } from "../components/CostFigure";
 import { ItemStanding } from "../components/ItemRow";
 import { ItemSourceTag } from "../components/ItemSource";
 import { requestNumber } from "../lib/host";
 import { questionLine } from "../lib/items";
 import { useMachines } from "../state/machines";
+import { useCostRates } from "../state/hooks";
 
 const COLUMN_LIMIT = 8;
 
-function costSoFar({ item, parts }: BoardCard): string | null {
-	const cost = item.agent?.cost;
-	if (cost)
-		return new Intl.NumberFormat("en-US", {
-			style: "currency",
-			currency: cost.currency,
-			maximumFractionDigits: 2,
-		}).format(cost.amount);
-	const tokens = item.spent.tokens + parts.reduce((sum, part) => sum + part.spent.tokens, 0);
-	return tokens > 0 ? `${compact(tokens)} tokens` : null;
+/** The card's one figure: what the item cost so far, its parts' too (lib/cost.ts). Null before anything was used or priced. */
+function costSoFar(item: ItemSummary, rates: CostRates | null): string | null {
+	return rates ? costWords(summaryCost(item, rates)) : null;
 }
 
 function placeOf(item: ItemSummary, machines: Map<string, string>): string | null {
@@ -40,13 +36,16 @@ function Card({
 	now,
 	reviewer,
 	machines,
+	rates,
 }: {
 	card: BoardCard;
 	now: number;
 	reviewer: boolean;
 	machines: Map<string, string>;
+	rates: CostRates | null;
 }) {
 	const { item, parts } = card;
+	const cost = costSoFar(item, rates);
 	if (card.column === "ended") {
 		return (
 			<li data-state={item.state}>
@@ -56,6 +55,7 @@ function Card({
 				<span className="board-ended-meta">
 					{item.state === "done" ? "merged" : item.state}
 					{item.pullRequest && ` · #${item.pullRequest.number}`}
+					{cost && ` · ${cost}`}
 				</span>
 			</li>
 		);
@@ -117,7 +117,7 @@ function Card({
 				<span>{place ? `${agent} · ${place}` : agent}</span>
 			</p>
 			<div className="board-card-foot">
-				<span className="board-card-cost">{costSoFar(card)}</span>
+				<span className="board-card-cost">{cost ? <CostFigure words={cost} /> : null}</span>
 				{action ? (
 					<a
 						className="board-card-action"
@@ -182,6 +182,7 @@ export function FactoryBoard({
 	const onMachine = list.some(item => item.place.kind === "machine" && !item.placement?.name && item.state !== "draft");
 	const machineList = useMachines(onMachine).list;
 	const machines = new Map(machineList?.map(machine => [machine.machineId, machineLabel(machine)]));
+	const rates = useCostRates();
 
 	function columnView(column: BoardColumn) {
 		const tray = column === "needs";
@@ -218,7 +219,7 @@ export function FactoryBoard({
 				</Heading>
 				<ul id={listId} className={ended ? "board-ended" : "board-cards"} ref={tray ? measureTray : undefined}>
 					{(open ? cards : cards.slice(0, limit)).map(card => (
-						<Card key={card.item.id} card={card} now={now} reviewer={reviewer} machines={machines} />
+						<Card key={card.item.id} card={card} now={now} reviewer={reviewer} machines={machines} rates={rates} />
 					))}
 				</ul>
 				{total > limit && (

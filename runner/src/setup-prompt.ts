@@ -22,6 +22,8 @@ export interface Prompter {
 	/** A framed block of lines, such as the pairing code or the summary. `strong`: parts to set in bold. */
 	note(title: string, lines: string[], strong?: string[]): void;
 	log(kind: "info" | "success" | "warn" | "error" | "step", message: string): void;
+	/** The pairing code and machine key to approve, where the prompter shows them its own way; else the wizard shows a note. */
+	pairing?(code: string, key: string): void;
 	select<T>(question: { message: string; options: Choice<T>[]; initial?: T }): Promise<Answer<T>>;
 	multiselect<T>(question: { message: string; options: Choice<T>[]; initial: T[] }): Promise<Answer<T[]>>;
 	/** `validate` returns the reason a value is refused, or undefined. */

@@ -78,7 +78,7 @@ When the agent is **idle**, type in **Tell the agent what to do** and press <kbd
 
 A finished session is not closed. Send another prompt to go on from where it stopped. There is no separate resume step.
 
-The model picker groups each agent's models by provider, with a small tab per provider to show only its models. The header of each group says whose credential pays: your ChatGPT plan, a Settings key, or the machine's own sign-in. Windlass lists your ChatGPT plan's models and the models found when you checked a provider key in Settings. A Windlass session keeps its provider. Start a new session to change providers. The effort button beside the model sets the reasoning effort, for models that take one.
+The model picker groups each agent's models by provider, with a small tab per provider to show only its models. The header of each group says whose credential pays: a plan, a Settings key, or the agent's own login on the machine. Windlass lists your ChatGPT plan's models and the models found when you checked a provider key in Settings. A Windlass session keeps its provider. Start a new session to change providers. The effort button beside the model sets the reasoning effort, for models that take one.
 
 You can change the model within that provider, effort and mode before each prompt. While a turn runs, only the mode can be changed, and the change applies from the next prompt.
 

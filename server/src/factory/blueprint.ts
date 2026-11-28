@@ -26,7 +26,6 @@ import {
 	choosePlacement,
 	freeMachineSlots,
 	machineSlots,
-	placeKey,
 	placementRetryAt,
 	type PlacementInventory,
 } from "./placement.js";
@@ -57,7 +56,7 @@ import {
 	repoOf,
 } from "./cross-repo.js";
 import { refusalMessage } from "../provider-refusal.js";
-import { budgetStop, itemAgent, newAgent, noSpend, retryAt, spellTokens, unmeasuredTurn } from "./budget.js";
+import { budgetStop, itemAgent, newAgent, noSpend, retryAt, spellTokens, spellUsd, unmeasuredTurn } from "./budget.js";
 import { environmentFailure, outputExcerpt, type EnvironmentFailure } from "./check-environment.js";
 import type {
 	ChoiceId,
@@ -89,6 +88,7 @@ import {
 	automatic,
 	backstopTurns,
 	beginRun,
+	retryRun,
 	Change,
 	chargeTurn,
 	checkTurn,
@@ -116,11 +116,12 @@ import {
 	marked,
 	nextTurn,
 	NO_GATE,
+	noteHostedTime,
 	OUTCOME_WORDS,
 	outOfMemory,
 	ownSpent,
 	ownTokens,
-	payerChoice,
+	confirmPayerChoice,
 	pendingCheck,
 	plannerBudgetText,
 	popHeld,
@@ -132,6 +133,7 @@ import {
 	shortSha,
 	spendTurn,
 	stepLimitReached,
+	budgetStopped,
 	takeFeedback,
 	takeHeld,
 	taskText,
@@ -227,9 +229,13 @@ export function createItem(input: NewItem): FactoryItem {
 		reviewer: input.reviewer,
 		place: input.place,
 		machineRemoved: false,
-		singleBudget: { tokens: input.budget.tokens, hostedSeconds: input.budget.hostedSeconds },
-		// A feature's budget is its own allowance until a plan adds its subtasks' (`featureTotal`).
-		budget: { tokens: input.budget.tokens, hostedSeconds: input.budget.hostedSeconds },
+		singleBudget: { ...input.budget },
+		// A feature's budget is its own allowance until a plan adds its subtasks' (`featureTotal`): tokens, while its parts
+		// get dollars of their own (budget.ts `partShare`).
+		budget:
+			input.mode === "orchestrate"
+				? { tokens: input.budget.tokens, hostedSeconds: input.budget.hostedSeconds }
+				: { ...input.budget },
 		...(input.mode === "orchestrate" && { ownTokens: input.budget.tokens }),
 		spent: noSpend(),
 		...(input.agent && {
@@ -331,18 +337,11 @@ export function advance(item: FactoryItem, fact: Fact): Outcome {
 	};
 }
 
-function runPayerOffer(item: FactoryItem) {
-	// A recovered run keeps its filed place, even if no machine is available yet.
-	return item.resolved?.payer === "unconfirmed" ? { payer: "machine" as const } : item.offerPayer;
-}
-
 function askRunPlace(c: Change, reason: string) {
 	const run = c.item.resolved;
 	const hosted = !c.item.awaitingReviewer && run?.place !== "hosted" && run?.fallback === "hosted" && !c.item.useHosted;
-	const offer = runPayerOffer(c.item);
-	const payer = offer && payerChoice(offer);
-	const choices: Question["choices"] = payer?.id === "wait" ? [] : [choice("wait")];
-	if (payer) choices.push(payer);
+	// A recovered run keeps its filed place, even if no machine is available yet.
+	const choices: Question["choices"] = [run?.payer === "unconfirmed" ? confirmPayerChoice : choice("wait")];
 	if (hosted) choices.push(hostedChoice(run?.agent));
 	choices.push(choice("give_up"));
 	ask(c, "run_place", reason, choices, null, null);
@@ -664,9 +663,7 @@ function apply(c: Change, fact: Fact): boolean {
 		case "default_place_wait":
 			if (!item.awaitingPlace || item.question || item.state !== "waiting") return false;
 			if (fact.reviewer) item.awaitingReviewer = true;
-			const changedOffer = !isDeepStrictEqual(item.offerPayer, fact.offerPayer);
-			item.offerPayer = fact.offerPayer;
-			if (changedOffer || fact.sentence !== item.awaitingPlace) {
+			if (fact.sentence !== item.awaitingPlace) {
 				item.awaitingPlace = fact.sentence;
 				askRunPlace(c, fact.sentence);
 				return true;
@@ -676,7 +673,6 @@ function apply(c: Change, fact: Fact): boolean {
 			if (!item.awaitingPlace || item.question || item.state !== "waiting") return false;
 			delete item.awaitingPlace;
 			delete item.awaitingReviewer;
-			delete item.offerPayer;
 			delete item.placeAttempts;
 			item.reviewer = fact.reviewer;
 			item.place = fact.place;
@@ -695,7 +691,7 @@ function apply(c: Change, fact: Fact): boolean {
 			if (!canRetry(item)) return false;
 			c.say("Started again.");
 			if (item.jobs?.length) retryFeature(c);
-			else beginRun(c, firstPlan(item, null));
+			else retryRun(c, firstPlan(item, null));
 			return true;
 		case "send_back":
 			return sendBack(c, fact.note);
@@ -760,6 +756,7 @@ function apply(c: Change, fact: Fact): boolean {
 		case "spent":
 			if (item.place.kind !== "hosted" || !(fact.hostedSeconds > item.spent.hostedSeconds)) return false;
 			item.spent.hostedSeconds = fact.hostedSeconds;
+			noteHostedTime(item, fact.hosted);
 			return true;
 		default:
 			return stepFact(c, fact);
@@ -1418,6 +1415,8 @@ function turnEnded(c: Change, fact: Extract<Fact, { kind: "turn_ended" }>): void
 		);
 	}
 	if (fact.stepLimit !== undefined) return stepLimitReached(c, { ...IMPLEMENT, kind }, fact.stepLimit, fact.verified);
+	// Stopped at its budget while it ran: the budget question (`nextTurn`), and "give more" goes on from there.
+	if (fact.budgetStopped) return budgetStopped(c, { ...IMPLEMENT, kind });
 	if (CUT_SHORT.has(fact.outcome) || result === "incomplete") {
 		step.interruptions += 1;
 		// The cut-off that reaches the limit is not tried again: the person is asked next (`nextTurn`, "interruptions").
@@ -1838,12 +1837,11 @@ function placementRefused(
 	c: Change,
 	job: FeatureJob,
 	reason: string,
-	options: Pick<FeatureJob, "askMachine" | "offerHosted" | "hostedProfile" | "offerPayer">,
+	options: Pick<FeatureJob, "askMachine" | "offerHosted" | "hostedProfile">,
 ): true {
 	job.askMachine = options.askMachine;
 	job.offerHosted = options.offerHosted;
 	job.hostedProfile = options.hostedProfile;
-	job.offerPayer = options.offerPayer;
 	job.placementRefusal = reason;
 	// Other children keep their places and may finish integration before the feature asks.
 	if (!c.item.jobs!.some(j => j !== job && activeJob(j) && !j.placementRefusal))
@@ -1868,6 +1866,21 @@ function chargeChild(
 		item.spent[figure] = (item.spent[figure] ?? (figure === "rawTokens" ? item.spent.tokens : 0)) + delta;
 		changed = true;
 	}
+	// A part's dollars are its own, like its usage: the feature sums them when it is shown.
+	for (const figure of ["usd", "usdUnknown"] as const) {
+		if (observed[figure] !== undefined && observed[figure] !== job.spent[figure]) {
+			(job.spent as unknown as Record<string, unknown>)[figure] = observed[figure];
+			changed = true;
+		}
+	}
+	// A part's usage is its own record, taken whole: the feature sums its parts' when it is shown (`partsUsage`).
+	for (const figure of ["usage", "retryUsage"] as const) {
+		const usage = observed[figure];
+		if (usage && JSON.stringify(usage) !== JSON.stringify(job.spent[figure])) {
+			job.spent[figure] = usage;
+			changed = true;
+		}
+	}
 	if (budget) {
 		const old = job.budget ?? {
 			tokens: job.task.budget.tokens,
@@ -1876,9 +1889,15 @@ function chargeChild(
 		if (budget.tokens > old.tokens || budget.hostedSeconds > old.hostedSeconds) {
 			for (const key of ["tokens", "hostedSeconds"] as const) item.budget[key] += Math.max(0, budget[key] - old[key]);
 			job.budget = {
+				...old,
 				tokens: Math.max(budget.tokens, old.tokens),
 				hostedSeconds: Math.max(budget.hostedSeconds, old.hostedSeconds),
 			};
+			changed = true;
+		}
+		// A part given more dollars: the feature's own allowance is tokens, so only the part's record grows.
+		if (budget.usd !== undefined && budget.usd > ((job.budget ?? old).usd ?? 0)) {
+			job.budget = { ...(job.budget ?? old), usd: budget.usd };
 			changed = true;
 		}
 	}
@@ -1941,19 +1960,12 @@ function takeChoice(
 	auto = false,
 ): boolean {
 	const { item } = c;
-	if (
-		question.kind === "run_place" &&
-		(fact.choice === "wait" || fact.choice === "use_machine_payer" || fact.choice === "use_hosted")
-	) {
-		const offer = runPayerOffer(item);
-		if (offer && fact.choice === payerChoice(offer).id) {
+	if (question.kind === "run_place" && (fact.choice === "wait" || fact.choice === "use_hosted")) {
+		if (fact.choice === "wait" && item.resolved?.payer === "unconfirmed") {
 			if (!item.context) return false;
-			const destination = "place" in offer ? { place: runPlace(offer.place), machineProfile: offer.profile } : {};
-			item.context.item = { ...item.context.item, ...destination, payer: offer.payer };
+			item.context.item = { ...item.context.item, payer: "machine" };
 			item.resolved = resolveRun(item.context, item.runRole ?? "builder");
-			delete item.offerPayer;
 		} else if (fact.choice === "use_hosted") item.useHosted = true;
-		else if (fact.choice !== "wait") return false;
 		return waitForDefaultPlace(c, item.awaitingPlace!, fact.choice === "wait" ? undefined : c.at);
 	}
 	if ((question.kind === "plan_approval" || question.kind === "replan_approval") && fact.choice === "larger_sandbox") {
@@ -2006,30 +2018,9 @@ function takeChoice(
 		dispatchJob(c, refused);
 		return true;
 	}
-	if (
-		refused?.askMachine &&
-		(fact.choice === "wait" || fact.choice === "use_hosted" || fact.choice === "use_machine_payer")
-	) {
+	if (refused?.askMachine && (fact.choice === "wait" || fact.choice === "use_hosted")) {
 		if (!refused.route || (fact.choice === "use_hosted" && !refused.offerHosted)) return false;
-		if (fact.choice === "use_machine_payer") {
-			const offer = refused.offerPayer,
-				run = refused.task.resolved;
-			if (!run || !offer) return false;
-			refused.route = { preferred: offer.place, alternatives: [], names: { [offer.place.machineId]: offer.name } };
-			const reviewed = refused.task.review?.places.find(p => placeKey(p.place) === offer.place.machineId);
-			refused.task = {
-				...refused.task,
-				place: { prefer: offer.name, reason: "The owner chose this machine and payer." },
-				...(reviewed && { review: { ...refused.task.review!, places: [{ ...reviewed, payer: offer.payer }] } }),
-				resolved: {
-					...run,
-					place: runPlace(offer.place),
-					payer: offer.payer,
-					profile: offer.profile ?? null,
-					sources: { ...run.sources, place: "item", payer: "item" },
-				},
-			};
-		} else if (fact.choice === "wait") refused.route.waitForMachine = true;
+		if (fact.choice === "wait") refused.route.waitForMachine = true;
 		else {
 			refused.route = { preferred: { kind: "hosted" }, alternatives: [] };
 			refused.task = { ...refused.task, place: { prefer: "hosted", reason: "The owner chose Hosted for this part." } };
@@ -2039,7 +2030,6 @@ function takeChoice(
 		delete refused.askMachine;
 		delete refused.offerHosted;
 		delete refused.hostedProfile;
-		delete refused.offerPayer;
 		delete refused.placement;
 		delete refused.placementRefusal;
 		c.state("waiting", { reason: "children", sentence: "Checking the selected place.", retryAt: null });
@@ -2248,7 +2238,7 @@ function takeChoice(
 		case "retry":
 			run.stopReason = "retried";
 			run.endedAt = c.at;
-			beginRun(c, firstPlan(item, note));
+			retryRun(c, firstPlan(item, note));
 			break;
 		case "wait":
 			if (question.kind === "machine_away") {
@@ -2340,6 +2330,12 @@ function takeChoice(
 	return true;
 }
 
+const RAISED: Record<keyof ItemBudget, (n: number) => string> = {
+	tokens: n => `The budget is now ${spellTokens(n)} tokens.`,
+	hostedSeconds: n => `The hosted time budget is now ${spellSeconds(n)}.`,
+	usd: n => `The budget is now ${spellUsd(n)} of work.`,
+};
+
 /** Stored round-cap causes resume like a repeated failure. */
 function raise(
 	c: Change,
@@ -2368,25 +2364,27 @@ function raise(
 			item.backstopFrom = item.mode === "orchestrate" ? ownSpent(item, item.spent).turns : item.spent.turns;
 			break;
 		case "tokens":
-		case "hostedSeconds": {
-			const before = item.mode === "orchestrate" && cause === "tokens" ? ownTokens(item) : item.budget[cause];
+		case "hostedSeconds":
+		case "usd": {
+			const before = item.mode === "orchestrate" && cause === "tokens" ? ownTokens(item) : (item.budget[cause] ?? 0);
 			const spent =
-				item.mode === "orchestrate" && cause === "tokens" ? ownSpent(item, item.spent).tokens : item.spent[cause];
+				item.mode === "orchestrate" && cause === "tokens"
+					? ownSpent(item, item.spent).tokens
+					: (item.spent[cause] ?? 0);
 			const asked = budget?.[cause];
+			// Dollars keep their cents; tokens and seconds are whole.
+			const exact = cause === "usd";
+			const round = (n: number) => (exact ? Math.round(n * 100) / 100 : Math.round(n));
 			// The person's own figure, when it is above what was spent; otherwise one more start's worth on top of what was spent.
 			const next =
 				typeof asked === "number" && Number.isFinite(asked) && asked > spent
-					? Math.round(asked)
-					: Math.max(before, Math.ceil(spent)) + extraOf(item, cause);
+					? round(asked)
+					: Math.max(before, exact ? spent : Math.ceil(spent)) + extraOf(item, cause);
 			if (item.mode === "orchestrate" && cause === "tokens") {
 				item.ownTokens = next;
 				item.budget.tokens = featureTotal(item).tokens;
-			} else item.budget[cause] = next;
-			c.say(
-				cause === "tokens"
-					? `The budget is now ${spellTokens(item.budget.tokens)} tokens.`
-					: `The hosted time budget is now ${spellSeconds(item.budget.hostedSeconds)}.`,
-			);
+			} else item.budget[cause] = round(next);
+			c.say(RAISED[cause](item.budget[cause] ?? next));
 			break;
 		}
 		default:

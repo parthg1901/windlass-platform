@@ -42,6 +42,7 @@ Reuse these instead of re-implementing them in a new check. A new check reports 
 - `./check-image.ts` holds `imageId()`, which resolves the sandbox image tag once so every container in a check uses the same image.
 - `./check-bucket.ts` holds `bucketSettings()`, which reads S3 settings from backup config or the R2 endpoint, bucket and key variables.
 - `./login-http.ts` holds `loginHttp(api)`, which drives `/platform/login` start, finish and demo the way the browser does.
+- `./chatgpt-connect.ts` holds `connectChatgpt(api, user, signIn)`, which connects a ChatGPT plan through the connect routes the way the CLI's `connect codex` does.
 
 ## Case filters
 

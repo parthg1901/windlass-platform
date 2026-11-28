@@ -58,7 +58,7 @@ export interface MachineHostUpdate {
 	machineId: string;
 	host: NonNullable<MachineSummary["host"]> | null;
 }
-/** Whose credential a machine agent uses for a provider both can serve: the machine's own sign-in, or the owner's Settings key. */
+/** Who an item's machine agent was filed to pay with: what pays on the machine (its own login, or the account's plans and keys through Pay with), or a Settings key. */
 export type CredentialSource = "machine" | "key";
 export interface MachineDetails {
 	whenToUse: string;
@@ -98,7 +98,8 @@ export interface MachineSummary extends Partial<MachineDetails> {
 	/**
 	 * `signInReason`: with `signIn` "unknown", why the runner could not check the sign-in (runner 0.3.4 and later).
 	 * `machineSignIns`: the providers the machine's own sign-in serves. `platformKeys`: the Settings keys its turns
-	 * use, after `source`, the owner's choice (absent: the machine's sign-in first, keys for the rest).
+	 * can use. `paysWith`: an agent a plan can pay for (Claude Code, Codex) with no login of its own on the machine:
+	 * Connections → Pay with decides what pays, as hosted, and `signIn` says whether a connected plan or a saved key can.
 	 */
 	harnesses?: Array<{
 		id: Exclude<HarnessId, "windlass">;
@@ -109,7 +110,7 @@ export interface MachineSummary extends Partial<MachineDetails> {
 		machineProviders?: string[];
 		machineSignIns?: ModelProvider[];
 		machineMethod?: "api-key" | "chatgpt";
-		source?: CredentialSource;
+		paysWith?: true;
 		platformKeys?: ModelProvider[];
 		method?: "api-key" | "chatgpt" | "subscription";
 		modes?: string[];

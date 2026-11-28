@@ -16,7 +16,7 @@ import type { TimelineItem, TurnUsage, WindlassEvent } from "../contract.js";
 export type TurnCredential = {
 	model: string;
 	itemSignIn?: import("../sandbox/harnesses.js").SignInMethod;
-	key?: import("../sandbox/provider.js").ModelKeyLease;
+	key?: import("../contract.js").CredentialRef;
 };
 
 export type PauseReason = "restart" | "machine";

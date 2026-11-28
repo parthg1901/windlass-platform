@@ -794,6 +794,30 @@ export class GithubApp {
 		return { branches: names, truncated: true };
 	}
 
+	// https://docs.github.com/en/rest/issues/issues#list-repository-issues
+	/** The oldest open issues carrying `label`, pull requests left out (GitHub lists them as issues too). */
+	async openIssues(
+		token: string,
+		owner: string,
+		name: string,
+		label: string,
+	): Promise<Array<{ number: number; title: string; url: string }>> {
+		const answer = await this.call({
+			path: `/repos/${owner}/${name}/issues`,
+			query: { state: "open", labels: label, sort: "created", direction: "asc", per_page: 10 },
+			auth: { bearer: token },
+			what: `list the open issues of ${owner}/${name}`,
+		});
+		const issues: Array<{ number: number; title: string; url: string }> = [];
+		for (const item of Array.isArray(answer.body) ? answer.body : []) {
+			const row = record(item);
+			const title = text(row.title);
+			if (row.pull_request || typeof row.number !== "number" || title === "") continue;
+			issues.push({ number: row.number, title, url: this.repositoryUrl(owner, name) + "/issues/" + row.number });
+		}
+		return issues;
+	}
+
 	/**
 	 * What a GitHub user may do in a repository, by GitHub's own reckoning of every grant (the
 	 * repository's, a team's, the organization's): "admin", "write", "read" or "none". A user GitHub

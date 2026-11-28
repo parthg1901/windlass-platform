@@ -6,10 +6,22 @@
  * never asks for sudo. Without a terminal it prints the setup command instead.
  */
 import { config } from "./config.js";
+import { DOCKER_HELP, setupRunArgs } from "./contract/machine-setup.js";
 
 export const INSTALL_SCRIPT_PATH = "/install.sh";
 
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+const word = (value: string) => (/^[A-Za-z0-9_./:@=-]+$/.test(value) ? value : quote(value));
+const fail = (message: string) => `fail ${quote(message)}`;
+const { missing, stopped } = DOCKER_HELP;
+
+/** The setup's `docker run`, from the definition the CLI shares, with the script's variables in place of the image and address. */
+function setupCommand(platform: string, image: string): string {
+	const args = setupRunArgs(image, platform, "terminal").map(arg =>
+		arg === image ? '"$IMAGE"' : arg === platform ? '"$PLATFORM"' : word(arg),
+	);
+	return ["docker", ...args].join(" ");
+}
 
 /** The script for this platform address and runner image (both checked by config.ts: an origin, an image pinned by digest). */
 export function installScript(platform: string, image: string): string {
@@ -36,36 +48,33 @@ esac
 
 if ! command -v docker >/dev/null 2>&1; then
   case "$os" in
-    Darwin) fail "Docker is not installed. Install Docker Desktop (https://docs.docker.com/desktop/setup/install/mac-install/) or OrbStack (https://orbstack.dev), start it, then run this again." ;;
+    Darwin) ${fail(missing.darwin)} ;;
     Linux)
-      if [ "$wsl" = true ]; then fail "Docker is not available in this WSL distribution. In Docker Desktop, open Settings > Resources > WSL integration, turn it on for this distribution, then run this again."; fi
-      fail "Docker is not installed. Install Docker Engine (https://docs.docker.com/engine/install/), then run this again." ;;
-    MINGW*|MSYS*|CYGWIN*) fail "Run this in a WSL terminal with Docker Desktop's WSL integration on, or run the setup command from the Machines page in PowerShell." ;;
-    *) fail "Docker is not installed. Install Docker, then run this again." ;;
+      if [ "$wsl" = true ]; then ${fail(missing.wsl)}; fi
+      ${fail(missing.linux)} ;;
+    MINGW*|MSYS*|CYGWIN*) ${fail(missing["windows-shell"])} ;;
+    *) ${fail(missing.other)} ;;
   esac
 fi
 
 if ! problem=$(docker info --format '{{.ServerVersion}}' 2>&1 >/dev/null); then
   case "$problem" in
-    *"permission denied"*) fail "Docker is running, but this user may not use it. Add the user to the docker group (then log in again), or run this as a user who can run docker." ;;
+    *"permission denied"*) ${fail(DOCKER_HELP.denied)} ;;
   esac
   case "$os" in
-    Darwin) fail "Docker is not running. Start Docker Desktop or OrbStack, wait until it says it is running, then run this again." ;;
+    Darwin) ${fail(stopped.darwin)} ;;
     Linux)
-      if [ "$wsl" = true ]; then fail "Docker is not running. Start Docker Desktop on Windows, then run this again."; fi
-      fail "Docker is not running. Start it (for example: sudo systemctl start docker), then run this again." ;;
-    *) fail "Docker is not running. Start it, then run this again." ;;
+      if [ "$wsl" = true ]; then ${fail(stopped.wsl)}; fi
+      ${fail(stopped.linux)} ;;
+    *) ${fail(stopped.other)} ;;
   esac
 fi
 
 say "Fetching the Windlass runner..."
-docker pull "$IMAGE" || fail "Could not fetch $IMAGE. Check this machine's network, then run this again."
+docker pull "$IMAGE" || ${fail(DOCKER_HELP.pull(image))}
 
 # Docker keeps no log of this container: the setup's sign-ins happen in it.
-set -- docker run -it --rm --log-driver none \\
-  -v /var/run/docker.sock:/var/run/docker.sock \\
-  -v windlass-runner:/var/lib/windlass-runner \\
-  "$IMAGE" setup --platform "$PLATFORM"
+set -- ${setupCommand(platform, image)}
 
 if has_terminal; then
   exec "$@" </dev/tty

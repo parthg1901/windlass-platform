@@ -50,7 +50,7 @@ import { PageTrail } from "../components/Nav";
 import type { ToolBlock } from "../lib/timeline";
 import { useApp, useAuth } from "../state/app";
 import { takeHandover } from "../state/handover";
-import { allowanceState, useAllowance, useHostedProviders, useModels, useNow, type useSession } from "../state/hooks";
+import { allowanceState, useAllowance, useHostedCredentials, useModels, useNow, type useSession } from "../state/hooks";
 import {
 	requestPublish,
 	setPanelHidden,
@@ -380,7 +380,7 @@ export function Session({
 	const models = useModels();
 	const hostedAgent =
 		state.summary?.place.kind === "hosted" && state.summary.harness !== "windlass" ? state.summary.harness : undefined;
-	const keys = useHostedProviders(!!hostedAgent);
+	const keys = useHostedCredentials(!!hostedAgent);
 	const auth = useAuth();
 	const api = useMemo(() => client.session(auth, sessionId), [client, auth, sessionId]);
 	const handover = useMemo(() => takeHandover(sessionId), [sessionId]);

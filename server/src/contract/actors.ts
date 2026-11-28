@@ -6,12 +6,10 @@ import type {
 	ChatgptStatus,
 	ContinueSessionInput,
 	CreateSessionInput,
-	HarnessId,
 	HarnessOptions,
 	IdempotencyKey,
 	LinkedLogin,
 	LoginProvider,
-	LoginStart,
 	ModelList,
 	SandboxProfile,
 	SandboxProfileId,
@@ -28,9 +26,15 @@ import type {
 	ModelProvider,
 	ModelProviderCheck,
 	ModelProviderStatus,
+	ModelPlans,
+	ModelPlanStatus,
+	PayWithChoice,
+	PayWithPatch,
 	RepositoryDefaultsPatch,
 } from "./account.js";
+import type { PlanProvider } from "./connect.js";
 import type {
+	StarterIssue,
 	GithubBranchList,
 	GithubId,
 	GithubRepository,
@@ -55,7 +59,7 @@ import type {
 	SecretRequest,
 	SetRequestedSecretInput,
 } from "./items.js";
-import type { CredentialSource, MachineClaim, MachineDetails, MachineHostUpdate, MachineSummary } from "./machines.js";
+import type { MachineClaim, MachineDetails, MachineHostUpdate, MachineSummary } from "./machines.js";
 import type { PendingQuestion, SessionServers } from "./questions.js";
 import type {
 	EnvironmentPlace,
@@ -87,8 +91,6 @@ export interface UserActions extends SlackSettingsActions, LinkedAccountsActions
 	linkedLogins(): Promise<LinkedLogin[]>;
 	unlinkLogin(provider: LoginProvider): Promise<void>;
 	chatgpt(): Promise<ChatgptStatus>;
-	startChatgpt(): Promise<LoginStart>;
-	finishChatgpt(callback: string): Promise<void>;
 	forgetChatgpt(): Promise<void>;
 	/** On fetch failure return cached or fallback choices and identify their source. */
 	models(): Promise<ModelList>;
@@ -137,6 +139,8 @@ export interface UserActions extends SlackSettingsActions, LinkedAccountsActions
 	/** Search owner/name, newest push first. Use fresh after changing an installation's repository access. */
 	githubRepositories(query: string, fresh?: boolean): Promise<GithubRepositoryList>;
 	githubBranches(repositoryId: GithubId): Promise<GithubBranchList>;
+	/** Up to three of the repository's oldest open issues labelled "bug", for the first item's starter tasks. */
+	githubStarterIssues(repositoryId: GithubId): Promise<StarterIssue[]>;
 	/** The setup command the user saved for a repository, by GitHub's id for it. Asks GitHub nothing. */
 	repositorySetup(repositoryId: GithubId): Promise<RepositorySetup>;
 	/**
@@ -244,6 +248,25 @@ export interface UserActions extends SlackSettingsActions, LinkedAccountsActions
 	saveModelProvider(input: { provider: ModelProvider; key: string }): Promise<ModelProviderCheck>;
 	checkModelProvider(provider: ModelProvider): Promise<ModelProviderCheck>;
 	removeModelProvider(provider: ModelProvider): Promise<void>;
+	/** The plans connected to this account, and whether it may connect them. Tokens never leave the platform. */
+	modelPlans(): Promise<ModelPlans>;
+	/**
+	 * Approves the connect request whose code the terminal shows (`npx @windlassai/cli connect claude|codex`), for
+	 * the plan the connect page names: only then does that terminal hand its plan's token (or ChatGPT sign-in) to
+	 * this account. A code for another plan approves nothing. `denyPlanConnect` refuses it.
+	 */
+	approvePlanConnect(userCode: string, provider: PlanProvider): Promise<void>;
+	denyPlanConnect(userCode: string): Promise<void>;
+	/** Forgets a plan; the ChatGPT plan is the ChatGPT sign-in, so this is `forgetChatgpt` for it. */
+	removeModelPlan(provider: PlanProvider): Promise<void>;
+	/** Asks the plan's provider again whose it is and, for the ChatGPT plan, which models it offers. */
+	recheckModelPlan(provider: PlanProvider): Promise<ModelPlanStatus | null>;
+	/** Each plan agent's Pay-with choice, the defaults where none was saved (server/src/pay-with.ts). */
+	payWith(): Promise<PayWithChoice[]>;
+	/** Saves one agent's choice; answers with every agent's. Throws with reason `bad_input` for an agent or choice there is none of. */
+	savePayWith(input: PayWithPatch): Promise<PayWithChoice[]>;
+	/** An item waiting for its plan (`Wait.plan.keyNow`) pays its next turn with the saved key instead, once. Throws `bad_input` when no key can. */
+	useKeyNow(itemId: string): Promise<void>;
 	/** The names and times of the account's secrets, and what each reaches in a sandbox of `profile` made now. No value. */
 	accountSecrets(input: { profile: SandboxProfileId }): Promise<AccountSecrets>;
 	/**
@@ -313,20 +336,23 @@ export interface UserActions extends SlackSettingsActions, LinkedAccountsActions
 	 */
 	confirmMachine(input: { code: string; keyConfirmed: true }): Promise<MachineSummary>;
 	/**
+	 * Refuses the machine of a code this user looked up (the connect page's Deny): its pairing ends at once, so
+	 * its runner stops waiting and pairs with nobody. Throws as `claimMachine` does for a code this user did not
+	 * look up, and refuses nothing once the machine is paired.
+	 */
+	denyMachine(input: { code: string }): Promise<void>;
+	/**
 	 * Removes a machine: its key stops working at once, and its agents keep their conversations and can
 	 * no longer run. With `removeSandboxes`, its runner also removes the agents' sandboxes on it and
 	 * Windlass's data volume there, now when it is online and when it next connects when not. Throws a
 	 * UserError with code `machine_not_found` for one that is not the user's. Answers with the list as it is then.
 	 */
 	removeMachine(input: { machineId: string; removeSandboxes: boolean }): Promise<MachineSummary[]>;
+	/** Asks the machine's runner to remove the Claude Code login kept there ("Switch back to your plan"). Throws with code `machine_not_found`, `machine_not_connected` or `claude_login_kept`. */
+	removeMachineClaudeLogin(input: { machineId: string }): Promise<MachineSummary[]>;
 	/** Turns the sending of saved secrets to a machine's agents on or off, from each one's next turn. Throws as `removeMachine` does. */
 	setMachineDetails(input: { machineId: string } & MachineDetails): Promise<MachineSummary[]>;
 	setMachineSecrets(input: { machineId: string; send: boolean }): Promise<MachineSummary[]>;
-	setCredentialSource(input: {
-		machineId: string;
-		harness: Exclude<HarnessId, "windlass">;
-		source: CredentialSource;
-	}): Promise<MachineSummary[]>;
 	/** Unpaged calls return every item, newest first. A short page is the last one. */
 	listItems(page?: ItemListPage): Promise<ItemSummary[]>;
 	/** What the live feed carries (`ItemFeed`): every open item, the newest filed ended ones, and the counts. The web app reads this, not the whole list. */
@@ -345,6 +371,10 @@ export interface UserActions extends SlackSettingsActions, LinkedAccountsActions
 	actOnItem(input: { id: string; action: ItemAction }): Promise<ItemView>;
 	/** The factory's limits for this user. */
 	factoryLimits(): Promise<FactoryLimits>;
+	/** What prices items' usage: model prices from the public catalog (cached server-side) and the hosted sandbox rates. */
+	costRates(): Promise<import("./cost.js").CostRates>;
+	/** The items that ended in the last 7, 30 or 90 days, with what each used, for the Usage summary. Throws a UserError with code `bad_input` for another period. */
+	finishedItems(days: import("./cost.js").SummaryDays): Promise<import("./cost.js").FinishedItems>;
 	/** The user's API tokens, the newest first; never a token's value. */
 	apiTokens(): Promise<ApiToken[]>;
 	/** Makes an API token: `secret` is its value, shown this once. Throws a UserError with code `bad_input` for a name or scopes that cannot be taken, `too_many_tokens` at MAX_API_TOKENS. */
@@ -404,6 +434,8 @@ export interface PromptInput {
 	 * effort (`SessionSummary.effort`), or the model's default where the turn's model does not take it; null or "" is the model's default.
 	 */
 	effort?: string | null;
+	/** "key": this turn pays with the saved key although Pay with would have it wait for the plan (the answer to `plan_ask`). */
+	payWith?: "key";
 	/**
 	 * The key of this submission (`IdempotencyKey`). The same key again, with the same text, is
 	 * answered as the first attempt was and adds nothing: no second message in the running turn, no

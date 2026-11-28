@@ -1,16 +1,10 @@
 ## Do I need a ChatGPT account?
 
-No. Sign in with GitHub or Google. You can connect a ChatGPT plan in Settings for Windlass models, supply a model provider key, or use a harness login on your paired machine.
+No. Sign in with GitHub or Google. Connect a Claude or ChatGPT plan, or add a model provider key, on **Connections**.
 
 ## Can I use Claude Code?
 
-Yes, on one of your own machines. Start its runner with `--harness claude`, and sign Claude in on the machine:
-
-```sh
-docker exec -it windlass-runner windlass-runner login claude
-```
-
-Then choose the machine under **where** and **Claude Code** under **agent**. Claude Code runs with your Claude subscription. See [Agents on your machine](/docs/machines#agents-on-your-machine).
+Yes, on one of your own machines. Start its runner with `--harness claude`, and connect your Claude plan or add an Anthropic key on **Connections**. Then choose the machine under **where** and **Claude Code** under **agent**. **Connections → Pay with** decides whether the plan or the key pays. See [Agents on your machine](/docs/machines#agents-on-your-machine).
 
 ## Can I use OpenCode, or another model provider?
 
@@ -26,15 +20,15 @@ Yes. Choose `free` in `login opencode` for OpenCode's free public models. Their 
 
 ## Where do I sign Claude Code or OpenCode in?
 
-For hosted agents, add the provider key in **Settings → Model providers**. Paired machines prefer a matching Settings key and can also use a local login from `windlass-runner login`. The Machines page shows whether each agent is signed in, and the command to copy. See [Sign agents in](/docs/machines#sign-agents-in).
+Claude Code and Codex need no sign-in on a machine: connect a plan or add a key on **Connections**, hosted and on your machines alike. OpenCode on a machine uses its own logins from `windlass-runner login opencode`, and your Settings keys for the rest. The Machines page shows what pays for each agent. See [What pays on your machine](/docs/machines#what-pays-on-your-machine).
 
 ## Which keys stay on my machine?
 
-The logins you give the runner stay there. The machine’s login volume holds your Claude, OpenCode and Codex credentials. The runner never sends them to the platform. No agent's container has them either: a relay on the machine adds them to the agent's model requests. Commands in a session can still use that relay, and so your quota. See [Agent logins stay out of the container](/docs/machines#agent-logins-stay-out-of-the-container).
+The OpenCode logins you give the runner stay there, in the machine's login volume. The runner never sends them to the platform. No agent's container has them either: a relay on the machine adds them to the agent's model requests. Commands in a session can still use that relay, and so your quota. See [Agent logins stay out of the container](/docs/machines#agent-logins-stay-out-of-the-container).
 
 ## Does the agent get my ChatGPT password or sign-in?
 
-No. Your ChatGPT sign-in is never in a sandbox. With the model relay, a Windlass sandbox gets a placeholder that can make model requests only during that turn. Without the relay, the sandbox gets a short-lived access token after setup. Unsandboxed commands and approved local MCP servers can then read it. See [Sandboxes and security](/docs/security).
+No. Your ChatGPT sign-in is never in a sandbox. A Windlass sandbox gets a placeholder that can make model requests through a relay only during that turn. See [Sandboxes and security](/docs/security).
 
 ## Does the agent get my GitHub access?
 

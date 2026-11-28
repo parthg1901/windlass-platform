@@ -8,7 +8,7 @@ import { matchesSection } from "./check-sections.js";
 import "./check-secret.js";
 import { localListeners } from "./check-listeners.js";
 import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
-import { createSign, generateKeyPairSync, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -45,6 +45,7 @@ import { LocalLoginRunner, TMP_PREFIX } from "../server/src/signin/runner.js";
 import { SealError, createSealer, serverSealer } from "../server/src/signin/seal.js";
 import { sleep as wait } from "./check-wait.js";
 import { Report } from "./check-report.js";
+import { connectChatgpt } from "./chatgpt-connect.js";
 
 const run = randomBytes(3).toString("hex");
 /** The Windlass the sections with a real one run: the executable WLP_WINDLASS_BIN names, else the pinned release, which sandbox/fetch-windlass.sh keeps and fetches the first time. */
@@ -105,11 +106,16 @@ const leftIn = (root: string) =>
 	existsSync(root) ? readdirSync(root).filter(name => name.startsWith(TMP_PREFIX)) : [];
 
 /** A made-up sign-in as Windlass saves one. `number` tells its tokens from another's. */
-function fakeMaterial(sub: string, expiresAt: number, number = 0): SignInMaterial {
+function fakeMaterial(
+	sub: string,
+	expiresAt: number,
+	number: number | string = 0,
+	email = `${sub}@example.invalid`,
+): SignInMaterial {
 	const credentials = {
 		hostId: "urn:uuid:00000000-0000-4000-8000-00000000c0de",
 		clientId: "FAKE-client-id-for-signin-check",
-		account: { sub, email: `${sub}@example.invalid` },
+		account: { sub, email },
 		accessToken: `FAKE-ACCESS-TOKEN-${number}-not-a-real-token`,
 		refreshToken: `FAKE-REFRESH-TOKEN-${number}-not-a-real-token`,
 		idToken: "FAKE.ID.TOKEN",
@@ -195,10 +201,8 @@ class ScriptedCommands implements SignInCommands {
 // ---------------------------------------------------------------------------------------------
 
 interface Expected {
-	nonce: string;
 	sub: string;
 	email: string;
-	clientId: string;
 }
 
 /**
@@ -209,7 +213,7 @@ interface Expected {
  * (`GET /v1/models` at api.openai.com), to whoever shows an access token it issued.
  */
 class StandIn {
-	/** Every request it answered: "authorization_code", "refresh_token", "jwks", "models". Never a token. */
+	/** Every request it answered: "refresh_token" or "models". Never a token. */
 	readonly requests: string[] = [];
 	/** Every tunnel it was asked for. */
 	readonly tunnels: string[] = [];
@@ -218,11 +222,9 @@ class StandIn {
 	delayMs = 0;
 	refuse: { code: string; status: number } | null = null;
 	refreshing = 0;
-	private readonly codes = new Map<string, Expected>();
 	/** The refresh tokens that are still good. A refresh replaces the one it was asked with. */
 	private readonly good = new Map<string, Expected>();
 	private issued = 0;
-	private readonly key = generateKeyPairSync("rsa", { modulusLength: 2048 });
 	private proxy: Server | null = null;
 	private readonly sockets = new Set<Socket>();
 	private port = 0;
@@ -287,9 +289,11 @@ class StandIn {
 		};
 	}
 
-	/** The next exchange of `code` signs in this account. */
-	expect(code: string, expected: Expected): void {
-		this.codes.set(code, expected);
+	/** A sign-in with this service, as Windlass saves it on the person's computer: what `connect codex` uploads. */
+	signIn(sub: string, email = `${sub}@example.invalid`): SignInMaterial {
+		const material = fakeMaterial(sub, Date.now() + this.expiresIn * 1000, `S${(this.issued += 1)}`, email);
+		this.good.set(saved(material).refreshToken, { sub, email });
+		return material;
 	}
 
 	isGood(refreshToken: string): boolean {
@@ -300,20 +304,13 @@ class StandIn {
 		return this.requests.filter(request => request === kind).length;
 	}
 
-	private idToken(expected: Expected): string {
-		const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
-		const body = `${part({ alg: "RS256", kid: "standin", typ: "JWT" })}.${part({ iss: "https://auth.openai.com", aud: expected.clientId, exp: Math.floor(Date.now() / 1000) + 3600, nonce: expected.nonce, sub: expected.sub, email: expected.email })}`;
-		return `${body}.${createSign("RSA-SHA256").update(body).sign(this.key.privateKey).toString("base64url")}`;
-	}
-
-	private issue(expected: Expected, letter: string, withIdToken: boolean): Record<string, unknown> {
+	private issue(expected: Expected, letter: string): Record<string, unknown> {
 		const number = (this.issued += 1);
 		const refreshToken = `FAKE-REFRESH-TOKEN-${letter}${number}-not-a-real-token`;
 		this.good.set(refreshToken, expected);
 		return {
 			access_token: `FAKE-ACCESS-TOKEN-${letter}${number}-not-a-real-token`,
 			refresh_token: refreshToken,
-			...(withIdToken ? { id_token: this.idToken(expected) } : {}),
 			expires_in: this.expiresIn,
 			scope: "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct",
 		};
@@ -330,12 +327,6 @@ class StandIn {
 			response.end(text);
 		};
 		try {
-			if (request.method === "GET" && request.url === "/.well-known/jwks.json") {
-				this.requests.push("jwks");
-				return send(200, {
-					keys: [{ ...this.key.publicKey.export({ format: "jwk" }), kid: "standin", alg: "RS256", use: "sig" }],
-				});
-			}
 			if (request.method === "GET" && request.url === "/v1/models") {
 				this.requests.push("models");
 				if (!/^Bearer FAKE-ACCESS-TOKEN-[SR]\d+-/.test(request.headers.authorization ?? ""))
@@ -360,13 +351,6 @@ class StandIn {
 			if (request.method !== "POST" || request.url !== "/api/accounts/oauth/token")
 				return send(404, { error: "not_found" });
 			this.requests.push(grant);
-			if (grant === "authorization_code") {
-				const expected = this.codes.get(form.get("code") ?? "");
-				if (expected === undefined || !form.get("code_verifier") || form.get("client_id") !== expected.clientId)
-					return send(400, { error: "invalid_grant", error_description: "the stand-in does not know this code" });
-				this.codes.delete(form.get("code") ?? "");
-				return send(200, this.issue(expected, "S", true));
-			}
 			if (grant === "refresh_token") {
 				this.refreshing += 1;
 				try {
@@ -382,7 +366,7 @@ class StandIn {
 					if (expected === undefined)
 						return send(400, { error: "invalid_grant", error_description: "this refresh token was already used" });
 					this.good.delete(presented);
-					return send(200, this.issue(expected, "R", false));
+					return send(200, this.issue(expected, "R"));
 				} finally {
 					this.refreshing -= 1;
 				}
@@ -698,29 +682,6 @@ async function main(): Promise<void> {
 			extra: Partial<ConstructorParameters<typeof SignInHolder>[0]> = {},
 		) => new SignInHolder({ uid, store: rows.store, commands, sealer, log, ...extra });
 
-		// A disconnect after the exchange invalidates the grant at the credential store.
-		{
-			const rows = new Rows();
-			const commands = new ScriptedCommands();
-			const holder = new SignInHolder({
-				uid,
-				commands,
-				sealer,
-				store: {
-					...rows.store,
-					save: async (row, expected) => {
-						if (expected === "disconnected") throw new Error("attempt expired");
-						await rows.store.save(row);
-					},
-				},
-			});
-			const stale = await caught(holder.adopt(seal(fakeMaterial("old", Date.now() + 60_000, 1)), "disconnected"));
-			expect(
-				"an invalidated attempt is refused at the final credential write",
-				stale instanceof Error && rows.row === null,
-			);
-		}
-
 		// ---- nothing saved
 		{
 			const rows = new Rows();
@@ -749,7 +710,7 @@ async function main(): Promise<void> {
 				rows.row?.sealed != null &&
 					!SECRET.test(rows.row.sealed) &&
 					!rows.row.sealed.includes("fake-sub-a") &&
-					rows.row.generation === 1,
+					/^[0-9a-f-]{36}$/.test(rows.row.generation),
 			);
 			const account = await holder.status();
 			expect(
@@ -781,6 +742,7 @@ async function main(): Promise<void> {
 			const commands = new ScriptedCommands();
 			const holder = make(rows, commands);
 			await holder.adopt(seal(fakeMaterial("fake-sub-b", Date.now() + 12 * 60_000, 1)));
+			const adopted = rows.row!.generation;
 			rows.events.length = 0;
 			let release = () => {};
 			commands.hold = new Promise<void>(done => (release = done));
@@ -804,11 +766,11 @@ async function main(): Promise<void> {
 				`${commands.asked} request to Windlass, ${commands.issued} refresh`,
 			);
 			expect(
-				"the refreshed sign-in is in the store before the token is returned: saved first, with the new refresh token",
+				"the refreshed sign-in is in the store before the token is returned: saved first, with the new refresh token, at the same generation",
 				order.join(", ") === "saved, returned, returned" &&
 					now.refreshToken === "FAKE-REFRESH-TOKEN-101-not-a-real-token" &&
 					now.accessToken === one.accessToken &&
-					rows.row!.generation === 1,
+					rows.row!.generation === adopted,
 				order.join(", "),
 			);
 			commands.hold = null;
@@ -862,14 +824,16 @@ async function main(): Promise<void> {
 			const revoked: string[] = [];
 			const holder = make(rows, commands, { revoke: async user => void revoked.push(user) });
 			await holder.adopt(seal(fakeMaterial("fake-sub-d", Date.now() + 3_600_000, 1)));
+			const first = rows.row!.generation;
 			const old = await holder.accessToken();
 			await holder.adopt(seal(fakeMaterial("fake-sub-d", Date.now() + 3_600_001, 2)));
+			const second = rows.row!.generation;
 			const replaced = await holder.accessToken();
 			expect(
 				"after a new sign-in is adopted the old one's token is not handed out again, though it was fresh: the new one's is",
 				old.accessToken === "FAKE-ACCESS-TOKEN-1-not-a-real-token" &&
 					replaced.accessToken === "FAKE-ACCESS-TOKEN-2-not-a-real-token" &&
-					rows.row!.generation === 2,
+					second !== first,
 			);
 			const asked = commands.asked;
 			await holder.logout();
@@ -879,7 +843,7 @@ async function main(): Promise<void> {
 				gone instanceof SandboxUserError &&
 					gone.message === NOT_SIGNED_IN &&
 					rows.row!.sealed === null &&
-					rows.row!.generation === 3 &&
+					rows.row!.generation !== second &&
 					(await holder.status()) === null &&
 					commands.asked === asked &&
 					revoked.join(",") === uid,
@@ -1049,7 +1013,7 @@ async function main(): Promise<void> {
 			// Two servers: each has its own runner and its own place for private directories. They share the
 			// users' store (the actors' storage) and the key, and nothing else. A user's holder is in one
 			// place, as the user's actor is: here it is server B's, so tokens are asked for, and sign-ins
-			// adopted and forgotten, there. The steps of an attempt hold nothing and run on either.
+			// adopted and forgotten, there.
 			const rootA = join(scratch, "server-a");
 			const rootB = join(scratch, "server-b");
 			mkdirSync(rootA);
@@ -1083,116 +1047,16 @@ async function main(): Promise<void> {
 				serverB.directory.put(uid, { files: { ...now.files, "auth.json": JSON.stringify(credentials) } });
 				serverB.tokens.forget(uid);
 			};
-			let codes = 0;
-			/** A whole sign-in of `sub`: started on server A, finished and adopted on server B. */
+			/** A sign-in of `sub`, uploaded: adopted by the user's holder on server B, as the connect route hands it over. */
 			const signIn = async (uid: string, sub: string) => {
-				const attemptId = `chk${run}${(codes += 1)}`;
-				const started = await serverA.logins.start(attemptId);
-				const url = new URL(started.url);
-				const code = `FAKE-code-${codes}`;
-				standin.expect(code, {
-					nonce: url.searchParams.get("nonce") ?? "",
-					sub,
-					email: `${sub}@example.invalid`,
-					clientId: "FAKE-client-id-for-signin-check",
-				});
-				const callback = `${started.redirectPrefix}?code=${code}&state=${url.searchParams.get("state")}&client_id=FAKE-client-id-for-signin-check`;
-				const finished = await serverB.logins.finish(attemptId, started.attempt, callback);
-				await serverB.logins.adopt(attemptId, finished.attempt, uid);
-				return { attemptId, started, finished, callback, uid };
+				const material = standin.signIn(sub);
+				await serverB.directory.adopt(uid, sealer.seal("user", uid, JSON.stringify(material)));
+				return { uid };
 			};
-
-			// ---- an attempt: started on one server, finished on another
-			const attemptId = `chk${run}first`;
-			const started = await serverA.logins.start(attemptId);
-			const url = new URL(started.url);
-			const state = url.searchParams.get("state") ?? "";
-			const nonce = url.searchParams.get("nonce") ?? "";
-			expect(
-				"start() on server A runs the real `windlass login start` and returns OpenAI's address and the loopback redirect, without a request to the sign-in service",
-				url.origin === "https://auth.openai.com" &&
-					started.redirectPrefix === "http://127.0.0.1:1455/auth/callback" &&
-					state !== "" &&
-					nonce !== "" &&
-					standin.requests.length === 0 &&
-					standin.tunnels.length === 0,
-				`${url.origin}${url.pathname}`,
-			);
-			const pendingFiles = Object.keys(
-				(JSON.parse(sealer.open("attempt", attemptId, started.attempt)) as { files: Record<string, string> }).files,
-			).sort();
-			expect(
-				"what it hands back is the pending sign-in Windlass saved, sealed for this attempt: nothing of it can be read off the blob, and server A has kept nothing",
-				pendingFiles.join(",") === "auth-pending.json,host-id" &&
-					!started.attempt.includes(state) &&
-					!started.attempt.includes(nonce) &&
-					leftIn(rootA).length === 0,
-				`${pendingFiles.join(", ")}; ${started.attempt.length} characters`,
-			);
-			const callback = `${started.redirectPrefix}?code=FAKE-code-first&state=${state}&client_id=FAKE-client-id-for-signin-check`;
-			const asOther = await caught(serverB.logins.finish(`chk${run}other`, started.attempt, callback));
-			expect(
-				"the blob is of no use for another attempt: finish() under another attempt's id says the attempt is unknown",
-				asOther instanceof SandboxUserError && /unknown or has expired/.test(asOther.message),
-			);
-			const wrongState = await caught(
-				serverB.logins.finish(attemptId, started.attempt, `${started.redirectPrefix}?code=FAKE-code-first&state=wrong`),
-			);
-			const notApproved = await caught(
-				serverB.logins.finish(
-					attemptId,
-					started.attempt,
-					`${started.redirectPrefix}?error=access_denied&state=${state}`,
-				),
-			);
-			const elsewhere = await caught(
-				serverB.logins.finish(attemptId, started.attempt, `https://example.com/auth/callback?code=x&state=${state}`),
-			);
-			expect(
-				"finish() on server B refuses a wrong state (Windlass: state_mismatch), a refusal in the browser (access_denied) and another site's address, each before any request",
-				wrongState instanceof SandboxUserError &&
-					/different sign-in attempt/.test(wrongState.message) &&
-					notApproved instanceof SandboxUserError &&
-					/not approved/.test(notApproved.message) &&
-					elsewhere instanceof SandboxUserError &&
-					/not the address/.test(elsewhere.message) &&
-					standin.requests.length === 0,
-			);
-			const early = await caught(serverB.logins.adopt(attemptId, started.attempt, "u_early"));
-			expect(
-				"adopt() refuses an attempt that is not finished",
-				early instanceof SandboxUserError && /not finished/.test(early.message) && !rows.has("u_early"),
-			);
-
-			standin.expect("FAKE-code-first", {
-				nonce,
-				sub: "fake-sub-ann",
-				email: "ann@example.invalid",
-				clientId: "FAKE-client-id-for-signin-check",
-			});
-			const finished = await serverB.logins.finish(attemptId, started.attempt, callback);
-			expect(
-				"finish() on server B, which never saw the start, finishes the attempt from the blob alone: Windlass exchanges the code, checks the ID token against the service's keys, and the account comes back",
-				finished.account.sub === "fake-sub-ann" &&
-					finished.account.email === "ann@example.invalid" &&
-					standin.requests.join(",") === "authorization_code,jwks" &&
-					standin.tunnels.every(tunnel => tunnel === "CONNECT auth.openai.com:443 HTTP/1.1") &&
-					leftIn(rootB).length === 0,
-				`requests to the stand-in: ${standin.requests.join(", ")}`,
-			);
-			const again = await serverA.logins.finish(attemptId, finished.attempt, callback);
-			const otherAddress = await caught(serverA.logins.finish(attemptId, finished.attempt, `${callback}&again=1`));
-			expect(
-				"a finished attempt is finished again by the address that finished it, without a second exchange (the code is good once), and by no other address",
-				again.account.sub === "fake-sub-ann" &&
-					again.attempt === finished.attempt &&
-					otherAddress instanceof SandboxUserError &&
-					standin.count("authorization_code") === 1,
-			);
 
 			// ---- adopted: the user's sign-in
 			const uid = "u_ann";
-			await serverB.logins.adopt(attemptId, finished.attempt, uid);
+			await signIn(uid, "fake-sub-ann");
 			const account = await serverA.logins.status(uid);
 			const row = rows.get(uid)!;
 			expect(
@@ -1202,7 +1066,7 @@ async function main(): Promise<void> {
 					row.sealed !== null &&
 					!SECRET.test(row.sealed) &&
 					!row.sealed.includes("fake-sub-ann") &&
-					!row.sealed.includes("ann@example"),
+					!row.sealed.includes("@example"),
 				`${row.sealed?.length} characters stored`,
 			);
 			const asAnother = await caught(serverB.directory.adopt("u_someone_else", row.sealed!));
@@ -1501,23 +1365,17 @@ async function main(): Promise<void> {
 			// This process is the second server: it has the same secret and no actors of its own.
 			const second = new ActorSignInDirectory(serverSealer());
 
-			// Attach the real model connection to an existing platform user.
+			// Attach a ChatGPT sign-in to an existing platform user, as `npx @windlassai/cli connect codex` does: the
+			// files Windlass saved on the person's computer go to the connect route. Its token is due (ten minutes left).
 			standin.expiresIn = 600;
 			const uid = "u_existing";
 			const { issueUserToken } = await import("../server/src/tokens.js");
 			const auth = { token: issueUserToken({ uid, email: "platform@example.invalid", demo: false }, 0) };
 			const user = client.user.getOrCreate([uid], { params: { token: auth.token } });
-			const started = await user.startChatgpt();
-			const url = new URL(started.url);
-			standin.expect("FAKE-code-actors", {
-				nonce: url.searchParams.get("nonce") ?? "",
-				sub: "fake-sub-actors",
-				email: "actors@example.invalid",
-				clientId: "FAKE-client-id-for-signin-check",
+			const signedIn = standin.signIn("fake-sub-actors", "actors@example.invalid").files;
+			await connectChatgpt(`http://127.0.0.1:${httpPort}`, user, {
+				files: { "auth.json": signedIn["auth.json"] ?? "", "host-id": signedIn["host-id"] },
 			});
-			await user.finishChatgpt(
-				`${started.redirectPrefix}?code=FAKE-code-actors&state=${url.searchParams.get("state")}&client_id=FAKE-client-id-for-signin-check`,
-			);
 			standin.expiresIn = 3600;
 			const status = await user.chatgpt();
 			expect(
@@ -1525,7 +1383,7 @@ async function main(): Promise<void> {
 				(await user.me()).email === "platform@example.invalid" &&
 					status.connected &&
 					status.email === "actors@example.invalid" &&
-					standin.requests.join(",") === "authorization_code,jwks",
+					standin.requests.length === 0,
 				`uid ${uid}; requests to the stand-in: ${standin.requests.join(", ")}`,
 			);
 			expect(
@@ -1597,19 +1455,22 @@ async function main(): Promise<void> {
 				String((unknownModel as Error | null)?.message),
 			);
 
-			// ---- a turn on the server is handed the same token, by way of the same actor
+			// ---- a hosted turn pays with the ChatGPT plan, which WLP_PLAN_USERS (unset on this server) leaves this user out of
 			const profiles = (await (await fetch(`http://127.0.0.1:${httpPort}/platform/info`)).json()) as {
 				profiles?: Array<{ id: string; available: boolean }>;
 			};
 			const profile = profiles.profiles?.find(entry => entry.available)?.id ?? "docker-windlass-sandbox";
 			const session = await user.createSession({ profile: profile as never });
 			const sessionHandle = client.agentSession.get([uid, session.id], { params: { token: auth.token } });
-			await sessionHandle.prompt({ text: "hello" });
-			const ended = await until(() => linesOf("token.handed", uid).length === 1, 30_000);
+			const refused = (await caught(sessionHandle.prompt({ text: "hello" }))) as (Error & { code?: string }) | null;
+			await wait(500);
 			expect(
-				"a turn of that user on the server is handed a token without another refresh",
-				ended && standin.count("refresh_token") === 1,
-				`${linesOf("token.handed", uid).length} hand-over, ${standin.count("refresh_token")} refresh`,
+				"a hosted Windlass turn of a user WLP_PLAN_USERS leaves out is refused with the plan's sentence, and is handed no token",
+				refused?.code === "harness_signed_out" &&
+					/ChatGPT plan isn't enabled for hosted runs on this account/.test(refused.message) &&
+					linesOf("token.handed", uid).length === 0 &&
+					standin.count("refresh_token") === 1,
+				`${refused?.code}: ${refused?.message}; ${linesOf("token.handed", uid).length} hand-over, ${standin.count("refresh_token")} refresh`,
 			);
 			await wait(1_000);
 			await user.deleteSession(session.id).catch(() => undefined);

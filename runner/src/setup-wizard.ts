@@ -58,16 +58,19 @@ export interface WizardEffects {
 	reportLogin(): Promise<void>;
 }
 
-export const SECTIONS = ["name", "agents", "claude", "codex", "opencode", "profile", "network", "limits"] as const;
+export const SECTIONS = ["name", "agents", "opencode", "profile", "network", "limits"] as const;
+/** The agents setup signs in: OpenCode's own logins. Claude Code and Codex pay with the account's plans and keys. */
+const SIGNS_IN: readonly MachineHarness[] = ["opencode"];
 export type Section = (typeof SECTIONS)[number];
-export type Mode = { kind: "full" } | { kind: "quick" } | { kind: "section"; section: Section };
+/** `connect`: `npx @windlassai/cli connect --machine`, with nobody to answer: every default, every agent the image has and no sign-in. */
+export type Mode = { kind: "full" } | { kind: "quick" } | { kind: "connect" } | { kind: "section"; section: Section };
 export type Outcome = { outcome: "done" | "cancelled" | "failed"; message?: string };
 
 type Step = "welcome" | "pair" | "name" | "agents" | "profile" | "network" | "limits" | "summary" | "start";
 type Move = "next" | "back" | "cancel" | "skip" | Outcome;
 
 export const WINDLASS_SANDBOX_NOTE =
-	"Its container runs without Docker's AppArmor profile, with the system paths unmasked and a wider seccomp filter, so that Windlass can sandbox every command inside it again, with no network.";
+	"Its container runs with looser Docker limits (no AppArmor profile, unmasked system paths, a wider seccomp filter) so Windlass can sandbox each command inside it, with no network.";
 const DESKTOP_NAMES = new Set(["docker-desktop", "orbstack", "colima", "rancher-desktop"]);
 
 async function chooseNetwork(p: Prompter, fx: WizardEffects, draft: SetupChoices, skipSaved: boolean): Promise<Move> {
@@ -87,7 +90,7 @@ async function chooseNetwork(p: Prompter, fx: WizardEffects, draft: SetupChoices
 				{
 					value: "restricted",
 					label: "Restricted (recommended)",
-					hint: "public sites, through the runner's proxy; not your local network or this computer",
+					hint: "public sites through the runner's proxy, not your local network or this computer",
 				},
 				{ value: "domains", label: "Only some public hosts", hint: "a list such as @npm,@pypi,@github,example.com" },
 				{ value: "open", label: "Open", hint: "the internet and your local network, directly" },
@@ -109,7 +112,7 @@ async function chooseNetwork(p: Prompter, fx: WizardEffects, draft: SetupChoices
 			message: "Public hosts commands may reach",
 			initial: current?.domains?.join(",") || PRESET_DOMAINS,
 			validate: fx.checkDomains,
-			hint: "Comma-separated names, *.name for subdomains, or @npm, @pypi, @github, @crates, @go. The platform's git host and model host are always added.",
+			hint: "Comma-separated names, *.name for subdomains, or @npm, @pypi, @github, @crates, @go. The platform's git and model hosts are always added.",
 		});
 		if (list === CANCEL) return "cancel";
 		if (list === BACK) continue;
@@ -139,7 +142,7 @@ async function chooseLimits(p: Prompter, fx: WizardEffects, draft: SetupChoices,
 	};
 	for (;;) {
 		const choice = await p.select({
-			message: `Limits: ${l.slots} turn slots, ${l.snapshotDisk} for setup snapshots, keep ${l.keepFree} of disk free`,
+			message: `Limits: ${l.slots} turn ${l.slots === 1 ? "slot" : "slots"}, ${l.snapshotDisk} for setup snapshots, keep ${l.keepFree} of disk free`,
 			initial: "keep",
 			options: [
 				{ value: "keep", label: "Use these limits" },
@@ -160,7 +163,7 @@ async function chooseLimits(p: Prompter, fx: WizardEffects, draft: SetupChoices,
 					/^\d+$/.test(v.trim()) && Number(v) >= 1 && Number(v) <= 64
 						? fx.checkSlots(Number(v))
 						: "Give a whole number from 1 to 64.",
-				hint: `Each slot runs one personal turn at a time. ${auto} suits this computer.`,
+				hint: `Each slot runs one turn at a time. ${auto} suits this computer.`,
 			},
 			{
 				message: "Disk for setup snapshots",
@@ -206,6 +209,7 @@ export async function runWizard(
 	const loaded = fx.choices();
 	const draft: SetupChoices = structuredClone(loaded.choices);
 	const quick = mode.kind === "quick";
+	const connect = mode.kind === "connect";
 	let paired = fx.pairing();
 	let platform = given.platform ?? paired?.platform;
 	let name = fx.savedName() ?? (await fx.defaultName());
@@ -220,7 +224,7 @@ export async function runWizard(
 	if (mode.kind === "section" && !paired) return { outcome: "failed", message: "Pair this machine first: run setup." };
 	const steps: Step[] =
 		mode.kind === "section"
-			? [["claude", "codex", "opencode"].includes(mode.section) ? "agents" : (mode.section as Step), "summary", "start"]
+			? [mode.section === "opencode" ? "agents" : (mode.section as Step), "summary", "start"]
 			: ["welcome", "pair", "name", "agents", "profile", "network", "limits", "summary", "start"];
 
 	const ask = async <T>(answer: Promise<Answer<T>>, then: (value: T) => Move | Promise<Move>): Promise<Move> => {
@@ -239,7 +243,7 @@ export async function runWizard(
 			"Platform     " + platform,
 			paired
 				? `This machine is paired as ${paired.machineId}.`
-				: "This pairs this computer with your account, signs its agents in and starts the runner in the background.",
+				: "This pairs this computer with your account, then starts the runner in the background.",
 			...(p.keys ? [p.keys] : []),
 		]);
 		return ask(
@@ -257,6 +261,17 @@ export async function runWizard(
 	const pairStep = async (): Promise<Move> => {
 		const same = paired && paired.platform === platform;
 		if (same && quick) return "skip";
+		if (same && connect) {
+			// A running runner is left as it is: its settings may have come from flags this mode would not keep.
+			if ((await fx.service()) === "running") {
+				p.outro(
+					`This machine is already paired as ${paired!.machineId} and its runner is running. Nothing was changed. To change its settings or pair it again, run setup.`,
+				);
+				return { outcome: "done" };
+			}
+			p.log("info", `This machine is already paired as ${paired!.machineId}. Keeping that pairing.`);
+			return "next";
+		}
 		if (same) {
 			const move = await ask(
 				p.select({
@@ -275,7 +290,7 @@ export async function runWizard(
 		if (!holding && !(holding = fx.holdState())) {
 			const move = await ask(
 				p.select({
-					message: "The runner is running on this machine. Stop it to pair again? Setup starts it again at the end.",
+					message: "The runner is running on this machine. Stop it to pair again? Setup restarts it at the end.",
 					options: [
 						{ value: "stop", label: "Stop it and pair" },
 						{ value: "cancel", label: "Cancel" },
@@ -294,30 +309,29 @@ export async function runWizard(
 		}
 		for (;;) {
 			let code: Extract<PairEvent, { kind: "code" }> | undefined, account: string | undefined;
-			const result = await p.wait(
-				"Waiting for you to enter the code on the platform (it lasts 10 minutes)",
-				(signal, update) =>
-					fx.pair(
-						platform!,
-						name,
-						event => {
-							if (event.kind === "code") code = event;
-							else if (event.kind === "key" && code)
-								p.note(
-									"Pair this machine",
-									[
-										"1. Open      " + code.url + "/machines/add",
-										"2. Enter     " + code.code,
-										"3. Check     the page shows machine key " + event.key,
-										"Only enter a code this terminal printed. If someone gave you a code, stop.",
-									],
-									[code.code, event.key],
-								);
-							else if (event.kind === "paired") account = event.account;
-							else if (event.kind === "line") update(event.text);
-						},
-						signal,
-					),
+			const result = await p.wait("Waiting for you to enter the code (it expires in 10 minutes)", (signal, update) =>
+				fx.pair(
+					platform!,
+					name,
+					event => {
+						if (event.kind === "code") code = event;
+						else if (event.kind === "key" && code && p.pairing) p.pairing(code.code, event.key);
+						else if (event.kind === "key" && code)
+							p.note(
+								"Pair this machine",
+								[
+									"1. Open      " + code.url + "/machines/add",
+									"2. Enter     " + code.code,
+									"3. Check     the page shows machine key " + event.key,
+									"Only enter a code this terminal printed. If someone gave you a code, stop.",
+								],
+								[code.code, event.key],
+							);
+						else if (event.kind === "paired") account = event.account;
+						else if (event.kind === "line") update(event.text);
+					},
+					signal,
+				),
 			);
 			if (result === CANCEL || result === BACK) return "cancel";
 			if (result.ok) {
@@ -421,7 +435,25 @@ export async function runWizard(
 			draft.agents = [];
 			return "next";
 		}
-		for (const id of offered) states.set(id, await fx.signInState(id));
+		if (connect) {
+			// The agents pay with the account's plans and keys (Connections), so none signs in on the machine.
+			const agents =
+				loaded.saved && draft.agents !== undefined ? draft.agents.filter(id => offered.includes(id)) : offered;
+			draft.agents = [...agents];
+			if (
+				agents.length &&
+				(await p.wait("Fetching the agents' images (the first time takes a few minutes)", (_, update) =>
+					fx.prepare(agents, update),
+				)) === CANCEL
+			)
+				return "cancel";
+			p.log(
+				"info",
+				`Agents: ${["Windlass", ...agents.map(id => HARNESS_LABELS[id])].join(", ")}. They use the plans and keys connected to your account.`,
+			);
+			return "next";
+		}
+		for (const id of offered.filter(id => SIGNS_IN.includes(id))) states.set(id, await fx.signInState(id));
 		const stateLine = (id: MachineHarness) =>
 			states.get(id) === "signed-in" ? "signed in" : states.get(id) === "unknown" ? "sign-in unknown" : "not signed in";
 		for (;;) {
@@ -432,19 +464,25 @@ export async function runWizard(
 				const picked = await p.multiselect({
 					message: "Which agents should this machine offer? Windlass is always offered.",
 					initial: (draft.agents ?? []).filter(id => offered.includes(id)),
-					options: offered.map(id => ({ value: id, label: HARNESS_LABELS[id], hint: stateLine(id) })),
+					options: offered.map(id => ({
+						value: id,
+						label: HARNESS_LABELS[id],
+						hint: SIGNS_IN.includes(id) ? stateLine(id) : "uses your plans and keys",
+					})),
 				});
 				if (picked === BACK) return "back";
 				if (picked === CANCEL) return "cancel";
 				agents = picked;
 			}
-			const asked = quick ? agents.filter(id => states.get(id) !== "signed-in") : agents;
+			const signing = agents.filter(id => SIGNS_IN.includes(id));
+			const asked = quick ? signing.filter(id => states.get(id) !== "signed-in") : signing;
 			if (quick && !asked.length && draft.agents !== undefined) return "skip";
 			draft.agents = only ? [...new Set([...(draft.agents ?? []), only])].filter(id => offered.includes(id)) : agents;
+			const fetched = quick ? asked : agents;
 			if (
-				asked.length &&
+				fetched.length &&
 				(await p.wait("Fetching the agents' images (the first time takes a few minutes)", (_, update) =>
-					fx.prepare(asked, update),
+					fx.prepare(fetched, update),
 				)) === CANCEL
 			)
 				return "cancel";
@@ -488,10 +526,11 @@ export async function runWizard(
 
 	const flags = () => startFlags(platform!, draft);
 	const summaryStep = async (): Promise<Move> => {
-		for (const id of draft.agents ?? [])
+		for (const id of connect ? [] : (draft.agents ?? []).filter(id => SIGNS_IN.includes(id)))
 			if (!signIns.has(id) && !states.has(id)) states.set(id, await fx.signInState(id));
 		const agentLine = (draft.agents ?? []).map(id => {
 			const s = signIns.get(id) ?? states.get(id);
+			if (!SIGNS_IN.includes(id)) return HARNESS_LABELS[id];
 			return (
 				HARNESS_LABELS[id] +
 				(s === "signed-in" || s === "kept"
@@ -504,6 +543,7 @@ export async function runWizard(
 			);
 		});
 		const l = draft.limits ?? {};
+		const slots = l.slots ?? fx.slotsDefault();
 		p.note("Summary", [
 			"Platform     " + platform,
 			"Machine      " + name + (paired ? ` (${paired.machineId})` : ""),
@@ -511,7 +551,7 @@ export async function runWizard(
 			"Profiles     " + (draft.windlassSandbox ? "Hardened Docker, Docker + Windlass sandbox" : "Hardened Docker"),
 			"Network      " + networkLine(draft.network),
 			"Limits       " +
-				`${l.slots ?? fx.slotsDefault()} slots, ${l.snapshotDisk ?? storeDefaults.snapshotDisk} snapshots, keep ${l.keepFree ?? storeDefaults.keepFree} free`,
+				`${slots} ${slots === 1 ? "slot" : "slots"}, ${l.snapshotDisk ?? storeDefaults.snapshotDisk} snapshots, keep ${l.keepFree ?? storeDefaults.keepFree} free`,
 			"",
 			"Setup starts the runner in the background with:",
 			fx.startCommand(flags()),
@@ -540,7 +580,7 @@ export async function runWizard(
 		if (existing !== "absent" && !stopped) {
 			const move = await ask(
 				p.select({
-					message: `A windlass-runner container ${existing === "running" ? "is running" : "exists"}. Replace it with these settings? The windlass-runner volume stays, so the machine stays paired.`,
+					message: `A windlass-runner container ${existing === "running" ? "is running" : "exists"}. Replace it with these settings? The machine stays paired.`,
 					options: [
 						{ value: "replace", label: "Replace it" },
 						{ value: "keep", label: "Keep it and stop here" },
@@ -552,7 +592,7 @@ export async function runWizard(
 				if (existing === "running" && [...signIns.values()].includes("signed-in")) await fx.reportLogin();
 				p.outro(
 					existing === "running"
-						? "Kept the running runner. New settings apply when it is replaced: run setup again."
+						? "Kept the running runner. Run setup again to apply new settings."
 						: "Kept the container. Start it with: docker start windlass-runner",
 				);
 				return { outcome: "done" };
@@ -575,19 +615,19 @@ export async function runWizard(
 		if (started === CANCEL || started === BACK)
 			return {
 				outcome: "done",
-				message: "The runner is starting in the background. Follow it with: docker logs -f windlass-runner",
+				message: "The runner is still starting in the background. Follow it with: docker logs -f windlass-runner",
 			};
 		const online = await p.wait("Waiting for the runner to come online", (signal, update) =>
 			fx.waitOnline(signal, update),
 		);
 		if (online === CANCEL || online === BACK) {
-			p.outro("The runner carries on starting in the background. Follow it with: docker logs -f windlass-runner");
+			p.outro("The runner is still starting in the background. Follow it with: docker logs -f windlass-runner");
 			return { outcome: "done" };
 		}
 		if (!online.ok) return { outcome: "failed", message: online.message };
 		p.log("success", "Online");
 		p.outro(
-			`This machine is online. See it at ${platform}/machines. To change a setting later, run setup again, or setup agents, setup network or setup limits.`,
+			`See this machine at ${platform}/machines. To change a setting later, run setup again (or setup agents, setup network, setup limits).`,
 		);
 		return { outcome: "done" };
 	};
@@ -604,7 +644,7 @@ export async function runWizard(
 		start: startStep,
 	};
 	p.intro(
-		`Windlass runner ${fx.version} · setup${mode.kind === "quick" ? " (only what is missing)" : mode.kind === "section" ? " · " + mode.section : ""}`,
+		`Windlass runner ${fx.version} · setup${mode.kind === "quick" ? " (only what is missing)" : mode.kind === "section" ? " · " + mode.section : connect ? " (connect)" : ""}`,
 	);
 	if ((await p.wait("Checking the runner's images", (_, update) => fx.prepare([], update))) === CANCEL)
 		return { outcome: "cancelled" };
@@ -634,8 +674,6 @@ export async function runWizard(
 		if (stopped)
 			await fx
 				.restartService()
-				.catch(() =>
-					p.log("warn", "Could not start the stopped runner again. Start it with: docker start windlass-runner"),
-				);
+				.catch(() => p.log("warn", "Could not restart the runner. Start it with: docker start windlass-runner"));
 	}
 }
