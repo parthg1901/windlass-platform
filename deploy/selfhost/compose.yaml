@@ -5,7 +5,8 @@ x-logging: &logging
 
 services:
   engine:
-    image: ${COMPOSE_PROJECT_NAME}-engine:${SELFHOST_RELEASE:-local}
+    # Tagged apart from the server release, so a server release leaves the running engine alone.
+    image: ${COMPOSE_PROJECT_NAME}-engine:${SELFHOST_ENGINE_TAG:-3.1.1}
     build:
       context: ../..
       dockerfile: deploy/selfhost/engine.Dockerfile
@@ -15,8 +16,17 @@ services:
       RIVET__TOPOLOGY__DATACENTERS__DEFAULT__PUBLIC_URL: ${SELFHOST_ENGINE_ORIGIN:-${WLP_PUBLIC_ENDPOINT:?required}}
     volumes:
       - engine-data:/var/lib/rivet
+      - ./engine-ready.sh:/usr/local/lib/windlass/engine-ready.sh:ro
     ports:
       - "127.0.0.1:${SELFHOST_GATEWAY_PORT:?required}:6420"
+    # Healthy once its start-up clean-up is done, not when /health first answers (engine-ready.sh).
+    healthcheck:
+      test: [CMD, bash, /usr/local/lib/windlass/engine-ready.sh, "${SELFHOST_ENGINE_SETTLE_SECONDS:-120}"]
+      interval: 15s
+      timeout: 25s
+      retries: 3
+      start_period: 20m
+      start_interval: 5s
     restart: unless-stopped
     stop_grace_period: 10m
     cpu_shares: 4096
@@ -29,7 +39,9 @@ services:
       context: ../..
       dockerfile: server/Dockerfile
       target: ${SELFHOST_SERVER_TARGET:-demo}
-    depends_on: [engine]
+    depends_on:
+      engine:
+        condition: service_healthy
     env_file:
       - path: ${SELFHOST_SERVER_ENV_FILE:-../../.data/selfhost/${COMPOSE_PROJECT_NAME}.server.env}
         required: false
