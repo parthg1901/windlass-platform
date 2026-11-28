@@ -162,8 +162,8 @@ root and a fresh pairing on every runner. Reverting the server switch restores p
 Pinned runners require a signed platform on their next connection.
 
 For the public origins, the owner should enable hardware-key 2FA and auditing on the Cloudflare account,
-use scoped API tokens, enable DNSSEC for `parthg.dev` and restrict CAA to the CA used for the edge
-certificate. Check `dig CAA parthg.dev` after edge certificate renewal. The deployment does not verify CAA.
+use scoped API tokens, enable DNSSEC for `usewindlass.com` and restrict CAA to the CA used for the edge
+certificate. Check `dig CAA usewindlass.com` after edge certificate renewal. The deployment does not verify CAA.
 
 ### Move an existing owner to provider login
 

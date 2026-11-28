@@ -5,7 +5,7 @@ back as pull requests. You sign in with GitHub or Google, start an agent from th
 reads and every command it runs as it happens. It runs [Windlass](https://github.com/WindlassAI/windlass), the
 terminal coding agent, and is built on [Rivet Actors](https://www.rivet.dev/actors/docs).
 
-- **Using it:** the user docs, at <https://windlass.parthg.dev/docs> (source in
+- **Using it:** the user docs, at <https://usewindlass.com/docs> (source in
   [`web/src/docs/content/`](web/src/docs/content/)).
 - **Running, self-hosting or working on it:** the developer and operator docs, in [`docs/`](docs/README.md).
 
@@ -103,7 +103,7 @@ ones. [CONTRIBUTING.md](CONTRIBUTING.md) says how to send a change.
 ## Security
 
 Report vulnerabilities privately as [SECURITY.md](SECURITY.md) describes. What each sandbox protects is in
-the user docs' [Sandboxes and security](https://windlass.parthg.dev/docs/security) page.
+the user docs' [Sandboxes and security](https://usewindlass.com/docs/security) page.
 
 ## License
 
