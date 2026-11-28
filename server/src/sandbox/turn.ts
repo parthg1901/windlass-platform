@@ -63,6 +63,15 @@ import { errorText, sleep } from "../util.js";
 
 export const turnHostTools = (input: RunTurnInput) => turnPlatformTools(input);
 
+/**
+ * The provider a turn's session names (`_meta.windlass.provider`): a Settings key's own, and for the ChatGPT plan
+ * Windlass's `chatgpt` profile, which reads the handed-in token file the plan's env names (`windlassPlanEnv`).
+ * Windlass refuses a handed-in token under any other ("a handed-in token requires the chatgpt profile").
+ */
+export function sessionProvider(key: { provider: string; plan?: true }): string {
+	return key.plan ? "chatgpt" : key.provider;
+}
+
 export function sessionOpenParams(cwd: string, meta: Record<string, unknown>) {
 	return { cwd, mcpServers: [], _meta: { windlass: meta } };
 }
@@ -1021,7 +1030,7 @@ class Turn {
 	private async open(): Promise<void> {
 		const { input, peer } = this;
 		const meta = {
-			...(input.modelKey && { provider: input.modelKey.key.provider }),
+			...(input.modelKey && { provider: sessionProvider(input.modelKey.key) }),
 			...(input.model === undefined ? {} : { model: input.model }),
 			...(input.effort === undefined ? {} : { effort: input.effort }),
 			approval: this.approval,

@@ -111,6 +111,7 @@ import {
 } from "../server/src/sandbox/token-file.js";
 import { GUEST_NODE, planRelaySources } from "../server/src/sandbox/plan-relay.js";
 import { hostedKeyEnv, redactKeyLease, windlassPlanEnv } from "../server/src/sandbox/hosted-keys.js";
+import { sessionProvider } from "../server/src/sandbox/turn.js";
 import { sleep } from "./check-wait.js";
 import { Report } from "./check-report.js";
 import { matchesSection } from "./check-sections.js";
@@ -1888,6 +1889,11 @@ await section("a plan's relay in the sandbox", async () => {
 	await writePlanPlaceholder(windlassHandle, planFile, windlassRelay.placeholder, Date.now() + 3_600_000);
 	const fileWrite = windlassMachine.commands.find(c => c.command.includes(planFile) && c.stdin.includes("accessToken"));
 	const windlassEnv = windlassPlanEnv(windlassRelay, planFile);
+	expect(
+		"Windlass on the ChatGPT plan opens its session under the chatgpt profile its env names; a Settings key under its provider",
+		sessionProvider({ provider: "openai", plan: true }) === windlassEnv.WINDLASS_PROVIDER &&
+			sessionProvider({ provider: "openai" }) === "openai",
+	);
 	expect(
 		"Windlass on the ChatGPT plan starts the relay in its sandbox on the chatgpt-plan wire for Windlass, at the /v1 base, and its token file holds only the placeholder",
 		windlassHanded.wire === "chatgpt-plan" &&

@@ -1191,6 +1191,17 @@ async function main(): Promise<void> {
 						data: { windlass: { reason: "session_in_use", message: "the engine's own sentence", holderPid: 42 } },
 					},
 				});
+			} else if (message.method === "detailed") {
+				// Windlass's internal error: the protocol's words, with what failed in `data.details`.
+				reply({
+					jsonrpc: "2.0",
+					id: message.id,
+					error: {
+						code: -32603,
+						message: "Internal error",
+						data: { details: "a handed-in token requires the chatgpt profile" },
+					},
+				});
 			} else if (message.method === "plain") {
 				reply({ jsonrpc: "2.0", id: message.id, error: { code: -32002, message: "Resource not found" } });
 			} else if (message.method === undefined && message.id !== undefined) {
@@ -1210,6 +1221,17 @@ async function main(): Promise<void> {
 		const plain = await client.request("plain", {}).then(
 			() => null,
 			(error: unknown) => error,
+		);
+		const detailed = await client.request("detailed", {}).then(
+			() => null,
+			(error: unknown) => error,
+		);
+		expect(
+			"an internal error keeps the details the engine put beside the protocol's words",
+			detailed instanceof AcpError &&
+				detailed.code === -32603 &&
+				detailed.message === "Internal error: a handed-in token requires the chatgpt profile",
+			detailed instanceof Error ? detailed.message : String(detailed),
 		);
 		expect(
 			"an error carries Windlass's reason, its own sentence and the holder; a plain one keeps the protocol's code and words",

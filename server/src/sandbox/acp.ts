@@ -268,7 +268,7 @@ export class AcpConnection {
 			typeof named.message === "string" && named.message !== ""
 				? named.message
 				: typeof error.message === "string" && error.message !== ""
-					? error.message
+					? withDetails(error.message, error.data)
 					: `${method} failed`;
 		return new AcpError(
 			message,
@@ -282,6 +282,12 @@ export class AcpConnection {
 				: undefined,
 		);
 	}
+}
+
+/** A generic JSON-RPC message ("Internal error") with the `data.details` the engine put beside it: the details say what failed. */
+function withDetails(message: string, data: unknown): string {
+	const details = typeof data === "object" && data !== null ? (data as { details?: unknown }).details : undefined;
+	return typeof details === "string" && details.trim() !== "" ? `${message}: ${details.trim().slice(0, 300)}` : message;
 }
 
 /** Thrown by a request handler for a method it does not serve. */
