@@ -14,6 +14,7 @@ const ranges = {
 	"item.hostedSeconds": [1, 7 * 86400],
 	"item.usd": [1, 100_000],
 	"item.planPct": [1, 1000],
+	"item.planWeekPct": [1, 1000],
 	"attachments.bytes": [1, ATTACHMENT_LIMITS.bytes],
 	"attachments.perItem": [1, 1_000_000],
 	"attachments.accountBytes": [1, Number.MAX_SAFE_INTEGER],

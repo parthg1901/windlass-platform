@@ -8,17 +8,21 @@
  * What is measured live:
  *   usd      a key-paid turn's dollars at today's prices (`turnUsd`): Windlass's per-step usage, or the cost an ACP
  *            agent reports with its usage updates (Claude Code's)
- *   planPct  a plan-paid turn's rise in the plan's 5-hour window (`windowShare`), as the plan's relays and the agent's
- *            rate-limit reports keep it on the plan; read again every `PLAN_READ_MS`
+ *   planPct, planWeekPct
+ *            a plan-paid turn's rise in the plan's 5-hour and weekly windows (`windowShare`), as the plan's relays and
+ *            the agent's rate-limit reports keep them on the plan; read again every `PLAN_READ_MS`. Where both hold the
+ *            item, the turn stops at the first it reaches (`crossedStop`)
  *   tokens   Windlass's weighted tokens per step; an ACP agent reports its tokens only at the end, so it never stops
  * Interactive turns carry no budget and are never watched. What is not known never stops a turn.
  */
 
 import type { CostRates, HarnessId, TurnUsage, UsageWindow } from "../../contract.js";
 import {
-	overBudgetNow,
-	runningSpend,
+	crossedStop,
+	PLAN_WINDOWS,
+	type RunningSeen,
 	type TurnBudget,
+	type TurnFigure,
 	turnUsd,
 	weightedTokens,
 	windowShare,
@@ -44,8 +48,8 @@ export interface BudgetWatchInput {
 	planWindows: () => Promise<UsageWindow[] | null>;
 	/** Today's model prices; null where they cannot be read. */
 	prices?: () => Promise<CostRates["models"] | null>;
-	/** The turn reached its budget: called once. */
-	onOver: (running: number) => void;
+	/** The turn reached its budget: called once, with what it used of the figure it reached. */
+	onOver: (running: number, figure: TurnFigure) => void;
 }
 
 export class BudgetWatch {
@@ -58,8 +62,8 @@ export class BudgetWatch {
 
 	constructor(private readonly input: BudgetWatchInput) {
 		this.usage = input.earlier;
-		const { figure } = input.budget;
-		if (figure === "usd") {
+		const figures = [input.budget.figure, input.budget.also?.figure];
+		if (figures.includes("usd")) {
 			const prices = input.prices ?? (() => modelPrices().then(rates => rates.models));
 			void prices()
 				.then(models => {
@@ -68,7 +72,8 @@ export class BudgetWatch {
 				})
 				.catch(() => undefined);
 		}
-		if (figure === "planPct" && input.credential.key?.plan && input.planAtStart) {
+		const plan = figures.some(figure => figure !== undefined && figure in PLAN_WINDOWS);
+		if (plan && input.credential.key?.plan && input.planAtStart) {
 			this.timer = setInterval(() => void this.readPlan(), PLAN_READ_MS);
 			this.timer.unref?.();
 		}
@@ -101,9 +106,9 @@ export class BudgetWatch {
 		this.timer = undefined;
 	}
 
-	/** What the turn used so far in its budget's figure; null where it is not known. */
-	running(): number | null {
-		const { budget, credential, itemSignIn, planAtStart, harness } = this.input;
+	/** What the turn used so far in each figure it can be stopped at; null where it is not known. */
+	running(): RunningSeen {
+		const { credential, itemSignIn, planAtStart, harness } = this.input;
 		const meter =
 			this.models && (this.usage || this.cost)
 				? turnMeter({
@@ -117,19 +122,20 @@ export class BudgetWatch {
 					})
 				: undefined;
 		const counted = capabilitiesOf(harness).events === "windlass";
-		return runningSpend(budget.figure, {
+		return {
 			usd: meter ? (turnUsd(meter, this.models) ?? null) : null,
-			planShare: windowShare(planAtStart, this.windows, "5h"),
+			planShare: windowShare(planAtStart, this.windows, PLAN_WINDOWS.planPct),
+			planWeekShare: windowShare(planAtStart, this.windows, PLAN_WINDOWS.planWeekPct),
 			tokens: counted && this.usage ? weightedTokens(this.usage) : null,
-		});
+		};
 	}
 
 	private check(): void {
 		if (this.done) return;
-		const running = this.running();
-		if (!overBudgetNow(this.input.budget, running)) return;
+		const over = crossedStop(this.input.budget, this.running());
+		if (!over) return;
 		this.close();
-		this.input.onOver(running!);
+		this.input.onOver(over.running, over.figure);
 	}
 }
 

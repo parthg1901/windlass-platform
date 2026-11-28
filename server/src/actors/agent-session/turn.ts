@@ -724,13 +724,13 @@ export async function startTurn(c: Ctx, t: TurnScope): Promise<void> {
 }
 
 /** The turn used its item's budget while it ran (budget-watch.ts): it stops as a person's Stop would, its work kept. */
-function stopAtBudget(c: Ctx, t: TurnScope, running: number): void {
+function stopAtBudget(c: Ctx, t: TurnScope, running: number, figure: string): void {
 	const { meta, active } = t;
 	if (!t.open || active.closed || active.stopping || !active.item) return;
 	active.item.budgetStopped = true;
 	note(c, active.number, "warn", budgetStopNote(harnessName(meta.harness)));
 	console.log(
-		`[wlp] factory.budget_stop session=${meta.sessionId} turn=${active.number} figure=${active.item.row.budget?.figure} used=${running}`,
+		`[wlp] factory.budget_stop session=${meta.sessionId} turn=${active.number} figure=${figure} used=${running}`,
 	);
 	abortTurn(c, meta, active);
 }
@@ -774,7 +774,7 @@ export async function takeCredential(
 			earlier: run?.usage ?? null,
 			planAtStart: active.item.planAtStart,
 			planWindows: () => (key?.plan ? planWindows(c, meta.uid, key.provider) : Promise.resolve(null)),
-			onOver: running => stopAtBudget(c, t, running),
+			onOver: (running, figure) => stopAtBudget(c, t, running, figure),
 		});
 	if (run) {
 		run.credential = credential;

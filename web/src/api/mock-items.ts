@@ -27,7 +27,16 @@ import {
 	validatePlan,
 } from "../../../server/src/factory/feature-plan.js";
 import { newAgent, slotWait as slotWaitSentence } from "../../../server/src/factory/budget.js";
-import { addSandbox, addTurn, mergeUsage, noUsage, tokensUsd, turnMeter } from "../../../server/src/factory/cost.js";
+import {
+	addSandbox,
+	addTurn,
+	itemCost,
+	mergeUsage,
+	noUsage,
+	PAID_BY_TOKEN,
+	tokensUsd,
+	turnMeter,
+} from "../../../server/src/factory/cost.js";
 import { finishedItems, itemSize } from "../../../server/src/factory/usage-summary.js";
 import { withAgent } from "../lib/subtask-agents";
 import { harnessName, knownHarness, subtaskHarnessProblem } from "../../../server/src/sandbox/harnesses.js";
@@ -4175,6 +4184,10 @@ function withSeededUsage(items: readonly ItemView[]): void {
 	items.forEach((item, index) => {
 		const parts = (item.children ?? []).flatMap(child => byId.get(child.id) ?? []);
 		item.spent.usage ??= seededUsage(item, index, parts);
+		// Its budget's dollars are its key-paid turns' model dollars, as a turn's end prices them (budget.ts `turnUsd`).
+		const cost = itemCost(item.spent.usage, { models: MOCK_MODEL_PRICES.models, source: null, sandbox: null });
+		if (item.budget.usd !== undefined && cost.lines.some(line => PAID_BY_TOKEN.has(line.payer)))
+			item.spent.usd ??= Math.round(cost.models.usd * 10_000) / 10_000;
 		if (item.mode !== "orchestrate") item.workType ??= seededWorkType(item.title);
 	});
 	for (const item of items) {

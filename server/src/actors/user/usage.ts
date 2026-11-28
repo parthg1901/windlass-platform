@@ -2,7 +2,7 @@
 
 import { accountLimits } from "../../user-limits.js";
 import { makeSandboxRoom } from "./kept-sandboxes.js";
-import { type ItemsCtx, queueChanged } from "../user-items.js";
+import { type ItemsCtx, modelsToday, queueChanged } from "../user-items.js";
 import {
 	USAGE_HISTORY_DAYS,
 	sessionTitle,
@@ -414,6 +414,7 @@ async function usageView(c: UsageCtx): Promise<UsageView> {
 	return {
 		...book.numbers(now),
 		usedModelTokens: book.modelTokens(now),
+		modelsToday: await modelsToday(c.db, now),
 		providerTokens: await c.db.execute<{ provider: ModelProvider; tokens: number }>(
 			"SELECT provider, SUM(tokens) AS tokens FROM model_key_usage WHERE day=? GROUP BY provider ORDER BY provider",
 			dayOf(now),

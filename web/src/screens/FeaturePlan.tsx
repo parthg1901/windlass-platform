@@ -739,8 +739,15 @@ function PlanTotal({
 	const ratio = total / Math.max(1, single.tokens);
 	const expected = [
 		single.usd !== undefined ? figureWords("usd", Math.round(single.usd * ratio * 100) / 100) : null,
-		single.planPct !== undefined ? figureWords("planPct", Math.round(single.planPct * ratio * 10) / 10) : null,
-	].filter((words): words is string => words !== null);
+		[
+			single.planPct !== undefined ? figureWords("planPct", Math.round(single.planPct * ratio * 10) / 10) : null,
+			single.planWeekPct !== undefined
+				? figureWords("planWeekPct", Math.round(single.planWeekPct * ratio * 10) / 10)
+				: null,
+		]
+			.filter(Boolean)
+			.join(" and ") || null,
+	].filter((words): words is string => !!words);
 	const spent = view.children?.length
 		? {
 				...sumBudgets(view.children.map(child => child.spent)),
@@ -766,8 +773,8 @@ function PlanTotal({
 			</dl>
 			{expected.length > 0 ? (
 				<p className="usage-note plan-total-note">
-					The parts together are expected to use {expected.join(" or ")}: dollars where an API key pays, the share where
-					a plan pays.
+					The parts together are expected to use {expected.join(" or ")}: dollars where an API key pays, the shares
+					where a plan pays.
 				</p>
 			) : null}
 			<p className="usage-note plan-total-note">
@@ -926,7 +933,9 @@ function SubtaskRow({
 					</div>
 				) : (
 					<p className="plan-budget-read" title={`Planned as ${compact(task.budget.tokens)} tokens`}>
-						{child?.agent?.tokens === "subscription" && child.spent.planPct === undefined ? (
+						{child?.agent?.tokens === "subscription" &&
+						child.spent.planPct === undefined &&
+						child.spent.planWeekPct === undefined ? (
 							<span>
 								{subscriptionSpend(child.spent)} <span className="tone-faint">not counted: your subscription</span>
 							</span>

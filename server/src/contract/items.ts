@@ -165,8 +165,9 @@ export interface ItemTask {
 /** Token budgets use cost-weighted input. The time limit applies to hosted sandboxes only. */
 /**
  * An item's budget, in the units of what pays for its turns (factory/budget.ts `budgetStop`): dollars where an API key
- * pays (`usd`), percentage points of the plan's 5-hour window where a plan pays (`planPct`). `tokens` (cost-weighted)
- * is the fallback where neither can be measured: a turn whose price is unknown, an agent that reports no window.
+ * pays (`usd`), percentage points of the plan's windows where a plan pays: its 5-hour window (`planPct`) and its weekly
+ * window (`planWeekPct`), each held where the plan reports it. `tokens` (cost-weighted) is the fallback where none can
+ * be measured: a turn whose price is unknown, a plan or agent that reports no window.
  * Items filed before the dollar and plan figures were kept have only tokens and hosted time.
  */
 export interface ItemBudget {
@@ -174,6 +175,7 @@ export interface ItemBudget {
 	hostedSeconds: number;
 	usd?: number;
 	planPct?: number;
+	planWeekPct?: number;
 }
 
 /** Raw tokens count cached input at full weight; use tokens when rawTokens is absent. Active time excludes waits. */
@@ -181,8 +183,8 @@ export interface ItemSpend extends ItemBudget {
 	rawTokens?: number;
 	turns: number;
 	activeSeconds: number;
-	/** Percentage points of the plan's weekly window its plan-paid turns used (shown; the 5-hour share is `planPct`). */
-	planWeekPct?: number;
+	/** A plan-paid turn ended without the plan reporting any window: unless another turn saw one, tokens hold. */
+	planUnreported?: boolean;
 	/** A key-paid turn could not be priced: its dollars are not in `usd`, so the token budget holds too. */
 	usdUnknown?: boolean;
 	/** What the item's own turns used, by model, payer and sandbox size: what its cost is priced from (factory/cost.ts). */

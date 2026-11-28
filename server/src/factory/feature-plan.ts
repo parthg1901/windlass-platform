@@ -36,13 +36,16 @@ export const dimensions = ["tokens", "hostedSeconds"] as const;
 /** Planning receipts stay on the ledger. One implementer gets one item's budget on top of what planning spent. */
 export function singleAfterPlanning(
 	single: ItemBudget,
-	spent: Pick<ItemBudget, "tokens" | "hostedSeconds" | "usd" | "planPct">,
+	spent: Pick<ItemBudget, "tokens" | "hostedSeconds" | "usd" | "planPct" | "planWeekPct">,
 ): ItemBudget {
 	return {
 		tokens: Math.ceil(spent.tokens) + single.tokens,
 		hostedSeconds: Math.ceil(spent.hostedSeconds) + single.hostedSeconds,
 		...(single.usd !== undefined && { usd: Math.round(((spent.usd ?? 0) + single.usd) * 100) / 100 }),
 		...(single.planPct !== undefined && { planPct: Math.round(((spent.planPct ?? 0) + single.planPct) * 10) / 10 }),
+		...(single.planWeekPct !== undefined && {
+			planWeekPct: Math.round(((spent.planWeekPct ?? 0) + single.planWeekPct) * 10) / 10,
+		}),
 	};
 }
 

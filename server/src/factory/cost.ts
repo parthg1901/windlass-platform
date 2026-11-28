@@ -156,6 +156,35 @@ export function mergeUsage(usages: ReadonlyArray<SpendUsage | undefined>): Spend
 	return merged;
 }
 
+/**
+ * The model turns `after` holds beyond `before`: what an item used since an earlier reading of its usage (the user's
+ * day of model spend, user-items.ts). Sandbox time is left out.
+ */
+export function modelUsageSince(after: SpendUsage | undefined, before: SpendUsage | undefined): SpendUsage {
+	const since = noUsage();
+	const less = (a: UsageTokens, b: UsageTokens | undefined): UsageTokens => ({
+		inputTokens: Math.max(0, a.inputTokens - (b?.inputTokens ?? 0)),
+		cachedInputTokens: Math.max(0, a.cachedInputTokens - (b?.cachedInputTokens ?? 0)),
+		outputTokens: Math.max(0, a.outputTokens - (b?.outputTokens ?? 0)),
+	});
+	for (const line of after?.models ?? []) {
+		const old = before?.models.find(one => sameLine(one, line));
+		if (line.turns <= (old?.turns ?? 0)) continue;
+		since.models.push({
+			harness: line.harness,
+			model: line.model,
+			provider: line.provider,
+			payer: line.payer,
+			turns: line.turns - (old?.turns ?? 0),
+			unreported: Math.max(0, line.unreported - (old?.unreported ?? 0)),
+			agentUsd: Math.max(0, line.agentUsd - (old?.agentUsd ?? 0)),
+			...less(line, old),
+			priced: less(line.priced, old?.priced),
+		});
+	}
+	return since;
+}
+
 /** The catalog's price of a model, by its provider and id ("anthropic/claude-sonnet-4-5" or "claude-sonnet-4-5"). */
 export function modelPrice(
 	models: CostRates["models"],

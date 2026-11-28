@@ -211,6 +211,31 @@ import { sandboxTime } from "../lib/format";
 import { dayOf, reportedModelUsage, usesPlatformModel } from "../../../server/src/usage";
 import { createMockItems, MOCK_FACTORY_LIMITS, MOCK_MODEL_PRICES, type MockItemsState } from "./mock-items";
 import { HOUR, MINUTE } from "./mock-time";
+import { addTurn, noUsage, turnMeter } from "../../../server/src/factory/cost.js";
+
+/** Work items' model turns today: a few on a Settings key, more on the ChatGPT plan. */
+const MOCK_MODELS_TODAY = (() => {
+	const usage = noUsage();
+	const turn = (model: string, plan: boolean, inputTokens: number) =>
+		addTurn(
+			usage,
+			turnMeter({
+				harness: "windlass",
+				model,
+				key: { provider: plan ? "openai" : "anthropic", generation: "mock", ...(plan && { plan: true }) },
+				usage: {
+					inputTokens,
+					cachedInputTokens: Math.round(inputTokens * 0.85),
+					outputTokens: 9_000,
+					reasoningTokens: 0,
+				},
+				size: "standard",
+			}),
+		);
+	for (const tokens of [180_000, 240_000, 95_000]) turn("anthropic/claude-sonnet-4-5", false, tokens);
+	for (const tokens of [310_000, 120_000]) turn("gpt-5.3-codex", true, tokens);
+	return usage;
+})();
 
 /** The mock GitHub picture: drawn here, so nothing leaves the page. */
 const MOCK_AVATAR =
@@ -1880,6 +1905,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 			...numbers,
 			factoryLimits: MOCK_FACTORY_LIMITS,
 			usedModelTokens: world.modelTokens.get(dayOf(numbers.at)) ?? 0,
+			modelsToday: MOCK_MODELS_TODAY,
 			today,
 			days: [
 				...MOCK_HISTORY.map((seconds, index) => ({

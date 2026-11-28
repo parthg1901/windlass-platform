@@ -1053,6 +1053,27 @@ test("plan health: ChatGPT's sharing limit names no reset, so the plan is probed
 	);
 });
 
+test("plan health: Codex's window minutes name the window, so a weekly-only plan budgets on its week", async () => {
+	const { windowShare } = await import("../server/src/factory/budget.js");
+	const at = Date.UTC(2026, 10, 27, 12);
+	const read = (headers: Record<string, string>) => health.planReading("openai", { status: 200, headers }, at).windows;
+	// A plan with no 5-hour limit reports its weekly window as the primary one; a window of another length is "other".
+	const weekly = read({ "x-codex-primary-used-percent": "4", "x-codex-primary-window-minutes": "10080" });
+	const other = read({ "x-codex-primary-used-percent": "4", "x-codex-primary-window-minutes": "1440" });
+	assert.deepEqual(
+		[...weekly, ...other].map(w => w.kind),
+		["7d", "other"],
+	);
+	const later = read({ "x-codex-primary-used-percent": "5.5", "x-codex-primary-window-minutes": "10080" });
+	assert.equal(windowShare(weekly, later, "7d"), 1.5);
+	assert.equal(windowShare(weekly, later, "5h"), null);
+	// Without window minutes, primary is taken as the 5-hour window and secondary as the week.
+	assert.deepEqual(
+		read({ "x-codex-primary-used-percent": "1", "x-codex-secondary-used-percent": "2" }).map(w => w.kind),
+		["5h", "7d"],
+	);
+});
+
 test("plan health: two provider 401s in a row make a plan invalid; one, then a success, does not", () => {
 	const at = 1_000_000;
 	const unauthorized = (when: number) => health.planReading("anthropic", { status: 401, headers: {} }, when);

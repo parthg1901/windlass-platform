@@ -59,7 +59,8 @@ import {
 	type PlacementRoute,
 } from "../factory/placement.js";
 import { plannerMachines } from "../machines/details.js";
-import type { ChildPlacement, HostedSize, ItemFeed, PlanSubtask } from "../contract.js";
+import type { ChildPlacement, HostedSize, ItemFeed, PlanSubtask, SpendUsage } from "../contract.js";
+import { mergeUsage, modelUsageSince } from "../factory/cost.js";
 import { hostedCredentials } from "../credentials/index.js";
 import { itemHarnessProblem, knownHarness, subtaskHarnessProblem } from "../sandbox/harnesses.js";
 import { itemSessionId } from "../factory/feature-ids.js";
@@ -200,6 +201,8 @@ export const ITEM_TABLES = [
 	"CREATE INDEX IF NOT EXISTS attachments_item ON attachments(item, state)",
 	"CREATE TABLE IF NOT EXISTS attachment_sweep (id INTEGER PRIMARY KEY CHECK(id=1), schedule TEXT NOT NULL, at INTEGER NOT NULL)",
 	"CREATE TABLE IF NOT EXISTS items (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, summary TEXT NOT NULL, key TEXT, sent TEXT)",
+	// Work items' model turns of the UTC day (`modelsToday`): what an item's usage grew by, one row per change.
+	"CREATE TABLE IF NOT EXISTS models_day (id INTEGER PRIMARY KEY, day INTEGER NOT NULL, usage TEXT NOT NULL)",
 	// A creation's key and the digest of what it asked for, written before either of its actors is made: a creation tried
 	// again under that key with another body is refused even when the first never reached the index.
 	// Pin before the deterministic session actor is created, including across a lost creation reply.
@@ -481,6 +484,7 @@ async function noteItem(c: ItemsCtx, given: ItemSummary): Promise<void> {
 	if (!held || held.revision > summary.revision) return;
 	c.vars.items.items.set(summary.id, summary);
 	await c.db.execute("UPDATE items SET summary = ? WHERE id = ?", JSON.stringify(summary), summary.id);
+	await noteModelsToday(c.db, modelUsageSince(summary.spent.usage, held.spent.usage));
 	if (ended(summary))
 		await c.db.execute(
 			"UPDATE attachments SET ended_at=COALESCE(ended_at, ?) WHERE item=?",
@@ -541,6 +545,20 @@ function slackAct(c: ItemsCtx, input: SlackAnswer) {
 			? { kind: "approve_plan", version: input.version }
 			: { kind: "answer", question: input.question, choice: input.choice, ...(input.note && { note: input.note }) };
 	return act(c, uid, input.id, action, { user: input.slackUser, question: input.question });
+}
+
+/** Adds model turns to today's (`modelsToday`); only today's row is kept. */
+async function noteModelsToday(db: ItemsCtx["db"], fresh: SpendUsage): Promise<void> {
+	if (fresh.models.length === 0) return;
+	const today = dayOf(Date.now());
+	await db.execute("DELETE FROM models_day WHERE day < ?", today);
+	await db.execute("INSERT INTO models_day(day, usage) VALUES(?, ?)", today, JSON.stringify(fresh));
+}
+
+/** Work items' model turns today (`UsageView.modelsToday`). */
+export async function modelsToday(db: ItemsCtx["db"], now: number): Promise<SpendUsage> {
+	const rows = await db.execute<{ usage: string }>("SELECT usage FROM models_day WHERE day = ?", dayOf(now));
+	return mergeUsage(rows.map(row => JSON.parse(row.usage) as SpendUsage));
 }
 
 function knownItem(c: ItemsCtx, id: unknown): ItemSummary {

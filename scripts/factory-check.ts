@@ -3926,9 +3926,9 @@ expect(
 );
 
 {
-	const { budgetLeft, budgetUnits, overBudgetNow, runningSpend, turnBudget, turnUsd, windowShare } = await import(
-		"../server/src/factory/budget.js"
-	);
+	const { budgetLeft, budgetUnits, crossedStop, overBudgetNow, runningSpend, turnBudget, turnUsd, windowShare } =
+		await import("../server/src/factory/budget.js");
+	const { chargeTurn } = await import("../server/src/factory/change.js");
 	const spent = { tokens: 3_000_000, rawTokens: 9_000_000, turns: 2, activeSeconds: 60, hostedSeconds: 10 };
 	expect(
 		"budget units: dollars hold once a key turn is priced, and tokens no longer",
@@ -3942,6 +3942,53 @@ expect(
 			"Used its 20% of your 5-hour window." &&
 			budgetStop(FACTORY_DEFAULTS.item, { ...spent, planPct: 3 }, { kind: "hosted" }) === null,
 	);
+	expect(
+		"budget units: a plan's weekly share holds beside its 5-hour share, and the first used up stops it",
+		budgetStop(FACTORY_DEFAULTS.item, { ...spent, planPct: 4, planWeekPct: 3.2 }, { kind: "hosted" })?.sentence ===
+			"Used its 3% of your weekly window." &&
+			budgetStop(FACTORY_DEFAULTS.item, { ...spent, planPct: 21, planWeekPct: 3.2 }, { kind: "hosted" })?.cause ===
+				"planPct" &&
+			budgetStop(FACTORY_DEFAULTS.item, { ...spent, planPct: 4, planWeekPct: 1 }, { kind: "hosted" }) === null,
+	);
+	expect(
+		"budget units: a plan that reports only its weekly window holds to that window, not tokens",
+		JSON.stringify(budgetUnits(FACTORY_DEFAULTS.item, { planWeekPct: 1 })) ===
+			JSON.stringify({ usd: false, planPct: false, planWeekPct: true, tokens: false, hostedSeconds: true }) &&
+			budgetStop(FACTORY_DEFAULTS.item, { ...spent, planWeekPct: 1 }, { kind: "hosted" }) === null,
+	);
+	expect(
+		"budget units: a plan that reports no window holds to tokens, and says so",
+		budgetStop(FACTORY_DEFAULTS.item, { ...spent, planUnreported: true }, { kind: "hosted" })?.sentence ===
+			"Used its 2M-token budget. Counted in tokens: your plan doesn't report its usage." &&
+			budgetStop(FACTORY_DEFAULTS.item, spent, { kind: "hosted" })?.sentence === "Used its 2M-token budget.",
+	);
+	{
+		const charged = (plan?: { fiveHour: number | null; week: number | null }) => {
+			const item = newItem();
+			const planMeter = {
+				harness: "windlass" as const,
+				model: "gpt-5",
+				provider: "openai" as const,
+				payer: "plan" as const,
+				usage: null,
+				agentUsd: null,
+				size: null,
+			};
+			chargeTurn(item, { tokens: 10, hostedSeconds: 0, meter: planMeter, ...(plan && { plan }) });
+			return item.spent;
+		};
+		const none = charged();
+		const weekly = charged({ fiveHour: null, week: 0.4 });
+		expect(
+			"a plan-paid turn that saw no window marks the item's plan as unreported; one that saw its week does not",
+			none.planUnreported === true &&
+				none.planPct === undefined &&
+				weekly.planUnreported === undefined &&
+				weekly.planWeekPct === 0.4 &&
+				weekly.planPct === undefined,
+			JSON.stringify({ none, weekly }),
+		);
+	}
 	expect(
 		"budget units: a key turn that could not be priced leaves tokens holding too",
 		budgetStop(FACTORY_DEFAULTS.item, { ...spent, usd: 1, usdUnknown: true }, { kind: "hosted" })?.cause === "tokens" &&
@@ -3967,8 +4014,9 @@ expect(
 			windowShare([w("7d", 10, 1e9)], [w("7d", 11, 1e9)], "7d") === 1,
 	);
 	expect(
-		"a part's dollars and plan share follow its planned tokens",
-		JSON.stringify(partShare(FACTORY_DEFAULTS.item, 500_000)) === JSON.stringify({ usd: 1.25, planPct: 5 }) &&
+		"a part's dollars and both plan shares follow its planned tokens",
+		JSON.stringify(partShare(FACTORY_DEFAULTS.item, 500_000)) ===
+			JSON.stringify({ usd: 1.25, planPct: 5, planWeekPct: 0.8 }) &&
 			JSON.stringify(partShare({ tokens: 2_000_000, hostedSeconds: 1 }, 500_000)) === "{}",
 	);
 	const meter = {
@@ -4004,6 +4052,25 @@ expect(
 				JSON.stringify({ figure: "tokens", stopAt: 100_000 }) &&
 			turnBudget({ tokens: 2_000_000, hostedSeconds: 1, usd: 5 }, { ...spent, usd: 5.5 })?.stopAt === 0.25,
 		JSON.stringify(atUsd),
+	);
+	const both = turnBudget(FACTORY_DEFAULTS.item, { ...spent, planPct: 18, planWeekPct: 2 });
+	const weekOnly = turnBudget(FACTORY_DEFAULTS.item, { ...spent, planWeekPct: 1 });
+	const near = (a: number | undefined, b: number) => a !== undefined && Math.abs(a - b) < 1e-9;
+	expect(
+		"during a turn: a plan with both windows stops at the first crossed; a weekly-only plan at its week",
+		both?.figure === "planPct" &&
+			near(both.stopAt, 3) &&
+			both.also?.figure === "planWeekPct" &&
+			near(both.also.stopAt, 1.15) &&
+			JSON.stringify(crossedStop(both, { planShare: 1, planWeekShare: 1.2 })) ===
+				JSON.stringify({ figure: "planWeekPct", running: 1.2 }) &&
+			crossedStop(both, { planShare: 3.1, planWeekShare: 0.1 })?.figure === "planPct" &&
+			crossedStop(both, { planShare: 1, planWeekShare: null }) === null &&
+			weekOnly?.figure === "planWeekPct" &&
+			near(weekOnly.stopAt, 2.15) &&
+			weekOnly.also === undefined &&
+			runningSpend("planWeekPct", { planShare: 9, planWeekShare: 0.5 }) === 0.5,
+		JSON.stringify({ both, weekOnly }),
 	);
 	expect(
 		"during a turn: unknown spend never stops it, nor does a turn without a budget",
@@ -4069,6 +4136,34 @@ drive("an item on a plan asks in its share of the 5-hour window", newItem({ budg
 ]);
 
 const delivered = (o: Outcome) => o.effects.find(e => e.kind === "deliver") as Extract<Effect, { kind: "deliver" }>;
+drive("an item on a plan that reports only its week asks in its share of the weekly window", newItem(), [
+	{ fact: () => ({ kind: "start", by: "person:u1" }), state: "queued", effects: ["deliver", "check_turn"] },
+	{ fact: started(), state: "working", effects: ["check_turn"] },
+	{
+		fact: ended("unresolved", FAILING, { tokens: 10, spend: { plan: { fiveHour: null, week: 3.5 } } }),
+		state: "waiting",
+		wait: "budget",
+		effects: ["ask"],
+		also: o =>
+			holds(
+				o.item.wait?.sentence ===
+					"Its checks failed, and it used its 3% of your weekly window. Give it more to continue." &&
+					o.item.question?.choices[0]?.label === "Give it 3% more" &&
+					o.item.question?.cause === "planWeekPct",
+				`asked in the weekly share: ${o.item.wait?.sentence} ${o.item.question?.choices[0]?.label}`,
+			),
+	},
+	{
+		fact: answer("raise"),
+		state: "working",
+		effects: ["deliver", "check_turn"],
+		also: o =>
+			holds(
+				o.item.budget.planWeekPct === 6.5 && delivered(o).budget?.figure === "planWeekPct",
+				`3% more on what was used: ${o.item.budget.planWeekPct} ${JSON.stringify(delivered(o).budget)}`,
+			),
+	},
+]);
 drive(
 	"an item's turn stopped at its budget while it ran asks for more, and goes on where it stopped",
 	newItem({ budget: { usd: 4 } }),
@@ -4134,8 +4229,11 @@ drive(
 			effects: ["deliver", "check_turn"],
 			also: o =>
 				holds(
-					JSON.stringify(delivered(o).budget) === JSON.stringify({ figure: "planPct", stopAt: 2.25 }),
-					JSON.stringify(delivered(o).budget),
+					delivered(o).budget?.figure === "planPct" &&
+						Math.abs(delivered(o).budget!.stopAt - 2.25) < 1e-9 &&
+						delivered(o).budget?.also?.figure === "planWeekPct" &&
+						Math.abs(delivered(o).budget!.also!.stopAt - 2.15) < 1e-9,
+					`both windows hold the turn: ${JSON.stringify(delivered(o).budget)}`,
 				),
 		},
 		{ fact: started(), state: "working", effects: ["check_turn"] },

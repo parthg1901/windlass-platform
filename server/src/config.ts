@@ -91,9 +91,10 @@
  *                              items a user may file from GitHub issues a UTC day, drafts among them
  *                              (default 20)
  *   WLP_FACTORY_ITEM_TOKENS, WLP_FACTORY_ITEM_HOSTED_SECONDS, WLP_FACTORY_ITEM_USD (dollars, where a key pays),
- *   WLP_FACTORY_ITEM_PLAN_PCT (points of the plan's 5-hour window, where a plan pays)
- *                              a new work item's budget (default $5, 20% of the 5-hour window, 2,000,000
- *                              cost-weighted tokens where neither can be measured, cached input at a
+ *   WLP_FACTORY_ITEM_PLAN_PCT, WLP_FACTORY_ITEM_PLAN_WEEK_PCT (points of the plan's 5-hour and weekly windows,
+ *                              where a plan pays; each holds where the plan reports that window)
+ *                              a new work item's budget (default $5, 20% of the 5-hour window, 3% of the
+ *                              weekly window, 2,000,000 cost-weighted tokens where none can be measured, cached input at a
  *                              tenth, and 2 hours of hosted sandbox); used up, the item asks
  *                              its person for more. The same on every server, like all of these
  *   WLP_HTTP_PORT, PORT        where the platform's HTTP routes listen (`/platform/info`, `/health`);
@@ -1024,6 +1025,7 @@ function readFactory(): FactoryLimits & { reviewer: boolean; screenshots: boolea
 			hostedSeconds: count("WLP_FACTORY_ITEM_HOSTED_SECONDS", d.item.hostedSeconds, 7 * 86_400),
 			usd: count("WLP_FACTORY_ITEM_USD", d.item.usd ?? 5, 100_000),
 			planPct: count("WLP_FACTORY_ITEM_PLAN_PCT", d.item.planPct ?? 20, 1000),
+			planWeekPct: count("WLP_FACTORY_ITEM_PLAN_WEEK_PCT", d.item.planWeekPct ?? 3, 1000),
 		},
 	};
 }

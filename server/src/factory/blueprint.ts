@@ -1877,7 +1877,7 @@ function chargeChild(
 		changed = true;
 	}
 	// A part's dollars and plan share are its own, like its usage: the feature sums them when it is shown.
-	for (const figure of ["usd", "planPct", "planWeekPct", "usdUnknown"] as const) {
+	for (const figure of ["usd", "planPct", "planWeekPct", "usdUnknown", "planUnreported"] as const) {
 		if (observed[figure] !== undefined && observed[figure] !== job.spent[figure]) {
 			(job.spent as unknown as Record<string, unknown>)[figure] = observed[figure];
 			changed = true;
@@ -1906,7 +1906,7 @@ function chargeChild(
 			changed = true;
 		}
 		// A part given more dollars or plan share: the feature's own allowance is tokens, so only the part's record grows.
-		for (const figure of ["usd", "planPct"] as const) {
+		for (const figure of ["usd", "planPct", "planWeekPct"] as const) {
 			const given = budget[figure];
 			if (given !== undefined && given > ((job.budget ?? old)[figure] ?? 0)) {
 				job.budget = { ...(job.budget ?? old), [figure]: given };
@@ -2348,6 +2348,7 @@ const RAISED: Record<keyof ItemBudget, (n: number) => string> = {
 	hostedSeconds: n => `The hosted time budget is now ${spellSeconds(n)}.`,
 	usd: n => `The budget is now ${spellUsd(n)}.`,
 	planPct: n => `The budget is now ${spellPct(n)} of your 5-hour window.`,
+	planWeekPct: n => `The budget is now ${spellPct(n)} of your weekly window.`,
 };
 
 /** Stored round-cap causes resume like a repeated failure. */
@@ -2380,7 +2381,8 @@ function raise(
 		case "tokens":
 		case "hostedSeconds":
 		case "usd":
-		case "planPct": {
+		case "planPct":
+		case "planWeekPct": {
 			const before = item.mode === "orchestrate" && cause === "tokens" ? ownTokens(item) : (item.budget[cause] ?? 0);
 			const spent =
 				item.mode === "orchestrate" && cause === "tokens"
@@ -2388,7 +2390,7 @@ function raise(
 					: (item.spent[cause] ?? 0);
 			const asked = budget?.[cause];
 			// Dollars keep their cents and plan shares a tenth of a point; tokens and seconds are whole.
-			const exact = cause === "usd" || cause === "planPct";
+			const exact = cause === "usd" || cause === "planPct" || cause === "planWeekPct";
 			const round = (n: number) => (exact ? Math.round(n * 100) / 100 : Math.round(n));
 			// The person's own figure, when it is above what was spent; otherwise one more start's worth on top of what was spent.
 			const next =

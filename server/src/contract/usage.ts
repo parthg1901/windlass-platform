@@ -1,4 +1,5 @@
 import type { ModelProvider } from "./account.js";
+import type { SpendUsage } from "./cost.js";
 import type { FactoryLimits } from "./items.js";
 import type { HostedSize, HostedSizeOption } from "./hosted-sizes.js";
 
@@ -156,6 +157,8 @@ export interface UsageView extends UsageNumbers {
 	providerTokens?: { provider: ModelProvider; tokens: number }[];
 	/** Model usage reported by requests using the platform credential on this UTC day. */
 	usedModelTokens: number;
+	/** Work items' model turns on this UTC day, by model and payer: priced in the browser like an item's cost (factory/cost.ts). */
+	modelsToday?: SpendUsage;
 	factoryLimits: FactoryLimits;
 	/** Today's sandbox time by agent, the most first; an agent whose sandbox runs now is among them. */
 	today: UsageSession[];

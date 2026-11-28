@@ -3,7 +3,7 @@
  * hosted sandbox paid, "on your Claude plan" for what a subscription carried, and "cost unknown" where the
  * platform could not price a part. Token counts are only details.
  */
-import type { CostRates, ItemSize, ItemSummary, ModelProvider, WorkType } from "@contract";
+import type { CostRates, ItemSize, ItemSummary, ModelProvider, SpendUsage, WorkType } from "@contract";
 import { PLAN_NAMES } from "@contract";
 import { type CostLine, type ItemCost, itemCost, mergeUsage } from "../../../server/src/factory/cost.js";
 import { SMALL_PLAN_LIMIT } from "../../../server/src/factory/feature-plan.js";
@@ -41,6 +41,14 @@ export function costWords(cost: ItemCost): string | null {
 	if (cost.unknown) parts.push(parts.length ? "some cost unknown" : "cost unknown");
 	const words = parts.join(" + ");
 	return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * Work items' model turns of a day as Usage's figure: "$1.23", "$1.23 + on your Claude plan", "On your ChatGPT plan";
+ * "$0.00" before any turn. Priced like an item's cost.
+ */
+export function todayCostWords(usage: SpendUsage | undefined, rates: CostRates): string {
+	return costWords(itemCost(usage, rates)) ?? usd(0);
 }
 
 const PAYER_WORDS: Record<CostLine["payer"], string> = {

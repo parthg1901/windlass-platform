@@ -24,7 +24,7 @@ import { sources, UNTRUSTED_SOURCE_MAX } from "../factory/untrusted.js";
 import type { TokenReceipt } from "../usage.js";
 import type { RawAccess } from "rivetkit/db";
 import type { RepositoryCheck, TurnOutcome, TurnUsage, Verified } from "../contract.js";
-import { turnSpend, type TurnBudget } from "../factory/budget.js";
+import { TURN_FIGURES, turnSpend, type TurnBudget, type TurnFigure, type TurnStop } from "../factory/budget.js";
 import type { AgentTurn } from "../factory/types.js";
 import type { ItemReview } from "../contract.js";
 import type { ReviewerTaskReport } from "../factory/reviewer-task.js";
@@ -290,13 +290,21 @@ export function deliveryOf(input: unknown): Delivery | null {
 	};
 }
 
-/** A turn's budget of a delivery or a row, checked; null for none or one that cannot be taken. */
-function budgetOf(value: unknown): TurnBudget | null {
+/** One stop of a turn's budget, checked; null for one that cannot be taken. */
+function stopOf(value: unknown): TurnStop | null {
 	if (typeof value !== "object" || value === null) return null;
 	const { figure, stopAt } = value as Record<string, unknown>;
-	if (figure !== "usd" && figure !== "planPct" && figure !== "tokens") return null;
+	if (!TURN_FIGURES.includes(figure as TurnFigure)) return null;
 	if (typeof stopAt !== "number" || !Number.isFinite(stopAt) || stopAt < 0) return null;
-	return { figure, stopAt };
+	return { figure: figure as TurnFigure, stopAt };
+}
+
+/** A turn's budget of a delivery or a row, checked; null for none or one that cannot be taken. */
+function budgetOf(value: unknown): TurnBudget | null {
+	const first = stopOf(value);
+	if (!first) return null;
+	const also = stopOf((value as Record<string, unknown>).also);
+	return also ? { ...first, also } : first;
 }
 
 /** A whole-task prompt of a delivery or a row, checked; null for none or one that cannot be taken. */

@@ -795,6 +795,8 @@ export function chargeTurn(item: FactoryItem, spend: TurnSpend): void {
 	const plan = spend.plan ?? agentWindow(spend);
 	if (plan?.fiveHour != null) item.spent.planPct = roundPoints((item.spent.planPct ?? 0) + plan.fiveHour);
 	if (plan?.week != null) item.spent.planWeekPct = roundPoints((item.spent.planWeekPct ?? 0) + plan.week);
+	// A connected plan that reported neither window: tokens hold, and the item says why.
+	if (spend.meter?.payer === "plan" && plan?.fiveHour == null && plan?.week == null) item.spent.planUnreported = true;
 	item.spent.turns += 1;
 	if (item.place.kind === "hosted") item.spent.hostedSeconds = Math.max(item.spent.hostedSeconds, spend.hostedSeconds);
 	noteHostedTime(item);
@@ -1144,7 +1146,7 @@ export function stop(c: Change, cause: StopCause, sentence: string, resume: Turn
 export function extraOf(item: FactoryItem, cause: keyof ItemBudget): number {
 	const budget = item.budget[cause] ?? (item.singleBudget ?? item.budget)[cause] ?? 1;
 	if (cause === "usd") return Math.max(1, Math.ceil(budget / 4));
-	if (cause === "planPct") return Math.max(1, budget);
+	if (cause === "planPct" || cause === "planWeekPct") return Math.max(1, budget);
 	return Math.max(1, (item.singleBudget ?? item.budget)[cause] ?? 1);
 }
 
@@ -1153,6 +1155,7 @@ const EXTRA_WORDS: Record<keyof ItemBudget, (n: number) => string> = {
 	hostedSeconds: n => `${spellSeconds(n)} more hosted time`,
 	usd: n => `${spellUsd(n)} more`,
 	planPct: n => `${spellPct(n)} more`,
+	planWeekPct: n => `${spellPct(n)} more`,
 };
 const spellExtra = (cause: keyof ItemBudget, n: number) => EXTRA_WORDS[cause](n);
 

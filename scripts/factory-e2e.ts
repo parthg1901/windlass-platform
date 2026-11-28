@@ -3698,14 +3698,17 @@ async function memoryChecks(): Promise<void> {
 			startsRun: true,
 		};
 		await receive(db as never, { ...delivery, key: "with", budget: { figure: "usd", stopAt: 1.2 } }, T);
+		const both = { figure: "planPct", stopAt: 2.25, also: { figure: "planWeekPct", stopAt: 0.5 } } as const;
+		await receive(db as never, { ...delivery, key: "both", budget: both }, T);
 		await receive(db as never, { ...delivery, key: "without" }, T);
 		await receive(db as never, { ...delivery, key: "bad", budget: { figure: "euros", stopAt: 1 } as never }, T);
-		const [withBudget, without, bad] = await Promise.all(
-			["with", "without", "bad"].map(key => inboxRow(db as never, key)),
+		const [withBudget, withBoth, without, bad] = await Promise.all(
+			["with", "both", "without", "bad"].map(key => inboxRow(db as never, key)),
 		);
 		raw.close();
 		assert(
 			JSON.stringify(withBudget?.budget) === JSON.stringify({ figure: "usd", stopAt: 1.2 }) &&
+				JSON.stringify(withBoth?.budget) === JSON.stringify(both) &&
 				without?.budget === null &&
 				bad?.budget === null,
 			`rows: ${JSON.stringify([withBudget?.budget, without?.budget, bad?.budget])}`,
@@ -3724,8 +3727,10 @@ async function memoryChecks(): Promise<void> {
 				outputTokens,
 				reasoningTokens: 0,
 			});
-			const watch = (budget: { figure: "usd" | "planPct" | "tokens"; stopAt: number }, more: object = {}) => {
+			type Stop = { figure: "usd" | "planPct" | "planWeekPct" | "tokens"; stopAt: number };
+			const watch = (budget: Stop & { also?: Stop }, more: object = {}) => {
 				const over: number[] = [];
+				const figures: string[] = [];
 				const watcher = new BudgetWatch({
 					budget,
 					harness: "windlass",
@@ -3733,10 +3738,13 @@ async function memoryChecks(): Promise<void> {
 					earlier: null,
 					planWindows: async () => null,
 					prices,
-					onOver: running => over.push(running),
+					onOver: (running, figure) => {
+						over.push(running);
+						figures.push(figure);
+					},
 					...more,
 				});
-				return { watcher, over };
+				return { watcher, over, figures };
 			};
 			// A key turn: $1.25 per million in, $10 per million out; it may use $1.20.
 			const key = watch({ figure: "usd", stopAt: 1.2 });
@@ -3780,6 +3788,42 @@ async function memoryChecks(): Promise<void> {
 			now = w(32.5);
 			await plan.watcher.readPlan();
 			plan.watcher.close();
+			// A plan with both windows: the turn stops at whichever it crosses first, here its week.
+			const ww = (fiveHour: number, week: number) => [
+				...w(fiveHour),
+				{ kind: "7d" as const, usedPct: week, resetsAt: T + 86_400_000, observedAt: T, source: "header" as const },
+			];
+			let both = ww(30, 10);
+			const twoWindows = watch(
+				{ figure: "planPct", stopAt: 2.25, also: { figure: "planWeekPct", stopAt: 0.5 } },
+				{
+					credential: { model: "gpt-5", key: { provider: "openai", generation: "p1", plan: true } },
+					planAtStart: ww(30, 10),
+					planWindows: async () => both,
+				},
+			);
+			both = ww(31, 10.3);
+			await twoWindows.watcher.readPlan();
+			const twoBelow = twoWindows.over.length;
+			both = ww(31.5, 10.6);
+			await twoWindows.watcher.readPlan();
+			twoWindows.watcher.close();
+			// A weekly-only plan: its week holds the turn, and a 5-hour window it never reports changes nothing.
+			const weekOnly = (week: number) => [
+				{ kind: "7d" as const, usedPct: week, resetsAt: T + 86_400_000, observedAt: T, source: "header" as const },
+			];
+			let weekNow = weekOnly(10);
+			const weekly = watch(
+				{ figure: "planWeekPct", stopAt: 1 },
+				{
+					credential: { model: "gpt-5", key: { provider: "openai", generation: "p1", plan: true } },
+					planAtStart: weekOnly(10),
+					planWindows: async () => weekNow,
+				},
+			);
+			weekNow = weekOnly(11.25);
+			await weekly.watcher.readPlan();
+			weekly.watcher.close();
 			assert(
 				below === 0 &&
 					key.over.length === 1 &&
@@ -3789,10 +3833,17 @@ async function memoryChecks(): Promise<void> {
 					JSON.stringify(tokens.over) === "[1100]" &&
 					acp.over.length === 0 &&
 					planBelow === 0 &&
-					JSON.stringify(plan.over) === "[2.5]",
-				`stops: ${JSON.stringify({ below, key: key.over, unknown: unknown.over, tokensBelow, tokens: tokens.over, acp: acp.over, planBelow, plan: plan.over })}`,
+					JSON.stringify(plan.over) === "[2.5]" &&
+					JSON.stringify(plan.figures) === '["planPct"]' &&
+					twoBelow === 0 &&
+					twoWindows.over.length === 1 &&
+					Math.abs(twoWindows.over[0]! - 0.6) < 1e-9 &&
+					JSON.stringify(twoWindows.figures) === '["planWeekPct"]' &&
+					JSON.stringify(weekly.over) === "[1.25]" &&
+					JSON.stringify(weekly.figures) === '["planWeekPct"]',
+				`stops: ${JSON.stringify({ below, key: key.over, unknown: unknown.over, tokensBelow, tokens: tokens.over, acp: acp.over, planBelow, plan: plan.over, twoBelow, two: twoWindows.over, twoFigures: twoWindows.figures, weekly: weekly.over })}`,
 			);
-			return "stopped once past $1.20 at $1.50, past 1,000 tokens, past 2.25 points of the window; never below or unknown";
+			return "stopped once past $1.20 at $1.50, past 1,000 tokens, past 2.25 points of the 5-hour window, at the first crossed of two windows, and on a weekly-only plan's week; never below or unknown";
 		},
 	);
 

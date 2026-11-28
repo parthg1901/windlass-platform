@@ -6,6 +6,8 @@ import { Dialog } from "../components/Dialog";
 import { FoldRows } from "../components/Fold";
 import { FactoryUsage } from "../components/FactoryUsage";
 import { CostSummary } from "../components/CostSummary";
+import { CostFigure } from "../components/CostFigure";
+import { todayCostWords } from "../lib/cost";
 import { MachineUsage } from "../components/MachineUsage";
 import { WarnIcon } from "../components/Icons";
 import { moveBetweenTabs } from "../components/Tabs";
@@ -25,7 +27,7 @@ import {
 import { linkProps } from "../lib/router";
 import { perHour, sizeName, sizeSpec } from "../lib/sizes";
 import { useApp, useAuth } from "../state/app";
-import { useNow } from "../state/hooks";
+import { useCostRates, useNow } from "../state/hooks";
 import { readTwice } from "../lib/retry";
 
 /** A length of sandbox time in a sentence: the number and its unit stay on one line. */
@@ -208,6 +210,7 @@ function Meter({ view }: { view: UsageView }) {
 export function Usage() {
 	const { platform } = useApp();
 	const { view, error, items, reload, replace } = useUsage();
+	const rates = useCostRates();
 	const now = useNow(15_000);
 	const [showHeld, setShowHeld] = useState(false);
 	const [freeing, setFreeing] = useState<KeptSandbox | null>(null);
@@ -594,21 +597,11 @@ export function Usage() {
 						</p>
 					</div>
 					<div className="usage-summary-cell">
-						<h2 className="usage-summary-label">Model tokens today</h2>
+						<h2 className="usage-summary-label">Models today</h2>
 						<p className="usage-summary-figure">
-							<strong>{compact(view.usedModelTokens)}</strong>
-							{view.factoryLimits.dailyTokens === null ? null : (
-								<span> of {compact(view.factoryLimits.dailyTokens)}</span>
-							)}
+							<strong>{rates ? <CostFigure words={todayCostWords(view.modelsToday, rates)} /> : "…"}</strong>
 						</p>
-						<p className="usage-summary-sub">
-							{view.factoryLimits.dailyTokens === null ? "No daily cap" : "On Windlass’s sign-in"}
-						</p>
-						{view.providerTokens?.map(row => (
-							<p key={row.provider} className="usage-summary-sub">
-								Your {row.provider} key: {compact(row.tokens)}
-							</p>
-						))}
+						<p className="usage-summary-sub">Work items' turns, at today's prices</p>
 					</div>
 					{price && todayUsd !== null ? (
 						<div className="usage-summary-cell">
@@ -670,6 +663,21 @@ export function Usage() {
 										{running === 0
 											? "no sandbox is running now"
 											: `for ${plural(running, "sandbox", "sandboxes")} running now; what one does not use is free again when it stops`}
+									</dd>
+								</div>
+								<div>
+									<dt>Model tokens</dt>
+									<dd className="usage-number">
+										{compact(view.usedModelTokens)}
+										{view.factoryLimits.dailyTokens === null ? null : (
+											<> of {compact(view.factoryLimits.dailyTokens)}</>
+										)}
+									</dd>
+									<dd className="usage-gloss">
+										{view.factoryLimits.dailyTokens === null
+											? "on Windlass’s sign-in today; no daily cap"
+											: "on Windlass’s sign-in today"}
+										{view.providerTokens?.map(row => `; your ${row.provider} key: ${compact(row.tokens)}`).join("")}
 									</dd>
 								</div>
 								{allowance !== null ? (

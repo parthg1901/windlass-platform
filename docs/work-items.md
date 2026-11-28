@@ -520,7 +520,7 @@ setting that is not a whole number in its range stops the server when it starts.
 | Limit | Setting | Default |
 |---|---|---|
 | A user's hosted sandboxes at work at once, their own agents and their items' together | `WLP_FACTORY_HOSTED_RUNNING` | 3 (at most 100) |
-| A new item's budget: dollars where a key pays, points of the plan's 5-hour window where a plan pays, cost-weighted tokens where neither can be measured, hosted sandbox seconds | `WLP_FACTORY_ITEM_USD`, `WLP_FACTORY_ITEM_PLAN_PCT`, `WLP_FACTORY_ITEM_TOKENS`, `WLP_FACTORY_ITEM_HOSTED_SECONDS` | $5, 20%, 2,000,000 tokens, 7200 (2 hours) |
+| A new item's budget: dollars where a key pays, points of the plan's 5-hour and weekly windows where a plan pays (each where the plan reports it), cost-weighted tokens where none can be measured, hosted sandbox seconds | `WLP_FACTORY_ITEM_USD`, `WLP_FACTORY_ITEM_PLAN_PCT`, `WLP_FACTORY_ITEM_PLAN_WEEK_PCT`, `WLP_FACTORY_ITEM_TOKENS`, `WLP_FACTORY_ITEM_HOSTED_SECONDS` | $5, 20%, 3%, 2,000,000 tokens, 7200 (2 hours) |
 | Items a user files from GitHub and Linear together in a UTC day, drafts among them | `WLP_FACTORY_GITHUB_ITEMS_PER_DAY` | 20 |
 
 An item's hosted sandbox counts against the user's daily allowance and kept sandboxes as any other ("Usage

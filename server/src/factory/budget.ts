@@ -14,8 +14,8 @@
  *              nothing here can raise; the runner queues turns past them
  *
  * An item's own budget is in the units of what pays for its turns: dollars where an API key pays, percentage
- * points of the plan's 5-hour window where a plan pays, and a cost-weighted token figure only where neither can be
- * measured (and, hosted, its sandbox time). When it is used up the item asks its person for more; it never throws
+ * points of the plan's windows where a plan pays (its 5-hour window and its weekly window, each where the plan reports
+ * it), and a cost-weighted token figure only where none can be measured (and, hosted, its sandbox time). When it is used up the item asks its person for more; it never throws
  * away work.
  *
  * The numbers are `FACTORY_DEFAULTS`, the defaults of the WLP_FACTORY_* settings config.ts reads. The day's
@@ -52,7 +52,7 @@ export const FACTORY_DEFAULTS: FactoryLimits = {
 	githubItemsPerDay: 20,
 	attachments: { bytes: 2 * 1024 * 1024, perItem: 40, accountBytes: 1_073_741_824, days: 180 },
 	hostedRunning: 3,
-	item: { tokens: 2_000_000, hostedSeconds: 2 * 3600, usd: 5, planPct: 20 },
+	item: { tokens: 2_000_000, hostedSeconds: 2 * 3600, usd: 5, planPct: 20, planWeekPct: 3 },
 };
 
 /**
@@ -224,31 +224,56 @@ export function spellPct(points: number): string {
 	return `${Number(points.toFixed(points < 10 ? 1 : 0))}%`;
 }
 
+/** Said where a plan paid and reported none of its windows, so the item is held to tokens instead. */
+export const PLAN_UNREPORTED = "Counted in tokens: your plan doesn't report its usage.";
+
+/** Whether tokens hold an item because its plan reported no window it could be measured in. */
+export const planUnreported = (spent: Pick<ItemSpend, "planUnreported" | "planPct" | "planWeekPct" | "usd">): boolean =>
+	!!spent.planUnreported && spent.planPct === undefined && spent.planWeekPct === undefined && spent.usd === undefined;
+
 const BUDGET_WORDS: Record<keyof ItemBudget, (spent: ItemSpend, budget: number) => string> = {
-	tokens: (_spent, budget) => `Used its ${spellTokens(budget)}-token budget.`,
+	tokens: (spent, budget) =>
+		`Used its ${spellTokens(budget)}-token budget.${planUnreported(spent) ? ` ${PLAN_UNREPORTED}` : ""}`,
 	hostedSeconds: (spent, budget) =>
 		`This item's hosted sandbox has run for ${spellSeconds(spent.hostedSeconds)} of its ${spellSeconds(budget)}.`,
 	usd: (spent, budget) => `Used ${spellUsd(spent.usd ?? 0)} of its ${spellUsd(budget)} budget.`,
 	planPct: (_spent, budget) => `Used its ${spellPct(budget)} of your 5-hour window.`,
+	planWeekPct: (_spent, budget) => `Used its ${spellPct(budget)} of your weekly window.`,
 };
 
+/** The plan's windows a budget is kept in, by figure. */
+export const PLAN_WINDOWS = { planPct: "5h", planWeekPct: "7d" } as const;
+export type PlanFigure = keyof typeof PLAN_WINDOWS;
+
 /** The figures of a budget, in the order a stop names them. */
-export const BUDGET_FIGURES = ["usd", "planPct", "tokens", "hostedSeconds"] as const satisfies ReadonlyArray<
-	keyof ItemBudget
->;
+export const BUDGET_FIGURES = [
+	"usd",
+	"planPct",
+	"planWeekPct",
+	"tokens",
+	"hostedSeconds",
+] as const satisfies ReadonlyArray<keyof ItemBudget>;
 
 /**
- * Which figures hold an item now, by what paid for its turns: dollars once a key-paid turn was priced, the plan's
- * 5-hour share once a plan-paid turn saw its window, tokens where neither did (or a key turn could not be priced).
- * An item without a dollar or plan budget (filed before they were kept, a feature's own allowance) holds to tokens.
+ * Which figures hold an item now, by what paid for its turns: dollars once a key-paid turn was priced, a plan's share
+ * of each window it reports once a plan-paid turn saw that window (5-hour and weekly: both hold, and the first used up
+ * stops it), tokens where none did (or a key turn could not be priced, or the plan reports no window). An item without
+ * a dollar or plan budget (filed before they were kept, a feature's own allowance) holds to tokens.
  */
 export function budgetUnits(
-	budget: Pick<ItemBudget, "usd" | "planPct">,
-	spent: Pick<ItemSpend, "usd" | "planPct" | "usdUnknown">,
+	budget: Pick<ItemBudget, "usd" | "planPct" | "planWeekPct">,
+	spent: Pick<ItemSpend, "usd" | "planPct" | "planWeekPct" | "usdUnknown">,
 ): Record<keyof ItemBudget, boolean> {
 	const usd = budget.usd !== undefined && spent.usd !== undefined;
 	const planPct = budget.planPct !== undefined && spent.planPct !== undefined;
-	return { usd, planPct, tokens: (!usd && !planPct) || !!spent.usdUnknown, hostedSeconds: true };
+	const planWeekPct = budget.planWeekPct !== undefined && spent.planWeekPct !== undefined;
+	return {
+		usd,
+		planPct,
+		planWeekPct,
+		tokens: (!usd && !planPct && !planWeekPct) || !!spent.usdUnknown,
+		hostedSeconds: true,
+	};
 }
 
 /**
@@ -270,14 +295,16 @@ export function budgetStop(
 }
 
 /**
- * What a part of a feature is given in dollars and plan share: the item's, in the proportion of its planned tokens to
+ * What a part of a feature is given in dollars and plan shares: the item's, in the proportion of its planned tokens to
  * an item's (the planner budgets in tokens only). None where the item's budget has none.
  */
-export function partShare(single: ItemBudget, tokens: number): Pick<ItemBudget, "usd" | "planPct"> {
+export function partShare(single: ItemBudget, tokens: number): Pick<ItemBudget, "usd" | PlanFigure> {
 	const ratio = single.tokens > 0 ? Math.min(1, tokens / single.tokens) : 1;
+	const share = (pct: number) => Math.max(0.1, Math.round(pct * ratio * 10) / 10);
 	return {
 		...(single.usd !== undefined && { usd: Math.max(0.01, Math.round(single.usd * ratio * 100) / 100) }),
-		...(single.planPct !== undefined && { planPct: Math.max(0.1, Math.round(single.planPct * ratio * 10) / 10) }),
+		...(single.planPct !== undefined && { planPct: share(single.planPct) }),
+		...(single.planWeekPct !== undefined && { planWeekPct: share(single.planWeekPct) }),
 	};
 }
 
@@ -310,13 +337,14 @@ export function windowShare(
 	return Math.max(0, renewed ? after.usedPct! : after.usedPct! - before.usedPct!);
 }
 
+/** The figures a running turn can be stopped at, in the order they hold an item. */
+export const TURN_FIGURES = ["usd", "planPct", "planWeekPct", "tokens"] as const;
+export type TurnFigure = (typeof TURN_FIGURES)[number];
+
 /** What an item has left of the figure that holds it, for a turn about to start. Undefined where nothing measurable holds it. */
-export function budgetLeft(
-	budget: ItemBudget,
-	spent: ItemSpend,
-): { figure: "usd" | "planPct" | "tokens"; left: number } | undefined {
+export function budgetLeft(budget: ItemBudget, spent: ItemSpend): { figure: TurnFigure; left: number } | undefined {
 	const units = budgetUnits(budget, spent);
-	for (const figure of ["usd", "planPct", "tokens"] as const) {
+	for (const figure of TURN_FIGURES) {
 		const cap = budget[figure];
 		if (units[figure] && cap !== undefined) return { figure, left: Math.max(0, cap - (spent[figure] ?? 0)) };
 	}
@@ -326,45 +354,82 @@ export function budgetLeft(
 /** How far past its budget a running turn goes before it is stopped: a share of the item's whole budget in that figure. */
 export const TURN_BUDGET_GRACE = 0.05;
 
+/** One figure a running turn is stopped at, and how much of it the turn may use in its unit. */
+export interface TurnStop {
+	figure: TurnFigure;
+	/** What the turn may use: dollars, points of one of the plan's windows, or weighted tokens. */
+	stopAt: number;
+}
+
 /**
  * Where an item's turn is stopped while it runs (#100a): the figure that holds the item (`budgetLeft`) and how much of
  * it the turn may use, what was left plus a small grace (`TURN_BUDGET_GRACE`), so that a turn about to finish is not
- * cut off for a few cents. Decided with the turn (change.ts `nextTurn`) and handed to its session with the delivery.
+ * cut off for a few cents. Where both of a plan's windows hold the item, the weekly one is `also`: the turn stops at
+ * whichever it reaches first. Decided with the turn (change.ts `nextTurn`) and handed to its session with the delivery.
  */
-export interface TurnBudget {
-	figure: "usd" | "planPct" | "tokens";
-	/** What the turn may use, in the figure's unit: dollars, points of the plan's 5-hour window, or weighted tokens. */
-	stopAt: number;
+export interface TurnBudget extends TurnStop {
+	also?: TurnStop;
 }
 
 export function turnBudget(budget: ItemBudget, spent: ItemSpend): TurnBudget | undefined {
 	const held = budgetLeft(budget, spent);
 	if (!held) return undefined;
-	const grace = (budget[held.figure] ?? 0) * TURN_BUDGET_GRACE;
-	const stopAt = held.figure === "tokens" ? Math.round(held.left + grace) : held.left + grace;
-	return { figure: held.figure, stopAt };
+	const stop = (figure: TurnFigure, left: number): TurnStop => {
+		const grace = (budget[figure] ?? 0) * TURN_BUDGET_GRACE;
+		return { figure, stopAt: figure === "tokens" ? Math.round(left + grace) : left + grace };
+	};
+	const first = stop(held.figure, held.left);
+	const week = budget.planWeekPct;
+	if (held.figure !== "planPct" || week === undefined || !budgetUnits(budget, spent).planWeekPct) return first;
+	return { ...first, also: stop("planWeekPct", Math.max(0, week - (spent.planWeekPct ?? 0))) };
 }
 
 /**
- * During a turn: whether what it used so far in its budget's figure (`running`) reached where it stops. Unknown use
+ * During a turn: whether what it used so far in a stop's figure (`running`) reached where it stops. Unknown use
  * (null or undefined: a price not known, a window not seen, an agent that reports its tokens only at the end) never
  * stops a turn. On true the session stops the turn as a person's Stop would, and the item asks its budget question.
  */
-export function overBudgetNow(budget: TurnBudget | undefined, running: number | null | undefined): boolean {
-	return budget !== undefined && typeof running === "number" && Number.isFinite(running) && running >= budget.stopAt;
+export function overBudgetNow(stop: TurnStop | undefined, running: number | null | undefined): boolean {
+	return stop !== undefined && typeof running === "number" && Number.isFinite(running) && running >= stop.stopAt;
+}
+
+/** What is known live of a running turn's use (`runningSpend`). */
+export interface RunningSeen {
+	usd?: number | null;
+	planShare?: number | null;
+	planWeekShare?: number | null;
+	tokens?: number | null;
 }
 
 /**
  * What a running turn used so far in `figure`, from what is known of it live: its dollars where a key pays (`usd`,
- * priced as at its end, `turnUsd`), its rise in the plan's 5-hour window where a plan pays (`planShare`, `windowShare`),
- * or its weighted tokens where its agent's tokens count and come as it works (`tokens`). Null where it is not known.
+ * priced as at its end, `turnUsd`), its rise in each of the plan's windows where a plan pays (`planShare` for the
+ * 5-hour window, `planWeekShare` for the weekly one, `windowShare`), or its weighted tokens where its agent's tokens
+ * count and come as it works (`tokens`). Null where it is not known.
  */
-export function runningSpend(
-	figure: TurnBudget["figure"],
-	seen: { usd?: number | null; planShare?: number | null; tokens?: number | null },
-): number | null {
-	const value = figure === "usd" ? seen.usd : figure === "planPct" ? seen.planShare : seen.tokens;
+export function runningSpend(figure: TurnFigure, seen: RunningSeen): number | null {
+	const value =
+		figure === "usd"
+			? seen.usd
+			: figure === "planPct"
+				? seen.planShare
+				: figure === "planWeekPct"
+					? seen.planWeekShare
+					: seen.tokens;
 	return typeof value === "number" ? value : null;
+}
+
+/** The first of a turn's stops it reached, with what it used of that figure; null while it is within all of them. */
+export function crossedStop(
+	budget: TurnBudget | undefined,
+	seen: RunningSeen,
+): { figure: TurnFigure; running: number } | null {
+	if (!budget) return null;
+	for (const stop of [budget, ...(budget.also ? [budget.also] : [])]) {
+		const running = runningSpend(stop.figure, seen);
+		if (overBudgetNow(stop, running)) return { figure: stop.figure, running: running! };
+	}
+	return null;
 }
 
 // ---------------------------------------------------------------------------------------------
