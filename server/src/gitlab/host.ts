@@ -8,7 +8,8 @@ import {
 	type CiRun,
 	type CiTarget,
 } from "../codehost/ci.js";
-import type { CodeHost, Pull } from "../codehost/types.js";
+import { GitCredentialRefused } from "../codehost/credential.js";
+import type { CodeHost, GitAccess, GitCredential, Pull } from "../codehost/types.js";
 import { redact } from "../github/redact.js";
 import { verifiedWords } from "../verified.js";
 import { GitlabApp, GitlabError, projectAccess, record as obj, text } from "./app.js";
@@ -221,6 +222,84 @@ function noteIds(key: string): [string, string] {
 	return [id(parts[0]), id(parts[1])];
 }
 
+/** Longer than any one clone, fetch or push (with its retry): an older token of ours was left by one that never ended. */
+const STALE_GIT_TOKEN_MS = 15 * 60 * 1000;
+const MAINTAINER = 40;
+
+function statusOf(error: unknown) {
+	return error instanceof GitlabError ? error.status : 0;
+}
+
+/** Why GitLab would not make the token, in words that say what is needed. */
+async function refusal(app: GitlabApp, token: string, projectId: string, access: GitAccess) {
+	const what = access === "write" ? "push" : "clone or fetch";
+	const project = await app
+		.call({ token, path: `/projects/${id(projectId)}` })
+		.then(({ body }) => projectAccess(body))
+		.catch(() => null);
+	const path = project ? `${project.owner}/${project.name}` : `GitLab project ${projectId}`;
+	const never = "Windlass never hands your GitLab sign-in to the sandbox instead.";
+	if (project && project.level < MAINTAINER)
+		return new GitCredentialRefused(
+			`Windlass needs Maintainer access on ${path} to create a short-lived project token for Git, so the ${what} did not run. ${never}`,
+		);
+	return new GitCredentialRefused(
+		`GitLab refused to create a short-lived project token on ${path}, so the ${what} did not run. Project access tokens need Maintainer access and, on GitLab.com, a Premium or Ultimate plan (any plan on self-managed GitLab), and a group owner or administrator can turn them off. ${never}`,
+	);
+}
+
+/**
+ * A project access token for one sandbox Git operation, made with the owner's grant, which itself stays in this
+ * process. Tokens of ours that an earlier operation left (a crash between making and revoking one) are revoked
+ * first, as far as the grant may; each also expires within about a day.
+ */
+export async function gitlabGitCredential(
+	app: GitlabApp,
+	grant: () => Promise<string>,
+	projectId: string,
+	access: GitAccess,
+): Promise<GitCredential> {
+	const token = await grant();
+	const stale = await app.staleGitTokens(token, projectId, Date.now() - STALE_GIT_TOKEN_MS).catch(() => []);
+	for (const tokenId of stale)
+		await app.revokeProjectToken(token, projectId, tokenId).then(
+			() => console.log(`[wlp] gitlab.git_token.revoked project=${projectId} token=${tokenId} stale=true`),
+			error =>
+				console.warn(
+					`[wlp] gitlab.git_token.revoke_failed project=${projectId} token=${tokenId} status=${statusOf(error)}`,
+				),
+		);
+	let made: Awaited<ReturnType<GitlabApp["createGitToken"]>>;
+	try {
+		made = await app.createGitToken(token, projectId, access);
+	} catch (error) {
+		const status = statusOf(error);
+		console.warn(`[wlp] gitlab.git_token.refused project=${projectId} access=${access} status=${status}`);
+		if ([400, 403, 404, 405, 422].includes(status)) throw await refusal(app, token, projectId, access);
+		throw error;
+	}
+	console.log(
+		`[wlp] gitlab.git_token.created project=${projectId} token=${made.id} access=${access} expires=${made.expiresAt}`,
+	);
+	let revoked = false;
+	return {
+		token: made.token,
+		username: "oauth2",
+		async revoke() {
+			if (revoked) return;
+			revoked = true;
+			try {
+				await app.revokeProjectToken(await grant(), projectId, made.id);
+				console.log(`[wlp] gitlab.git_token.revoked project=${projectId} token=${made.id}`);
+			} catch (error) {
+				console.error(
+					`[wlp] gitlab.git_token.revoke_failed project=${projectId} token=${made.id} status=${statusOf(error)} expires=${made.expiresAt}`,
+				);
+			}
+		},
+	};
+}
+
 export function gitlabCodeHost(app: GitlabApp, connection: GitlabConnection, hook?: GitlabHook): Host {
 	function projectKey(owner: string, name: string) {
 		const project = connection.project;
@@ -231,11 +310,15 @@ export function gitlabCodeHost(app: GitlabApp, connection: GitlabConnection, hoo
 	function checkConnection(key: GithubId) {
 		if (id(key) !== id(connection.id)) throw new Error("GitLab connection does not match.");
 	}
-	const withToken: Host["withToken"] = async (target, _access, step) => {
+	function checkTarget(target: Pick<CiTarget, "installationId" | "repositoryId">) {
 		checkConnection(target.installationId);
 		if (connection.project && id(target.repositoryId) !== id(connection.project.id))
 			throw new Error("GitLab project does not match.");
 		if (hook && id(target.repositoryId) !== id(hook.projectId)) throw new Error("GitLab project does not match.");
+	}
+	// The owner's grant, for calls made from this process only.
+	const withToken: Host["withToken"] = async (target, _access, step) => {
+		checkTarget(target);
 		return step(await connection.accessToken());
 	};
 	const open = async (token: string, project: string, input: Parameters<Host["openPull"]>[3]) =>
@@ -251,6 +334,10 @@ export function gitlabCodeHost(app: GitlabApp, connection: GitlabConnection, hoo
 		cloneUrl: app.cloneUrl.bind(app),
 		pushUrl: app.cloneUrl.bind(app),
 		withToken,
+		gitCredential: async (target, access) => {
+			checkTarget(target);
+			return gitlabGitCredential(app, () => connection.accessToken(), id(target.repositoryId), access);
+		},
 		openPull: (token, owner, name, input) => open(token, projectKey(owner, name), input),
 		async openFromPushed(input) {
 			if (!input.connection) throw new Error("GitLab is not connected.");

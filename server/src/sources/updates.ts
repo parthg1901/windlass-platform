@@ -5,6 +5,8 @@
 
 import { currentKey } from "../factory/change.js";
 import { crossRepo } from "../factory/cross-repo.js";
+import type { ChoiceId, QuestionKind } from "../contract.js";
+import { CHOICES } from "../factory/answered.js";
 import type { FactoryItem } from "../factory/types.js";
 import type { SourceId } from "./types.js";
 
@@ -16,8 +18,19 @@ export const isEndedState = (state: FactoryItem["state"] | undefined): state is 
 /** Who answered a question outside the web: the person as the source names them. */
 export type ExternalActor = { source: SourceId; person: string };
 
-/** How a question closed: answered by a person (on the web or in a source), or closed by anything else. */
-export type Resolution = "closed" | { approved: boolean; choice?: string; by: "web" | ExternalActor };
+/**
+ * How a question closed: answered by a person (on the web or in a source), or closed by anything else. `choice` is
+ * the answer's label and `picked` its id, both left out when the plan was approved.
+ */
+export type Resolution =
+	| "closed"
+	| { approved: boolean; choice?: string; picked?: ChoiceId; by: "web" | ExternalActor };
+/** The questions that ask to approve the feature plan their turn proposed, as parts or as one implementer. */
+const PLAN_KINDS: ReadonlySet<QuestionKind> = new Set<QuestionKind>([
+	"plan_approval",
+	"replan_approval",
+	"single_suggested",
+]);
 
 export type ItemUpdate =
 	/** The item exists. */
@@ -25,7 +38,7 @@ export type ItemUpdate =
 	/** A draft started. */
 	| { kind: "started" }
 	| { kind: "question_resolved"; question: string; how: Resolution }
-	/** A new question; `plan` when it asks to approve the feature plan its turn proposed. */
+	/** A new question; `plan` when it asks to approve the feature plan its turn proposed (`PLAN_KINDS`). */
 	| { kind: "question" | "plan"; question: string }
 	/** The pull request changed; `first` when the item had none before. */
 	| { kind: "pr"; pr: { number: number; url: string } | null; first: boolean }
@@ -42,12 +55,13 @@ export function resolution(
 ): Resolution {
 	const f = fact as { kind: string; by?: unknown; choice?: unknown; question?: unknown };
 	const approved = f.kind === "approve_plan" || (f.kind === "answer" && f.choice === "approve");
+	const picked = f.kind === "answer" && f.question === question.id ? (f.choice as ChoiceId) : undefined;
+	// One implementer is also accepted where the question did not list it (`singlePlanAlternative`).
 	const choice =
-		f.kind === "answer" && f.question === question.id
-			? question.choices.find(c => c.id === f.choice)?.label
-			: undefined;
+		picked &&
+		(question.choices.find(c => c.id === picked)?.label ?? (picked === "run_single" ? CHOICES[picked] : undefined));
 	if (!(approved || choice) || typeof f.by !== "string" || !f.by.startsWith("person:")) return "closed";
-	return { approved, ...(!approved && { choice }), by: by ?? "web" };
+	return { approved, ...(!approved && { choice, picked }), by: by ?? "web" };
 }
 
 /**
@@ -75,7 +89,7 @@ export function itemUpdates(
 		const plan =
 			next.featurePlan?.status === "proposed" &&
 			next.filedTurn === currentKey(next) &&
-			(next.question.kind === "plan_approval" || next.question.kind === "replan_approval");
+			PLAN_KINDS.has(next.question.kind as QuestionKind);
 		updates.push({ kind: plan ? "plan" : "question", question: next.question.id });
 	}
 	if (before?.pr?.number !== next.pr?.number) updates.push({ kind: "pr", pr: next.pr, first: !before?.pr });

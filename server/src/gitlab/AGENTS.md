@@ -11,5 +11,6 @@ Run from the repository root. These checks use the [GitLab stand-in](../../../sc
 ## Key files
 
 - [Host adapter](./host.ts) handles merge requests, pipeline jobs, notes and reactions. Keep GitLab IDs as decimal strings.
+- [Workspace Git](./workspace.ts) clones, fetches and pushes in the sandbox with a project access token from `gitCredential` (`gitlabGitCredential` in the host adapter), revoked when each operation ends. The owner's OAuth grant never enters a sandbox.
 - [Webhook parser](./webhook.ts) verifies the project token and classifies events. [Issue intake](../actors/issue-intake.ts) re-reads the issue and command note before filing.
 - [User connection](../actors/user-gitlab.ts) owns OAuth credentials, the selected project and its hook secret.

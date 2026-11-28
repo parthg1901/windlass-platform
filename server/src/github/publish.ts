@@ -22,6 +22,7 @@ import {
 	pushWithToken,
 	readWork,
 } from "./git.js";
+import { withGitCredential } from "../codehost/credential.js";
 import { refHead } from "./feature.js";
 import { outgoingCredentials, redact } from "./redact.js";
 import {
@@ -198,10 +199,10 @@ export async function cloneRepository(
 	try {
 		const owner = uid && sandbox.profile.startsWith("docker-") ? mirrorOwner(uid, String(repository.id)) : undefined;
 		const attempt = (reference: boolean, repair = false) =>
-			app.withToken(
-				resolved.installation.id,
-				{ repositoryId: repository.id, permissions: { metadata: "read", contents: "read" } },
-				async token => {
+			withGitCredential(
+				{ gitCredential: access => app.gitCredential(resolved.installation.id, repository.id, access) },
+				"read",
+				async ({ token, username }) => {
 					const clone = await cloneWithToken(sandbox, token, {
 						url: app.cloneUrl(resolved.repository.owner, resolved.repository.name),
 						branch: repository.branch,
@@ -210,6 +211,7 @@ export async function cloneRepository(
 						signal,
 						pinnedBase,
 						mirror: owner ? { owner, reference, repair } : undefined,
+						username,
 					});
 					return confirmBase(
 						app,
@@ -220,7 +222,6 @@ export async function cloneRepository(
 						work === undefined ? pinnedBase : undefined,
 					);
 				},
-				{ revokeAfter: true },
 			);
 		outcome = await attempt(!!owner && (await hasMirror(sandbox, owner, signal)));
 		if (outcome.failure === "mirror" && !signal?.aborted) outcome = await attempt(false, true);
@@ -480,17 +481,17 @@ async function commitAndPush(
 		{
 			author: authorOf(connection),
 			push: attempt =>
-				app.withToken(
-					installation.id,
-					{ repositoryId: repository.id, permissions: { metadata: "read", contents: "write" } },
-					token =>
+				withGitCredential(
+					{ gitCredential: access => app.gitCredential(installation.id, repository.id, access) },
+					"write",
+					({ token, username }) =>
 						pushWithToken(sandbox, token, {
 							attempt,
 							url: app.cloneUrl(resolved.repository.owner, resolved.repository.name),
 							branch,
 							lease: input.lease ?? null,
+							username,
 						}),
-					{ revokeAfter: true },
 				),
 			problem: error => problemOf(error, account, name),
 			failure: outcome => gitProblem(outcome, "push", name, account, branch),
@@ -846,18 +847,18 @@ export async function fetchBase(
 	const account = resolved.installation.account.login;
 	let fetched: GitOutcome;
 	try {
-		fetched = await app.withToken(
-			resolved.installation.id,
-			{ repositoryId: repository.id, permissions: { metadata: "read", contents: "read" } },
-			async token => {
+		fetched = await withGitCredential(
+			{ gitCredential: access => app.gitCredential(resolved.installation.id, repository.id, access) },
+			"read",
+			async ({ token, username }) => {
 				const fetch = await fetchWithToken(sandbox, token, {
 					url: app.cloneUrl(resolved.repository.owner, resolved.repository.name),
 					base: repository.branch,
 					work,
+					username,
 				});
 				return confirmBase(app, token, repository, resolved.repository, fetch);
 			},
-			{ revokeAfter: true },
 		);
 	} catch (error) {
 		throw problemOf(error, account, name);

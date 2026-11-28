@@ -151,6 +151,10 @@
 	/* The two-ink vendor marks (AgentLogos.tsx): each vendor's file for dark backgrounds. */
 	--logo-anthropic: #faf9f5;
 	--logo-openrouter: #fcfcfe;
+	/* The work sources' marks in their brand colours (ProviderIcon.tsx): Jira takes its lighter brand blue on graphite, where the darker one falls under 3:1. */
+	--logo-gitlab: #fc6d26;
+	--logo-linear: #5e6ad2;
+	--logo-jira: #2684ff;
 }
 
 :root[data-theme="light"] {
@@ -207,4 +211,7 @@
 	/* The two-ink vendor marks (AgentLogos.tsx): each vendor's file for light backgrounds. */
 	--logo-anthropic: #141413;
 	--logo-openrouter: #03080a;
+	--logo-gitlab: #e24329;
+	--logo-linear: #5e6ad2;
+	--logo-jira: #0052cc;
 }

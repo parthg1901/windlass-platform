@@ -4872,6 +4872,62 @@ const pushedRun = (head: string) => [
 }
 
 {
+	const { live } = await import("../server/src/actors/work-item.js");
+	const handed = walk(newItem(), [...pushedRun(H(1)), ciFact(passedCi)]).item;
+	const feature: FactoryItem = { ...handed, mode: "orchestrate" };
+	assert.equal(feature.run!.step.kind, "merged");
+	const reason = "FORBIDDEN: Resource not accessible by integration";
+	const refused = { kind: "pr_ready_read", pr: 7, refused: reason };
+	const poll = (state: string) => ({ kind: "pr_read", prHead: H(1), state, webhooks: false });
+	const asked = walk(feature, [refused]);
+	const question = asked.item.question!;
+	assert.equal(question.kind, "ready_refused");
+	assert.equal(
+		question.text,
+		`GitHub refused to mark pull request #7 ready for review: ${reason}. Everything else is handed over. Mark it ready on GitHub yourself, or try again.`,
+	);
+	assert.deepEqual(
+		question.choices.map(c => c.id),
+		["again", "dismiss"],
+	);
+	assert.equal(asked.item.state, "waiting");
+	assert.equal(asked.item.wait?.reason, "person");
+	// Only a planned feature's draft, of its own pull request, after handover.
+	assert.equal(walk(handed, [refused]).item.question, null);
+	assert.equal(walk(feature, [{ ...refused, pr: 8 }]).item.question, null);
+	// Still a draft: the question stays. Marked ready by the person: the next read settles it.
+	const stillDraft = walk(asked.item, [poll("draft")]).item;
+	assert.equal(stillDraft.question?.id, question.id);
+	const markedByPerson = walk(asked.item, [poll("draft"), poll("open")]);
+	assert.equal(markedByPerson.item.question, null);
+	assert.equal(markedByPerson.item.state, "review");
+	assert.ok(markedByPerson.last.events.some(e => e.said === "The pull request is ready for review on GitHub."));
+	assert.equal(effect(markedByPerson.last, "poll_pr")?.pr, 7);
+	assert.equal(walk(asked.item, [{ ...poll("merged"), prHead: null }]).item.state, "done");
+	// "Try again" marks it ready once more; a refusal asks again, and success says so.
+	const again = walk(asked.item, [{ kind: "answer", choice: "again" }]);
+	assert.equal(again.item.question, null);
+	assert.equal(again.item.state, "review");
+	const retry = effect(again.last, "ready_pr")!;
+	assert.deepEqual([retry.pr, retry.run], [7, 1]);
+	assert.ok(live(again.item, retry));
+	assert.ok(!live(asked.item, retry), "a ready_pr waits for no open question");
+	assert.equal(walk(again.item, [refused]).item.question?.kind, "ready_refused");
+	const ready = walk(again.item, [{ ...refused, refused: null }]);
+	assert.equal(ready.item.question, null);
+	assert.ok(ready.last.events.some(e => e.said === "Pull request #7 is ready for review."));
+	assert.equal(walk(asked.item, [{ ...refused, refused: null }]).item.state, "review");
+	const dismissed = walk(asked.item, [{ kind: "answer", choice: "dismiss" }]);
+	assert.equal(dismissed.item.state, "review");
+	assert.equal(dismissed.item.question, null);
+	assert.equal(effect(dismissed.last, "ready_pr"), undefined);
+	expect(
+		"a draft feature PR GitHub keeps refusing to mark ready asks the person with GitHub's reason; marking it ready on GitHub, or trying again, settles it",
+		true,
+	);
+}
+
+{
 	const published = walk(reviewerOn(), pushedRun(reviewHead)).item;
 	const feature: FactoryItem = { ...published, mode: "orchestrate" };
 	drive("feature hands over when second reviews are off", { ...feature, reviewer: { off: "deployment" } }, [

@@ -150,7 +150,11 @@ describe("the rail", () => {
 			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(search, "harb");
 			search.dispatchEvent(new Event("input", { bubbles: true }));
 		});
-		expect(owners()).toEqual([{ owner: "acme", names: ["harbor"] }]);
+		// The mock's GitLab project acme/tools/harbor is found too, under its own group.
+		expect(owners()).toEqual([
+			{ owner: "acme", names: ["harbor"] },
+			{ owner: "acme/tools", names: ["harbor"] },
+		]);
 		act(() => {
 			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(search, "");
 			search.dispatchEvent(new Event("input", { bubbles: true }));

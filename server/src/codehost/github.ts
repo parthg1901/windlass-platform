@@ -11,8 +11,6 @@ import { webhookRoute } from "../github/webhook.js";
 import type { Access, CodeHost } from "./types.js";
 
 const permissions = {
-	clone: { contents: "read" },
-	push: { contents: "write" },
 	"pull:read": { pull_requests: "read" },
 	"pull:write": { contents: "read", pull_requests: "write" },
 	merge: { contents: "write", pull_requests: "write" },
@@ -33,8 +31,8 @@ export function githubCodeHost(app: GithubApp): CodeHost<StoredConnection, Store
 					permissions: { metadata: "read", ...permissions[access] },
 				},
 				step,
-				{ revokeAfter: access === "clone" || access === "push" },
 			),
+		gitCredential: (target, access) => app.gitCredential(target.installationId, target.repositoryId, access),
 
 		openPull: app.createPull.bind(app),
 		openFromPushed: input => openFromPushed({ ...input, app }),

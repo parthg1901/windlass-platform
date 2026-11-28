@@ -391,8 +391,8 @@ const FEATURES: Array<{ label: string; of(plan: PlanInfo, period: BillingPeriod)
 	{ label: "The Factory", of: () => "All of it: plan first, checks, CI fixes, review" },
 	{ label: "Features over two repositories", of: plan => plan.crossRepo },
 	{
-		label: "Items filed from issues and Slack",
-		of: plan => `${count(plan.githubItemsPerDay)} a day across ${sourceNames()}`,
+		label: "Items filed from connected services",
+		of: plan => `${count(plan.githubItemsPerDay)} a day in total, from ${sourceNames()} together`,
 	},
 	{
 		label: "Past the included minutes",

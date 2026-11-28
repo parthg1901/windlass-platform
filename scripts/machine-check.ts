@@ -511,10 +511,15 @@ async function check() {
 		for (let i = 0; i < 3; i++) assert.equal((await row()).status, "offline");
 		assert.equal(wakes(), asleep);
 		await service().internalRemoveSandbox({ sandboxId: "deleted-sandbox" });
+		// A deleted session's copy on the machine (machine-backups.ts): told once the runner reports it keeps copies.
+		await service().internalRemoveBackup({ sessionId: "s_deleted" });
 		const node2 = await start(peerPort, true, true);
 		assert.equal((await runner.connection(peer, id)).status, 200);
+		runner.report.sessionBackups = true;
 		const returned = await runner.connect(conn, id);
 		await eventually(() => returned.frames.some(f => f.kind === "remove" && f.sandbox === "deleted-sandbox"));
+		await eventually(() => returned.frames.some(f => f.kind === "forget-backup" && f.sessionId === "s_deleted"));
+		delete runner.report.sessionBackups;
 		returned.ws.close();
 		await eventually(async () => (await row()).status === "offline");
 

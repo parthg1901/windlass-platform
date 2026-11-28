@@ -57,8 +57,15 @@ export async function restoreBackup(
 	const backups = layer.backups;
 	const saved = meta.backup;
 	const session = meta.windlassSessionId;
-	// Without a bucket nothing was ever copied, and nothing is said of it.
+	// Without a bucket nothing was ever copied, and nothing is said of it; nor on a machine whose runner keeps no copies.
 	if (!backups || !session) return false;
+	if (backups.available && !(await backups.available())) {
+		if (saved?.windlassSessionId === session)
+			console.log(
+				`[wlp] backup.unavailable session=${meta.sessionId} turn=${turn}: the machine's runner keeps no copies now`,
+			);
+		return false;
+	}
 	if (!saved || saved.windlassSessionId !== session) {
 		console.log(
 			`[wlp] backup.none session=${meta.sessionId} turn=${turn}: ${saved ? "the copy is of an earlier session of the agent" : "no copy of the session was saved"}`,
@@ -125,6 +132,8 @@ export async function saveBackup(
 	const backups = layer.backups;
 	const session = meta.windlassSessionId;
 	if (!backups || !(await privateSessionData(meta, layer.sandboxes, sandbox.id)) || !session) return;
+	// A machine whose runner keeps no copies (an older runner): nothing is saved, and the turn is not counted as missed.
+	if (backups.available && !(await backups.available())) return;
 	// Until a copy is saved below, the one there is, if any, is behind this turn.
 	meta.memoryTurn = turn;
 	// A session that is going away needs no copy, and an actor that is stopping has no time for one.
@@ -204,11 +213,14 @@ export async function removeBackup(c: Ctx, meta: SessionMeta): Promise<void> {
 				await new Promise(resolve => setTimeout(resolve, 1_000));
 			}
 		}
-		await userActor(c, meta.uid).internalRemoveBackupLater(meta.sessionId);
+		await userActor(c, meta.uid).internalRemoveBackupLater(
+			meta.sessionId,
+			meta.place.kind === "machine" ? meta.place.machineId : undefined,
+		);
 		backupRemoved.add(meta);
 	} catch (error) {
 		console.error(
-			`[wlp] backup.remove_failed uid=${meta.uid} session=${meta.sessionId}: the copy of this deleted session's agent data may still be in the bucket (${describeError(error)})`,
+			`[wlp] backup.remove_failed uid=${meta.uid} session=${meta.sessionId}: the copy of this deleted session's agent data may still be ${meta.place.kind === "machine" ? "on its machine" : "in the bucket"} (${describeError(error)})`,
 		);
 	}
 }

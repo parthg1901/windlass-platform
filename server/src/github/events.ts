@@ -129,14 +129,15 @@ export function edge(
 		return pr &&
 			head &&
 			typeof pull.merged === "boolean" &&
-			(["closed", "reopened", "synchronize"].includes(action) || (action === "opened" && target))
+			(["closed", "reopened", "synchronize", "ready_for_review"].includes(action) || (action === "opened" && target))
 			? {
 					...base,
 					event,
 					data: {
 						pr,
 						head,
-						...(target && { base: target }),
+						// Ready for review changes no commit: it only wakes the item's pull request poll, not the setup guide check.
+						...(target && action !== "ready_for_review" && { base: target }),
 						merged: pull.merged,
 						...(action === "closed" &&
 							/^windlass\/repo-setup-\d{8}$/.test(str(obj(pull.head).ref)) && { setupGuides: true as const }),

@@ -23,6 +23,10 @@
  *   attach     actor → runner   a session wants its sandbox: open that session's socket with the ticket
  *   remove     actor → runner   remove one sandbox (its session was deleted); answered with `removed`
  *   removed    runner → actor   that sandbox is gone, or was never this machine's
+ *   forget-backup     actor → runner   remove a deleted session's copy of its agent session from the
+ *                                      machine's volume of copies; only to a runner whose report said
+ *                                      `sessionBackups`; answered with `backup-forgotten`
+ *   backup-forgotten  runner → actor   that copy is gone, or there was none
  *   logout     actor → runner   the user's ChatGPT sign-in was forgotten: remove the access token files
  *                               of running turns
  *
@@ -196,6 +200,10 @@ const probe = either(object({ ok: oneOf(true) }), object({ ok: oneOf(false), rea
  *                    their output and their relay leases through the grace for a conversation a
  *                    restarted server resumes, so a graceful stop need not end a machine turn
  *                    (runner/journal.ts)
+ *   session-backups  the report's `sessionBackups`, the `backupSave`, `backupRestore` and `backupCopy`
+ *                    operations, and the `forget-backup` and `backup-forgotten` frames: the runner
+ *                    keeps copies of its sessions' agent sessions in a volume on the machine
+ *                    (sandbox/machine-backups.ts)
  */
 export const SERVER_CAPABILITIES = [
 	"environment-build",
@@ -215,6 +223,7 @@ export const SERVER_CAPABILITIES = [
 	"environment-image",
 	"resumable-conversation",
 	"memory-events",
+	"session-backups",
 ] as const;
 export type Capability = (typeof SERVER_CAPABILITIES)[number];
 /**
@@ -314,7 +323,10 @@ const serverFrame = either(
 	either(
 		/** `ticket` goes into the session socket's hello as it is (protocol.ts limits it to 1024). */
 		object({ kind: oneOf("attach"), sessionId: name, ticket: text(1024) }),
-		object({ kind: oneOf("remove"), sandbox: sandboxId }),
+		either(
+			object({ kind: oneOf("remove"), sandbox: sandboxId }),
+			object({ kind: oneOf("forget-backup"), sessionId: name }),
+		),
 	),
 );
 export type Refusal = Of<typeof refusal>;
@@ -449,6 +461,8 @@ const report = object({
 	modelRelay: optional(boolean),
 	/** A resumed conversation keeps its processes, output and relay leases through the grace (`resumable-conversation`). */
 	resumableConversation: optional(boolean),
+	/** The runner keeps copies of its sessions' agent sessions on the machine (`session-backups`, sandbox/machine-backups.ts). */
+	sessionBackups: optional(boolean),
 	freeDiskBytes: nullable(count),
 	/** `usedAt` by the runner's clock: the actor corrects it by the offset from the hello. */
 	sandboxes: list(
@@ -474,7 +488,13 @@ const report = object({
 });
 const runnerFrame = either(
 	either(hello, either(report, either(catalog, hostFrame))),
-	either(object({ kind: oneOf("heartbeat") }), object({ kind: oneOf("removed"), sandbox: sandboxId })),
+	either(
+		object({ kind: oneOf("heartbeat") }),
+		either(
+			object({ kind: oneOf("removed"), sandbox: sandboxId }),
+			object({ kind: oneOf("backup-forgotten"), sessionId: name }),
+		),
+	),
 );
 export type Hello = Of<typeof hello>;
 export type Report = Of<typeof report>;
@@ -492,6 +512,7 @@ export function reportFor<R extends Report>(report: R, named: readonly string[] 
 		"model-relay": "modelRelay",
 		"store-limits": "storeLimits",
 		"resumable-conversation": "resumableConversation",
+		"session-backups": "sessionBackups",
 	};
 	const kept: Report = { ...report };
 	for (const [capability, field] of Object.entries(fields) as [Capability, keyof Report][])

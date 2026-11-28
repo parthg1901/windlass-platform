@@ -1,6 +1,6 @@
 import type { RawAccess } from "rivetkit/db";
 import { config } from "../config.js";
-import type { ItemQuestion, ItemView } from "../contract.js";
+import type { ChoiceId, ItemQuestion, ItemView } from "../contract.js";
 import type { SlackBinding } from "../factory/intake.js";
 import { sourceCaps } from "../sources/registry.js";
 import { resolution, type Resolution } from "../sources/updates.js";
@@ -18,15 +18,22 @@ const messages = {
 type Event = keyof typeof messages | "resolved";
 export type SlackEffect = { kind: "slack_write"; key: string; event: Event; question?: string; line?: string };
 
+// Answers said as what was done, like an approval: "Approved as one implementer by …".
+const DONE: Partial<Record<ChoiceId, string>> = {
+	run_single: "Approved as one implementer",
+	orchestrate_anyway: "Asked to split into parts",
+};
+
 /** How a question closed, as mrkdwn. */
 export function resolvedText(how: Resolution): string {
 	if (how === "closed") return "This question is no longer open.";
-	const label = how.approved ? "Approve" : escapeText(how.choice ?? "");
+	const done = how.approved ? "Approved" : how.picked && DONE[how.picked];
+	const label = escapeText(how.choice ?? "");
 	if (how.by !== "web") {
 		const by = `<@${how.by.person}> in ${sourceCaps(how.by.source).displayName}`;
-		return how.approved ? `Approved by ${by}` : `Answered by ${by}: ${label}`;
+		return done ? `${done} by ${by}` : `Answered by ${by}: ${label}`;
 	}
-	return how.approved ? "Approved on the web" : `Answered on the web: ${label}`;
+	return done ? `${done} on the web` : `Answered on the web: ${label}`;
 }
 
 /** How `question` closed by `fact`, as mrkdwn. A Slack press passes the presser's Slack user id, which the signature covers. */
@@ -54,7 +61,7 @@ export function postFor(itemId: string, page: Page | null, effect: SlackEffect, 
 	const question = page?.question;
 	if (!question || question.id !== effect.question) return line;
 	if (effect.event === "plan" && page.plan) return planPost(itemId, question, page.plan, url);
-	if (effect.event === "question") return questionPost(itemId, question, url);
+	if (effect.event === "question") return questionPost(itemId, question, url, page.plan);
 	return line;
 }
 

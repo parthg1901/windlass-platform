@@ -8,6 +8,7 @@ import {
 	type FrameAuth,
 } from "../runner/frame-auth.js";
 import { OLD_RUNNER } from "../runner/protocol.js";
+import { NAME } from "../sandbox/provider.js";
 import { compactReport, optionsDigest, type CatalogFrame, type CatalogId } from "../runner/catalog.js";
 import { actor, UserError } from "rivetkit";
 import { db, type RawAccess } from "rivetkit/db";
@@ -70,6 +71,8 @@ interface Live {
 	heardAt: number;
 	connected: number;
 	savedAt: number;
+	/** Its report said it keeps copies of agent sessions (`sessionBackups`): it is told of the removals pending. */
+	backups?: boolean;
 }
 /** `greeting` is the one control socket that has yet to say hello: a newer one replaces it. */
 interface Vars {
@@ -404,6 +407,8 @@ export async function machineTables(db: RawAccess) {
 	if (!slotColumns.some(col => col.name === "size"))
 		await db.execute("ALTER TABLE turn_slots ADD COLUMN size INTEGER NOT NULL DEFAULT 1");
 	await db.execute("CREATE TABLE IF NOT EXISTS pending (sandbox TEXT PRIMARY KEY)");
+	// The deleted sessions whose copy of their agent session the runner is still to remove (`internalRemoveBackup`).
+	await db.execute("CREATE TABLE IF NOT EXISTS pending_backups (session TEXT PRIMARY KEY)");
 }
 
 export const machine = actor({
@@ -646,6 +651,8 @@ export const machine = actor({
 					}
 					if (frame.kind === "heartbeat" && c.vars.retryOnFrame) await tell(c, await record(c));
 					if (frame.kind === "removed") await c.db.execute("DELETE FROM pending WHERE sandbox = ?", frame.sandbox);
+					if (frame.kind === "backup-forgotten")
+						await c.db.execute("DELETE FROM pending_backups WHERE session = ?", frame.sessionId);
 					if (frame.kind === "host") {
 						const sample = frame.host ? JSON.stringify(frame.host) : null;
 						const changed = await storeHost(c.db, sample);
@@ -655,6 +662,12 @@ export const machine = actor({
 					if (frame.kind === "report") {
 						const changed = await saveReport(c.db, { ...frame, slots: frame.slots ?? live.slots }, staged, live.offset);
 						live.slots = frame.slots ?? live.slots;
+						// The first report that says it keeps copies: the removals recorded meanwhile are its now.
+						if (frame.sessionBackups === true && !live.backups) {
+							live.backups = true;
+							for (const { session } of await c.db.execute<{ session: string }>("SELECT session FROM pending_backups"))
+								ws.send({ kind: "forget-backup", sessionId: session });
+						}
 						staged.clear();
 						if (changed) await tell(c, changed);
 					}
@@ -792,6 +805,22 @@ export const machine = actor({
 				if (!ids.size) return;
 				await c.db.execute("INSERT OR IGNORE INTO pending SELECT value FROM json_each(?)", JSON.stringify([...ids]));
 				for (const sandbox of ids) c.vars.live?.ws.send({ kind: "remove", sandbox });
+			});
+		},
+		/**
+		 * Records that a deleted session's copy of its agent session must go from the machine, and tells
+		 * the runner now when it keeps copies, or when it next reports that it does. Never refused for a
+		 * removed machine: its volume of copies goes with its sandboxes, or stays with the owner's.
+		 */
+		internalRemoveBackup: async (c, { sessionId }: { sessionId: string }): Promise<void> => {
+			requireServiceFor(c, "call");
+			if (typeof sessionId !== "string" || !NAME.test(sessionId))
+				throw new UserError("A session id is needed.", { code: "bad_request" });
+			await ordered(c, async () => {
+				const r = await record(c);
+				if (!r || r.removed_at !== null) return;
+				await c.db.execute("INSERT OR IGNORE INTO pending_backups (session) VALUES (?)", sessionId);
+				if (c.vars.live?.backups) c.vars.live.ws.send({ kind: "forget-backup", sessionId });
 			});
 		},
 		internalLogout: async c => {

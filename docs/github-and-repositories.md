@@ -131,6 +131,7 @@ Three credentials exist. None is stored, logged, or put in a timeline item, an e
 | the pull request | pull requests: write, contents: read (GitHub opens no pull request for a token that cannot read both branches) | the server |
 | reading a commit's CI, for a work item | checks, statuses, actions: read, kept for the next readings | the server. A job's log redirects to GitHub's short-lived storage, fetched without the token |
 | a work item's handoff: review request and verdict comment | pull requests: write | the server |
+| a planned feature's handoff: marking its draft pull request ready for review | pull requests: write, contents: write (GitHub refuses the GraphQL `markPullRequestReadyForReview` to a token with pull requests: write alone, "Resource not accessible by integration"; REST has no way to leave draft) | the server |
 | posting `windlass/verified` | checks: write | the server |
 | an orchestrated feature's preflight: does push CI report on its branches | contents, actions, checks, statuses, pull requests: read | the server |
 | reading an issue filed as a work item | issues: read | the server |
@@ -171,7 +172,7 @@ The App asks for repository permissions only, and no more than the code uses (re
 | Permission | Used for | Without it |
 |---|---|---|
 | Metadata: read | repository lists, a user's rights in a repository | GitHub adds it to every App |
-| Contents: read and write | clone, branch list, the reviewer's checkout; the session's push and a feature's `windlass/…` branch | no push, so no pull request and no work items. GitHub has no narrower permission: an App cannot be limited to some branches |
+| Contents: read and write | clone, branch list, the reviewer's checkout; the session's push and a feature's `windlass/…` branch; with Pull requests write, marking a feature's draft pull request ready for review | no push, so no pull request and no work items. GitHub has no narrower permission: an App cannot be limited to some branches |
 | Pull requests: read and write | open and update the pull request; a work item's review request, ready-for-review and handoff comment; read: the reviews and line comments taken as feedback; write: the 👀 reaction on a taken line comment, and asking a writer to review again | no pull requests |
 | Issues: read and write | read: take in an issue filed as a work item; write: the item's link comment and a refusal comment on the issue, and the 👀 reaction on a taken pull request conversation comment | read alone: issues and feedback are still taken in, and nothing is said or reacted at GitHub. None: no issue intake |
 | Checks: read and write | read: a work item reads its commit's CI; write: posting `windlass/verified` | read-only: items read CI and hand over without the check ([Enable the Factory check on GitHub](#enable-the-factory-check-on-github)) |

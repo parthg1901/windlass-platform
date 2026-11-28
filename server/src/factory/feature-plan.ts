@@ -1,10 +1,12 @@
 /* The ids of a feature's children are in feature-ids.ts: this file is shared with the web mock and stays free of Node modules. */
 import type {
+	ChoiceId,
 	EarlyCheck,
 	FeaturePlan,
 	FeaturePlanEdit,
 	FinalIntegration,
 	ItemBudget,
+	ItemQuestion,
 	MergeStep,
 	PlanSubtask,
 	SubtaskAgent,
@@ -113,6 +115,33 @@ export function unattendedKeys(
 	completed: ReadonlySet<string> = new Set(),
 ): string[] {
 	return plan.subtasks.filter(s => !completed.has(s.key) && worksWithoutAsking(subtaskHarness(s))).map(s => s.key);
+}
+
+/** The choices that approve a proposed plan: as planned, or as one implementer. */
+export const APPROVALS: ReadonlySet<string> = new Set<ChoiceId>(["approve", "run_single"]);
+
+/** The plan's questions still without an answer. `drafts`: answers typed on the item page and not saved yet. */
+export function openPlanQuestions(
+	plan: Pick<FeaturePlan, "questions">,
+	drafts: Readonly<Record<string, string>> = {},
+): FeaturePlan["questions"] {
+	return plan.questions.filter(q => !q.answer && !drafts[q.id]?.trim());
+}
+
+/**
+ * Whether `choice` may not approve `plan` from `question` yet: the item page disables it and Slack leaves it out.
+ * Every approval waits for the plan's questions. The approval block (the feature's CI) holds the feature's own
+ * approval, for which one implementer is offered instead, unless one implementer is what the question approves.
+ */
+export function approvalHeld(
+	plan: Pick<FeaturePlan, "questions">,
+	question: Pick<ItemQuestion, "kind" | "approvalBlock">,
+	choice: string,
+	drafts?: Readonly<Record<string, string>>,
+): boolean {
+	if (!APPROVALS.has(choice)) return false;
+	if (openPlanQuestions(plan, drafts).length) return true;
+	return !!question.approvalBlock && (choice === "approve" || question.kind === "single_suggested");
 }
 
 export function approvalText(plan: FeaturePlan): string {

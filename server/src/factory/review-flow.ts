@@ -1,5 +1,5 @@
 // After CI: the second agent's review, its fixes, the handoff verdict and reading the pull request.
-import { MAX_NOTE_CHARS, type ItemReview } from "../contract.js";
+import { MAX_NOTE_CHARS, type ChoiceId, type ItemReview } from "../contract.js";
 import { CI_POLLING, ciState } from "../codehost/ci.js";
 import { choice } from "./answered.js";
 import { feedbackWords } from "./feedback.js";
@@ -558,10 +558,54 @@ function askPushCi(c: Change) {
 	);
 }
 
+/**
+ * The draft feature PR's ready-for-review step after handover. GitHub kept refusing it: the person is asked to mark the
+ * PR ready (or try again). Ready, by the platform or by the person: that question is settled.
+ */
+export function prReadyRead(c: Change, fact: Extract<Fact, { kind: "pr_ready_read" }>): boolean {
+	const { item } = c;
+	if (item.mode !== "orchestrate" || item.pr?.number !== fact.pr || item.run?.step.kind !== "merged") return false;
+	if (fact.refused === null) {
+		if (!readySettled(c, `Pull request #${fact.pr} is ready for review.`))
+			c.say(`Pull request #${fact.pr} is ready for review.`);
+		return true;
+	}
+	if (!["review", "waiting"].includes(item.state)) return false;
+	const text =
+		`GitHub refused to mark pull request #${fact.pr} ready for review: ${fact.refused.replace(/\.?$/, ".")} ` +
+		"Everything else is handed over. Mark it ready on GitHub yourself, or try again.";
+	if (item.question && item.question.kind !== "ready_refused") {
+		c.say(text);
+		return true;
+	}
+	ask(c, "ready_refused", text, [choice("again"), choice("dismiss")], null, null);
+	return true;
+}
+
+function readySettled(c: Change, said: string): boolean {
+	if (c.item.question?.kind !== "ready_refused") return false;
+	c.item.question = null;
+	c.state("review");
+	c.say(said);
+	return true;
+}
+
+/** The answer to a `ready_refused` question: "Try again" marks the PR ready once more; "Dismiss" leaves the draft to the person. */
+export function readyAnswer(c: Change, choice: ChoiceId): boolean {
+	const { item, run } = c;
+	if (!item.pr || (choice !== "again" && choice !== "dismiss")) return false;
+	c.state("review");
+	if (choice === "again") c.effects.push({ kind: "ready_pr", key: c.key, run: run.n, pr: item.pr.number });
+	return true;
+}
+
 export function prRead(c: Change, fact: Extract<Fact, { kind: "pr_read" }>): void {
 	const { run } = c;
+	// The person marked the feature PR ready on GitHub.
+	if (fact.state === "open") readySettled(c, "The pull request is ready for review on GitHub.");
 	if (fact.state === "merged" || fact.state === "closed") {
-		if (c.item.feedback?.awaiting || c.item.question?.kind === "push_ci") c.item.question = null;
+		if (c.item.feedback?.awaiting || c.item.question?.kind === "push_ci" || c.item.question?.kind === "ready_refused")
+			c.item.question = null;
 		if (run.step.kind === "review") {
 			if (run.step.turn) c.effects.push({ kind: "withdraw", key: c.key, to: "review" });
 			run.step.turn = null;

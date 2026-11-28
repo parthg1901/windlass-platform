@@ -249,6 +249,7 @@ function applyCapabilities(owner: Executor, named: readonly string[] | undefined
 	owner.spareSetupTimes = has("spare-setup-times");
 	owner.startTimes = has("start-times");
 	owner.environmentImage = has("environment-image");
+	owner.sessionBackups = has("session-backups");
 }
 
 export async function control(
@@ -530,6 +531,17 @@ export async function control(
 						}
 						audit(null, sandbox, "remove", "done");
 						if (ws.readyState === 1) send({ kind: "removed", sandbox: f.sandbox });
+					} else if (f.kind === "forget-backup") {
+						// Only a server that named `session-backups` sends it, and only it reads the answer.
+						if (!owner.sessionBackups) return;
+						try {
+							await owner.backups.remove(f.sessionId);
+						} catch (error) {
+							audit(f.sessionId, null, "forget-backup", category(error));
+							return;
+						}
+						audit(f.sessionId, null, "forget-backup", "done");
+						if (ws.readyState === 1) send({ kind: "backup-forgotten", sessionId: f.sessionId });
 					} else if (f.kind === "logout") {
 						await owner.serial(() => owner.logout());
 						audit(null, null, "logout", "done");

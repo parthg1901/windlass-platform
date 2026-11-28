@@ -37,6 +37,7 @@ import type {
 	EnvironmentBuildOrigin,
 	EnvironmentBuildReport,
 	Handoff,
+	MachineCopy,
 	SealedSecrets,
 	SessionCreateInput,
 } from "../internal.js";
@@ -198,6 +199,8 @@ export interface SessionMeta {
 	handoff?: Handoff | null;
 	/** `windlassSessionId` is a copy of the earlier session's agent session: it becomes this session's only by a restore into a sandbox whose agent data is its own. */
 	copiedSession?: boolean;
+	/** On a machine: the earlier session's copy, copied to this session's name when its first sandbox is made (sandbox.ts). */
+	pendingCopy?: MachineCopy;
 }
 
 /** What `prompt()` answers: the turn the message is in, and whether it was steered into one that ran. */

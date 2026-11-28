@@ -3474,6 +3474,14 @@ async function run() {
 			for (const action of ["closed", "reopened", "synchronize"])
 				assert.deepEqual(take("pull_request", { action })?.data, { pr: 4, head: HEAD, merged: false });
 			assert.equal(take("pull_request", { action: "opened" }), null);
+			// Marked ready on GitHub: it wakes the item's pull request poll and carries no base for the setup guide check.
+			const based = { ...p.pull_request, base: { sha: HEAD } };
+			assert.deepEqual(take("pull_request", { action: "ready_for_review", pull_request: based })?.data, {
+				pr: 4,
+				head: HEAD,
+				merged: false,
+			});
+			assert.equal(take("pull_request", { action: "converted_to_draft", pull_request: based }), null);
 			assert.ok(take("pull_request_review", { action: "submitted", review: { ...p.review, body: "" } }));
 			assert.ok(take("pull_request_review", { action: "submitted", review: { ...p.review, state: "commented" } }));
 			assert.ok(

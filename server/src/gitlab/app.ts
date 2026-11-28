@@ -53,7 +53,10 @@ function subject(project: Project, kind: NoteParent, iid: number | string): stri
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const MAX_PAGES = 10;
+/** Hooks, merge requests, notes, award emoji, pipelines, job retries and project access tokens all need `api`. */
 export const GITLAB_SCOPES = ["api"] as const;
+/** Names the project access tokens this platform makes for Git, so a stale one can be found and revoked. */
+export const GIT_TOKEN_PREFIX = "windlass-git-";
 export const newVerifier = () => randomBytes(32).toString("base64url");
 export const challengeOf = (verifier: string) => createHash("sha256").update(verifier).digest("base64url");
 export const record = (value: unknown): Record<string, unknown> => (isRecord(value) ? value : {});
@@ -158,6 +161,8 @@ export function projectAccess(value: unknown) {
 		private: p.visibility !== "public",
 		/** Developer (30) or above on a project that is not archived. */
 		writable: !p.archived && level >= 30,
+		/** The viewer's role there: 40 is Maintainer, which creating a project access token takes. */
+		level,
 		pushedAt: Number.isFinite(last) ? last : null,
 	};
 }
@@ -452,6 +457,70 @@ export class GitlabApp {
 		const id = decimalId(record(body).id);
 		if (!id) throw new GitlabError(502, "invalid project hook response");
 		return id;
+	}
+
+	/**
+	 * A project access token for one sandbox Git operation: `read_repository` as Reporter to clone and fetch,
+	 * `write_repository` as Developer to push, expiring at the earliest UTC midnight at least an hour away (GitLab
+	 * takes a date, not a time). Revoke it with `revokeProjectToken` when the operation ends. Creating one takes
+	 * Maintainer on the project and, on GitLab.com, Premium or Ultimate.
+	 */
+	async createGitToken(token: string, project: Project, access: "read" | "write", now = Date.now()) {
+		const expiresAt = new Date(now + 60 * 60 * 1000 + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+		const scope = access === "write" ? "write_repository" : "read_repository";
+		const { body } = await this.call({
+			method: "POST",
+			token,
+			path: `${projectRoot(project)}/access_tokens`,
+			body: {
+				name: `${GIT_TOKEN_PREFIX}${access}`,
+				description: "One Windlass sandbox Git operation. Windlass revokes it when the operation ends.",
+				scopes: [scope],
+				access_level: access === "write" ? 30 : 20,
+				expires_at: expiresAt,
+			},
+		});
+		const made = record(body),
+			id = decimalId(made.id),
+			secret = text(made.token);
+		const scopes = Array.isArray(made.scopes) ? made.scopes : [];
+		if (!id || !secret || /\s/.test(secret) || scopes.length !== 1 || scopes[0] !== scope) {
+			// A token GitLab made with other scopes than asked is not used; revoke it if it can be named.
+			if (id) await this.revokeProjectToken(token, project, id).catch(() => undefined);
+			throw new GitlabError(502, "invalid project access token response");
+		}
+		return { id, token: secret, expiresAt };
+	}
+
+	/** Revokes a project access token. One GitLab no longer has is already gone. */
+	async revokeProjectToken(token: string, project: Project, tokenId: string): Promise<void> {
+		try {
+			await this.call({
+				method: "DELETE",
+				token,
+				path: `${projectRoot(project)}/access_tokens/${requiredId(tokenId)}`,
+			});
+		} catch (error) {
+			if (!(error instanceof GitlabError && error.status === 404)) throw error;
+		}
+	}
+
+	/** Active Git tokens of this platform's on the project created before `before`: left by an operation that never ended. */
+	async staleGitTokens(token: string, project: Project, before: number): Promise<string[]> {
+		const { items } = await this.pages({ token, path: `${projectRoot(project)}/access_tokens?state=active` });
+		return items.flatMap(item => {
+			const t = record(item),
+				id = decimalId(t.id),
+				created = Date.parse(text(t.created_at));
+			return id &&
+				text(t.name).startsWith(GIT_TOKEN_PREFIX) &&
+				t.active !== false &&
+				t.revoked !== true &&
+				Number.isFinite(created) &&
+				created < before
+				? [id]
+				: [];
+		});
 	}
 
 	jobTrace(token: string, project: Project, jobId: string): Promise<Response> {

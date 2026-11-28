@@ -1,4 +1,5 @@
-import type { SessionRepository } from "../contract.js";
+import { withGitCredential } from "../codehost/credential.js";
+import type { BoundHost, GitlabBinding } from "../codehost/item.js";
 import type { SandboxHandle } from "../sandbox/api.js";
 import {
 	cloneWithToken,
@@ -13,25 +14,27 @@ import { GithubProblem } from "../github/repos.js";
 import { GitlabError, record, text } from "./app.js";
 import { gitlabApp } from "./connect.js";
 
-export interface GitlabAccess {
-	project: SessionRepository;
-	viewer: string;
-	token: string;
-}
+/**
+ * The owner's GitLab connection to the project, bound for this effect (`hostFor`). Its grant stays in this process for
+ * API reads; the sandbox's Git gets a project token from `gitCredential` that is revoked when the operation ends.
+ */
+export type GitlabAccess = Pick<BoundHost, "gitCredential"> & {
+	gitlab: Pick<GitlabBinding, "project" | "viewer" | "token">;
+};
 
 /** Resolve the transport path by immutable project ID: the selected path might since have been reassigned. */
-async function remote(access: GitlabAccess, repo: StoredRepository) {
+async function remote({ gitlab }: GitlabAccess, repo: StoredRepository) {
 	const app = gitlabApp();
 	if (
 		!app ||
 		repo.provider !== "gitlab" ||
-		access.project.provider !== "gitlab" ||
-		String(access.project.id) !== String(repo.id) ||
+		gitlab.project.provider !== "gitlab" ||
+		String(gitlab.project.id) !== String(repo.id) ||
 		repo.url !== app.cloneUrl(repo.owner, repo.name).slice(0, -4)
 	)
 		throw new Error("GitLab project unavailable.");
 	const root = `/projects/${repo.id}`,
-		token = access.token;
+		token = gitlab.token;
 	const project = record((await app.call({ path: root, token })).body);
 	const parts = text(project.path_with_namespace).split("/"),
 		name = parts.pop();
@@ -62,15 +65,17 @@ export async function cloneGitlab(
 	pinnedBase?: string,
 ) {
 	const dest = await remote(access, repo);
-	const clone = await cloneWithToken(sandbox, access.token, {
-		url: dest.url,
-		directory: dest.name,
-		branch: repo.branch,
-		signal,
-		work,
-		pinnedBase,
-		username: "oauth2",
-	});
+	const clone = await withGitCredential(access, "read", ({ token, username }) =>
+		cloneWithToken(sandbox, token, {
+			url: dest.url,
+			directory: dest.name,
+			branch: repo.branch,
+			signal,
+			work,
+			pinnedBase,
+			username,
+		}),
+	);
 	if (signal.aborted || clone.failure === "aborted") return false;
 	if (!clone.ok) throw failure(clone);
 	const base = !work && pinnedBase ? pinnedBase : await dest.base();
@@ -89,12 +94,9 @@ export async function fetchGitlab(
 	work: string | null = null,
 ) {
 	const dest = await remote(access, repo);
-	const fetch = await fetchWithToken(sandbox, access.token, {
-		url: dest.url,
-		base: repo.branch,
-		work,
-		username: "oauth2",
-	});
+	const fetch = await withGitCredential(access, "read", ({ token, username }) =>
+		fetchWithToken(sandbox, token, { url: dest.url, base: repo.branch, work, username }),
+	);
 	if (!fetch.ok) throw failure(fetch);
 	const sha = await dest.base();
 	repo.baseSha = fetch.marks.get("base") === sha ? sha : null;
@@ -110,7 +112,7 @@ export async function pushGitlab(
 	const { repository, branch, sandbox } = input;
 	const dest = await remote(access, repository);
 	const user = await dest.viewer();
-	if (String(user.id) !== access.viewer) throw new Error("The GitLab account changed.");
+	if (String(user.id) !== access.gitlab.viewer) throw new Error("The GitLab account changed.");
 	// GitLab's private commit email: <id>-<username>@users.noreply.<host>.
 	const author = { name: user.login, email: `${user.id}-${user.login}@users.noreply.${new URL(dest.url).hostname}` };
 	let expected: string | undefined;
@@ -138,18 +140,17 @@ export async function pushGitlab(
 			author,
 			failure,
 			push: attempt =>
-				pushWithToken(sandbox, access.token, {
-					attempt,
-					url: dest.url,
-					branch,
-					lease: input.lease,
-					username: "oauth2",
-				}),
-			problem: error =>
-				new GithubProblem(
-					error instanceof GitlabError && error.unreachable ? "github_unreachable" : "github_failed",
-					"Could not push to GitLab.",
+				withGitCredential(access, "write", ({ token, username }) =>
+					pushWithToken(sandbox, token, { attempt, url: dest.url, branch, lease: input.lease, username }),
 				),
+			// A refused project token (`GitCredentialRefused`) keeps its reason.
+			problem: error =>
+				error instanceof GithubProblem
+					? error
+					: new GithubProblem(
+							error instanceof GitlabError && error.unreachable ? "github_unreachable" : "github_failed",
+							"Could not push to GitLab.",
+						),
 		},
 		expected,
 	);

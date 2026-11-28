@@ -28,7 +28,7 @@
  */
 
 import type { SnapshotSource } from "./snapshot-key.js";
-import { config } from "../config.js";
+import { backupConfig, config } from "../config.js";
 import { isActorGone } from "../actors/internal.js";
 import type { Attachment, MachineFacts, TurnSlot } from "../actors/machine.js";
 import { isolationName, type SandboxProfile, type SandboxProfileId, type SessionSnapshot } from "../contract.js";
@@ -51,6 +51,7 @@ import {
 	ENVIRONMENT_SLOT_WAIT,
 	SandboxUserError,
 } from "./api.js";
+import { MachineSessionBackups } from "./machine-backups.js";
 import { SESSION_VOLUME_PROFILES, findProfile } from "./profiles.js";
 import { forwardKeyLease } from "./relay-leases.js";
 import {
@@ -87,6 +88,8 @@ export interface MachineSeam {
 	facts(): Promise<MachineFacts>;
 	/** Records that the sandbox must go, and tells the runner when it is next connected. */
 	removeSandbox(sandboxId: string | null, sessionId?: string): Promise<void>;
+	/** Records that the session's copy of its agent session must go from the machine (machine-backups.ts). */
+	removeBackup?(sessionId: string): Promise<void>;
 }
 
 /** The real `machine` actor, through the actor's client. A check passes a stand-in instead. */
@@ -104,6 +107,14 @@ export function machineActor(client: () => any, uid: string, machineId: string) 
 		removeSandbox: async (sandboxId: string | null, sessionId?: string) => {
 			try {
 				await machine().internalRemoveSandbox({ sandboxId, sessionId });
+			} catch (error) {
+				if (!isActorGone(error)) throw error;
+			}
+		},
+		/** A machine whose actor is gone has no runner left to keep a copy for. */
+		removeBackup: async (sessionId: string) => {
+			try {
+				await machine().internalRemoveBackup({ sessionId });
 			} catch (error) {
 				if (!isActorGone(error)) throw error;
 			}
@@ -248,6 +259,13 @@ export class RunnerLink {
 
 	removeSandbox(id: string): Promise<void> {
 		return this.machine.removeSandbox(id);
+	}
+
+	/** The session's copy on the machine goes, now or when its runner is next connected. */
+	async removeBackup(sessionId: string): Promise<void> {
+		if (sessionId !== this.who.sessionId) throw new Error("A session removes only its own copy.");
+		if (!this.machine.removeBackup) throw new Error("This machine's actor cannot be asked to remove a copy.");
+		await this.machine.removeBackup(sessionId);
 	}
 
 	/** On deletion the machine also queues any sandbox it reported before the session learnt its id. */
@@ -948,6 +966,32 @@ export function machineLayer(link: RunnerLink, hosted: SandboxLayer): SandboxLay
 		windlass,
 		logins: hosted.logins,
 		tokens: hosted.tokens,
-		backups: null,
+		backups: machineBackups(link),
 	};
+}
+
+/** The largest copy a machine keeps: the deployment's limit for the bucket's (WLP_BACKUP_MAX_BYTES), which needs no bucket. */
+function machineBackupMax(): number {
+	try {
+		return backupConfig().maxBytes;
+	} catch {
+		return 64 * 1024 * 1024;
+	}
+}
+
+/**
+ * The machine's copies of its sessions' agent sessions (machine-backups.ts), kept on the machine: over
+ * this session's socket, while its runner says in its report that it keeps them (`session-backups`).
+ */
+function machineBackups(link: RunnerLink): MachineSessionBackups {
+	return new MachineSessionBackups(machineBackupMax(), {
+		available: async () => {
+			const facts = await link.facts().catch(() => link.known);
+			return facts?.status !== "removed" && facts?.report?.sessionBackups === true;
+		},
+		save: args => link.request("backupSave", args),
+		restore: args => link.request("backupRestore", args),
+		copy: args => link.request("backupCopy", args),
+		remove: sessionId => link.removeBackup(sessionId),
+	});
 }

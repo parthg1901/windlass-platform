@@ -12,6 +12,7 @@ Run one command from the repository root.
 - `cd server && npx tsx ../scripts/runner-control-check.ts` covers control-socket refusals and the second-runner rule.
 - `cd server && RUNNER_E2E_ONLY='^a fresh Claude session' npx tsx ../scripts/runner-e2e.ts inventory` checks the catalog advertised before the first turn.
 - `cd server && npx tsx ../scripts/sizing-check.ts` checks slot sizing.
+- `cd server && npx tsx ../scripts/machine-backup-check.ts` checks the session copies kept on the machine; `--docker=claude` runs the real Docker transfer.
 
 `scripts/runner-check.ts` needs Docker and images; CI runs it in shards (`--service-only`, `--snapshots-only` and so on, see `scripts/ci-groups.json`).
 
@@ -29,6 +30,7 @@ Connections:
 - `./control.ts` pairs the machine and maintains its control socket. Session sockets survive ordinary reconnects.
 - `./session.ts` defines `Session`: one `RunnerChannel` per session socket, running named operations and streaming output.
 - `./snapshot-retention.ts` drops older snapshots under platform-signed retention requests.
+- `./session-backups.ts` keeps the copies of its sessions' agent sessions in the pairing's volume `wlp-machine-<id>-backups` (`BackupStore`, `dockerBackupIO`), for a server that named `session-backups`.
 
 Docker and sandboxes:
 
@@ -65,6 +67,7 @@ Setup wizard:
 - Scrub harness output before sending or retaining frames. Reconnect can replay output already buffered by the channel.
 - Mount the login volume on the relay, never on the session. The session gets a placeholder bearer for its requests.
 - Act only on Docker resources labelled for this pairing.
+- Never unpack or parse a session's copy in the runner; move it as bytes, checked by size and hash, and only for the asking session.
 
 ## Pitfalls
 

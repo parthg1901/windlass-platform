@@ -15,6 +15,7 @@ import {
 	revoke,
 	updateMessage,
 } from "../slack/app.js";
+import { APPROVALS } from "../factory/feature-plan.js";
 import { escapeText, revisionModal, type SlackMessage, type SlackPost } from "../slack/blocks.js";
 import type { SlackInteraction } from "../slack/interactions.js";
 import type { SlackDelivery } from "../slack/webhook.js";
@@ -119,7 +120,7 @@ async function authorize(
 	if ((await memberOf(c, a.userId)) === thread.uid) return { bearer, owner: thread.uid, refusal: null };
 	const owner = await surfaceAccountsOf(c, "slack", c.key[0]!).internalLinkOf(thread.uid);
 	const who = owner ? `<@${owner.externalUserId}>` : "the person who filed this item";
-	return { bearer, owner: null, refusal: `Only ${who} can ${a.value.c === "approve" ? "approve" : "answer"} this.` };
+	return { bearer, owner: null, refusal: `Only ${who} can ${APPROVALS.has(a.value.c) ? "approve" : "answer"} this.` };
 }
 
 async function interact(c: Ctx, a: SlackInteraction) {

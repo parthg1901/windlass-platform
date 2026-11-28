@@ -176,7 +176,10 @@ export class MachineDocker {
 		this.opencodeVolume = "wlp-harness-opencode-" + identity.machineId;
 		this.claudeVolume = "wlp-harness-claude-" + identity.machineId;
 		this.volume = "wlp-machine-" + identity.machineId;
+		this.backupVolume = this.volume + "-backups";
 	}
+	/** The copies of its sessions' agent sessions (session-backups.ts): one volume, the pairing's. */
+	readonly backupVolume: string;
 	/** A hardened Windlass session's own data volume (SESSION_VOLUME_PROFILES), by its raw sandbox id. */
 	sessionVolume(raw: string) {
 		if (!/^[a-f0-9]{12}$/.test(raw)) throw new Refusal("This sandbox id does not belong to this machine.");

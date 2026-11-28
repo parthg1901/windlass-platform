@@ -185,11 +185,12 @@ export interface FactoryLimits {
 	item: ItemBudget;
 }
 
-/** "turn_refused": the session or provider refused the turn, in its words. "sandboxes": the hosted cap on kept sandboxes stopped a turn. "check_environment": a check failed because the sandbox could not run it (`ItemQuestion.check`). */
+/** "turn_refused": the session or provider refused the turn, in its words. "sandboxes": the hosted cap on kept sandboxes stopped a turn. "check_environment": a check failed because the sandbox could not run it (`ItemQuestion.check`). "ready_refused": GitHub kept refusing to mark a planned feature's draft pull request ready for review after its hand-over. */
 export type QuestionKind =
 	| "branch_push"
 	| "run_place"
 	| "push_ci"
+	| "ready_refused"
 	| "feature_update"
 	| "sandboxes"
 	| "integration"

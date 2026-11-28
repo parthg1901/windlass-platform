@@ -34,6 +34,21 @@ export const CHOICES: Record<ChoiceId, string> = {
 	larger_sandbox: "Go on in a larger sandbox",
 };
 export const choice = (id: ChoiceId) => ({ id, label: CHOICES[id] });
+/** The same choices in at most 30 characters, for buttons with little room (Slack cuts a button at 75). */
+export const SHORT_CHOICES: Partial<Record<ChoiceId, string>> = {
+	use_machine_payer: "Use offered machine and payer",
+	run_single: "Approve as one implementer",
+	orchestrate_anyway: "Split into parts",
+	approve: "Approve",
+	revise: "Request changes",
+	retry: "Start over, discarding work",
+	update_from_base: "Update from base, rerun CI",
+};
+/** A choice's short label. A question's own wording of a choice is kept, except one implementer, which means one thing. */
+export function shortLabel(picked: { id: ChoiceId; label: string }): string {
+	const short = SHORT_CHOICES[picked.id];
+	return short && (picked.label === CHOICES[picked.id] || picked.id === "run_single") ? short : picked.label;
+}
 
 // A reply logs the owner's answer directly, without its button label.
 export function answeredWords(picked: { id: ChoiceId; label: string }, note: string | null): string {

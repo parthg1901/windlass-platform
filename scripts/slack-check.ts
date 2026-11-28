@@ -211,6 +211,78 @@ async function run() {
 		assert.equal((await items()).length, 1);
 		await member.actOnItem({ id: plan.id, action: { kind: "cancel" } });
 		await receipt(plan.id, "Work item cancelled");
+
+		// A planner's case for one implementer is posted as a plan: its questions, and no approval until they are answered.
+		const singleAsk = slack.mention(
+			"Add a note on running the checks (suggest-single) (plan-question) (recommend-newline)",
+		);
+		await ack(send(singleAsk));
+		const single = await until("one-implementer item", async () => (await items()).find(i => i.id !== plan.id));
+		const planIn = (thread: string, id: string, not?: string) =>
+			slack.messages.find(
+				m => m.thread === thread && m.text === `Plan ready for approval: ${origin}/items/${id}` && m.ts !== not,
+			);
+		const suggestion = await until("one-implementer plan", async () => planIn(singleAsk.event.thread_ts, single.id));
+		const suggested = await member.item(single.id);
+		assert.equal(suggested.question?.kind, "single_suggested");
+		const suggestionText = JSON.stringify(suggestion.blocks);
+		for (const words of [
+			"One implementer suggested",
+			"Should each file end with a trailing newline? (recommended: Yes)",
+			"Answer the open questions in Windlass before approving.",
+			"Full plan",
+		])
+			assert.ok(suggestionText.includes(words), words);
+		assert.deepEqual(
+			slack.buttons(suggestion).map(b => b.action_id),
+			["choice:orchestrate_anyway", "open"],
+		);
+		// A button for one implementer made before the questions were added is refused too.
+		const value = { i: single.id, q: suggested.question!.id, v: suggested.plan!.version, c: "run_single" };
+		const early = { type: "button", action_id: "choice:run_single", value: JSON.stringify(value) };
+		await ack(
+			slack.press(
+				interactions,
+				{ ...suggestion, blocks: [{ type: "actions", elements: [early] }] },
+				"choice:run_single",
+			),
+		);
+		await privately(slack.member, "Answer the plan’s open questions in Windlass before approving.");
+		assert.equal((await member.item(single.id)).mode, "orchestrate");
+		// Answered on the web, the plan is asked again with both of the web's choices.
+		const [ask] = suggested.plan!.questions;
+		await member.actOnItem({
+			id: single.id,
+			action: {
+				kind: "edit_plan",
+				version: suggested.plan!.version,
+				plan: { ...suggested.plan!, questions: [{ ...ask!, answer: "Yes" }] },
+			},
+		});
+		const answeredPlan = await until("one-implementer plan after answers", async () =>
+			planIn(singleAsk.event.thread_ts, single.id, suggestion.ts),
+		);
+		await until(
+			"first one-implementer message closed",
+			async () => suggestion.text === "This question is no longer open.",
+		);
+		assert.deepEqual(
+			slack.buttons(answeredPlan).map(b => [b.action_id, (b.text as { text: string }).text]),
+			[
+				["choice:run_single", "Approve as one implementer"],
+				["choice:orchestrate_anyway", "Split into parts"],
+				["open", "Open in Windlass"],
+			],
+		);
+		assert.ok(!JSON.stringify(answeredPlan.blocks).includes("Answer the open questions"));
+		await ack(slack.press(interactions, answeredPlan, "choice:run_single"));
+		await until(
+			"approved as one implementer",
+			async () => answeredPlan.text === `Approved as one implementer by <@${slack.member}> in Slack`,
+		);
+		assert.equal((await member.item(single.id)).mode, "single");
+		await member.actOnItem({ id: single.id, action: { kind: "cancel" } });
+		await receipt(single.id, "Work item cancelled");
 		// The quick item below finishes without CI.
 		await member.saveRepositoryChecks({ repositoryId: repo.id, checks: [] });
 		github.commit(repo, "main", { ".github/workflows/build.yml": null }, "Drop CI");
@@ -238,7 +310,9 @@ async function run() {
 		slack.archived = false;
 		await ack(slack.send(commands, form.toString(), { command: true }));
 		await ack(slack.send(commands, form.toString(), { command: true, retry: 1 }));
-		const quick = await until("command item", async () => (await items()).find(item => item.id !== plan.id));
+		const quick = await until("command item", async () =>
+			(await items()).find(item => item.id !== plan.id && item.id !== single.id),
+		);
 		assert.equal(quick.mode, "single");
 		assert.equal(quick.title, "Fix café");
 		assert.equal(slack.channelInfoCalls, 3);
@@ -311,16 +385,16 @@ async function run() {
 			q.secret?.why,
 		]))
 			if (hidden) assert.ok(!posted.includes(hidden.slice(0, 40)), "builder text posted to Slack");
-		assert.equal((await items()).length, 4);
+		assert.equal((await items()).length, 5);
 		assert.equal((await owner.listItems()).length, 0);
-		assert.equal(slack.messages.filter(m => m.text.startsWith("Work item filed")).length, 4);
+		assert.equal(slack.messages.filter(m => m.text.startsWith("Work item filed")).length, 5);
 		// Revoking the link makes the member unlinked again: a request files nothing and asks them to link.
 		assert.deepEqual(await member.unlinkAccount({ surface: "slack", tenant: slack.team.id }), []);
 		const asked = slack.privateReplies.length;
 		await ack(send(slack.mention("After unlinking")));
 		const again = await until("link prompt after unlinking", async () => slack.privateReplies[asked]);
 		assert.ok(again.user === slack.member && again.text.includes("#link=slack."));
-		assert.equal((await items()).length, 4);
+		assert.equal((await items()).length, 5);
 		await member.linkAccount(again.text.split("#link=")[1]!);
 		const remapped = (await owner.saveSlackMapping({ channelId: slack.channel.id, repositoryId: hidden.id })) as {
 			mappings: { details: boolean }[];
@@ -333,7 +407,7 @@ async function run() {
 		await ack(send(slack.mention()));
 		assert.deepEqual(await connect(), { state: "connected", workspaceName: slack.team.name, mappings: [] });
 		console.log(
-			"PASS signed requests, named channel discovery, member links and revocation, member access, asynchronous filing, retries, thread replies, plan approval and answers from Slack, and disconnect",
+			"PASS signed requests, named channel discovery, member links and revocation, member access, asynchronous filing, retries, thread replies, plan approval and answers from Slack, a one-implementer plan held for its questions, and disconnect",
 		);
 	} finally {
 		child.kill("SIGTERM");

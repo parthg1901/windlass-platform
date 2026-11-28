@@ -1393,6 +1393,52 @@ try {
 		});
 	});
 	await checkControl(
+		"a deleted session's copy is removed on forget-backup, and acknowledged, only for a server that named session-backups",
+		async () => {
+			for (const named of [false, true]) {
+				await withControl([lease()], async r => {
+					const removed: string[] = [];
+					Object.assign(r.owner, {
+						backups: {
+							remove: async (session: string) => {
+								removed.push(session);
+							},
+						},
+					});
+					const ws = await r.online(0, named ? ["session-backups"] : ["session-volumes"]);
+					assert.equal(r.owner.sessionBackups, named);
+					ws.frame({ kind: "forget-backup", sessionId: "s_gone" });
+					// Frames are handled in order: the removal's answer comes after the copy's.
+					const other = "mm_0123456789abcdef-222222222222";
+					ws.frame({ kind: "remove", sandbox: other });
+					await until(() => ws.sent.some(f => f.kind === "removed"));
+					assert.deepEqual(removed, named ? ["s_gone"] : []);
+					assert.deepEqual(
+						ws.sent.filter(f => f.kind === "backup-forgotten").map(f => (f as { sessionId?: string }).sessionId),
+						named ? ["s_gone"] : [],
+					);
+					assert.equal(ws.readyState, 1);
+				});
+			}
+			const { Executor } = await import("../runner/src/docker-executor.js");
+			const owner = new Executor({ uid: "u_owner", machineId: "m_0123456789abcdef" }, {});
+			assert.equal(owner.backupVolume, "wlp-machine-m_0123456789abcdef-backups");
+			const args = {
+				id: "mm_0123456789abcdef-0123456789ab",
+				owner: { uid: "u_owner", sessionId: "s_one" },
+				pack: "/tmp/.wlp-backup-abcdef.tgz",
+				size: 1,
+				sha256: "a".repeat(64),
+				max: 10,
+			};
+			await assert.rejects(owner.backup("s_one", "backupSave", args), /keeps no copies/);
+			await assert.rejects(
+				owner.backupCopy("s_one", { from: args.owner, to: { uid: "u_owner", sessionId: "s_two" } }),
+				/keeps no copies/,
+			);
+		},
+	);
+	await checkControl(
 		"the snapshot and mirror limits: the owner's flags, held to the platform's caps from its welcome, reported only to a server that named store-limits",
 		async () => {
 			const { storeFlags } = await import("../runner/src/sizing.js");

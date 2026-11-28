@@ -6,6 +6,9 @@
 import type { LinkedAccount, LinkSurface } from "@contract";
 import { useEffect, useRef, useState } from "react";
 import { useApp, useAuth } from "../state/app";
+import { useReturnRound } from "./IntegrationCard";
+
+const RETURN = /^#link(?:-error)?=/;
 
 const SURFACES: Record<LinkSurface, string> = { slack: "Slack", linear: "Linear", jira: "Jira" };
 
@@ -33,10 +36,14 @@ export function LinkedAccounts() {
 	const confirmLink = useRef<HTMLButtonElement>(null);
 	const showReturn = useRef(false);
 	const initial = useRef<{ ticket: string; error: string } | null>(null);
+	// A return to the page already open (only its fragment changes) is read again.
+	const returned = useReturnRound(RETURN);
+	const initialRound = useRef(returned);
 
 	useEffect(() => {
-		// StrictMode may replay this effect after the fragment is gone, so read it once.
-		if (!initial.current) {
+		// StrictMode may replay this effect after the fragment is gone, so read it once per return.
+		if (!initial.current || initialRound.current !== returned) {
+			initialRound.current = returned;
 			const back = /^#(link|link-error)=(.*)$/.exec(location.hash);
 			showReturn.current = !!back || location.hash === "#linked-accounts";
 			if (back) history.replaceState(history.state, "", location.pathname + location.search);
@@ -49,7 +56,7 @@ export function LinkedAccounts() {
 		}
 		setTicket(initial.current.ticket);
 		if (initial.current.error) setError(initial.current.error);
-	}, []);
+	}, [returned]);
 
 	useEffect(() => {
 		let live = true;

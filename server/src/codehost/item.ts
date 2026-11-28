@@ -11,7 +11,7 @@ import { hostCaps, type HostCaps } from "./capabilities.js";
 import type { CiTarget } from "./ci.js";
 import { resolveCodeHost } from "./index.js";
 import { repoRef, type RepoRef } from "./ref.js";
-import type { CodeHost, Pull } from "./types.js";
+import type { CodeHost, GitAccess, GitCredential, Pull } from "./types.js";
 
 /** The GitHub App and installation behind a bound host, for the flows that still call the App directly. */
 export interface GithubBinding {
@@ -47,8 +47,13 @@ export interface BoundHost {
 	name: string;
 	target(head: string): CiTarget;
 	pull(number: number): Promise<Pull>;
-	/** Runs `step` with a token for the repository. GitHub scopes an installation token to metadata and `permissions`. */
+	/**
+	 * Runs `step` with a token for API calls from this process. GitHub scopes an installation token to metadata and
+	 * `permissions`; GitLab's is the owner's grant. Never hand it to a sandbox: Git there takes `gitCredential`.
+	 */
 	withToken<T>(permissions: Record<string, "read" | "write">, step: (token: string) => Promise<T>): Promise<T>;
+	/** A credential for one sandbox Git operation on this repository (`withGitCredential` revokes it afterwards). */
+	gitCredential(access: GitAccess): Promise<GitCredential>;
 	/** Whether a comment is the platform's own. */
 	isOwn(comment: { author: string; person: { id: number | string } | null }): boolean;
 	/** Marks a feedback comment, review or issue as seen. */
@@ -135,6 +140,7 @@ async function githubHost(
 			),
 		withToken: (permissions, step) =>
 			app.withToken(bound, { repositoryId, permissions: { metadata: "read", ...permissions } }, step),
+		gitCredential: access => host.gitCredential({ installationId: bound, repositoryId }, access),
 		isOwn: ownTest(caps, { bot: app.settings.slug }),
 		acknowledge: key => app.acknowledgeFeedback(bound, { id: repositoryId, owner, name }, key),
 		webhooks: githubConfig().pollFallback,
@@ -187,8 +193,9 @@ async function gitlabHost(
 		target,
 		pull: number => host.readPull(token, owner, name, number),
 		webUrl: project.url,
-		// The grant is the owner's, not a scoped installation token.
+		// The grant is the owner's, not a scoped installation token: it stays in this process.
 		withToken: (_permissions, step) => step(token),
+		gitCredential: access => host.gitCredential({ installationId: viewer, repositoryId: project.id }, access),
 		isOwn: ownTest(caps, { account: viewer }),
 		acknowledge: key => gitlabEyes(host, gitlab, key),
 		webhooks: true,

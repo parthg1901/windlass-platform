@@ -18,7 +18,7 @@ import {
 	type Waiting,
 } from "@contract";
 import { useId, useState, type CSSProperties, type ReactNode } from "react";
-import { singleAfterPlanning, subtaskHarness } from "../../../server/src/factory/feature-plan.js";
+import { approvalHeld, singleAfterPlanning, subtaskHarness } from "../../../server/src/factory/feature-plan.js";
 import { usesAccountModels } from "../../../server/src/sandbox/harnesses.js";
 import { ArrowDownIcon, ChevronIcon, InfoIcon, WarnIcon } from "../components/Icons";
 import { ItemSpend } from "../components/ItemSpend";
@@ -125,6 +125,8 @@ export function PlanQuestion({
 	const question = view.question;
 	const offered = (id: string) => question.choices.some(choice => choice.id === id);
 	const canApprove = offered(single ? "run_single" : "approve");
+	// The rule Slack reads too: open questions and the approval block hold an approval back.
+	const held = (id: string) => approvalHeld(plan, question, id, review.answers);
 	const refused = review.refusal;
 	const unplaceable = single
 		? []
@@ -233,7 +235,7 @@ export function PlanQuestion({
 					<button
 						type="button"
 						className="button button-primary"
-						disabled={busy || !!ciBlock || blocked !== null || placeBlocked !== null}
+						disabled={busy || held(single ? "run_single" : "approve") || blocked !== null || placeBlocked !== null}
 						onClick={() =>
 							void approve(single ? { kind: "answer", question: question.id, choice: "run_single" } : undefined)
 						}
@@ -273,7 +275,7 @@ export function PlanQuestion({
 								key={choice.id}
 								type="button"
 								className={`button ${choice.id === "give_up" ? "button-quiet" : "button-outline"}`}
-								disabled={busy || (choice.id === "run_single" && review.unansweredLeft > 0)}
+								disabled={busy || held(choice.id)}
 								onClick={() => void acting.act({ kind: "answer", question: question.id, choice: choice.id })}
 							>
 								{choice.label}

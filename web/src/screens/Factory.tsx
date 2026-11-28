@@ -24,7 +24,9 @@ import { useId, useRef, type ReactNode } from "react";
 import { RailFrame, RepoRail, useRailFold, useSearchKey, type RailChoice } from "../components/Rail";
 import { RailFoot, useHostedUsage } from "../components/RailFoot";
 import { StartComposer } from "../components/StartComposer";
-import { ChevronIcon, FileIcon, Mark, RepoIcon, WarnIcon } from "../components/Icons";
+import { ApiIcon, ChevronIcon, FileIcon, Mark, RepoIcon, WarnIcon } from "../components/Icons";
+import { ProviderIcon } from "../components/ProviderIcon";
+import { hostOfAddress, RepoTile } from "../components/RepoTile";
 import { Menu, PHONE_QUERY, Pill, useMediaQuery, type MenuSpec } from "../components/ui";
 import { plural } from "../lib/format";
 import { feedCounts, feedRepositories, repositoryName, workingCounts } from "../lib/repositories";
@@ -43,6 +45,13 @@ import { type ItemsState } from "../state/items";
 
 /** How an item was filed, in the filter's words. */
 export const SOURCE_WORD: Record<ItemSource, string> = { web: "web", api: "API", ...bySource(filterWord) };
+
+/** A source's glyph in the "Filed from" menu: its mark, the Windlass mark for the web, braces for the API. */
+function SourceGlyph({ source }: { source: ItemSource }) {
+	if (source === "web") return <Mark size={14} />;
+	if (source === "api") return <ApiIcon size={14} />;
+	return <ProviderIcon id={source} size={13} />;
+}
 
 const IN_PROGRESS: ItemState[] = ["working", "queued", "waiting"];
 const ENDED: ItemState[] = ["done", "failed", "cancelled"];
@@ -177,7 +186,7 @@ function FilterMenu({
 	label: string;
 	icon: ReactNode;
 	value: string;
-	choices: Array<{ key: string; name: string; note?: string }>;
+	choices: Array<{ key: string; name: string; note?: string; icon?: ReactNode }>;
 	chosen: string | null;
 	onChoose(key: string | null): void;
 }) {
@@ -207,6 +216,7 @@ function FilterMenu({
 					value: choice.key,
 					label: choice.name,
 					description: choice.note,
+					icon: choice.icon,
 					checked: chosen === choice.key,
 					onSelect: () => onChoose(choice.key),
 				})),
@@ -473,6 +483,7 @@ export function Factory({
 										key: String(repository.id),
 										name: repository.name,
 										note: plural(repository.items, "work item"),
+										icon: <RepoTile name={repository.name} host={hostOfAddress(repository.id)} />,
 									}))}
 									chosen={filters.repository === undefined ? null : String(filters.repository)}
 									onChoose={key =>
@@ -489,9 +500,13 @@ export function Factory({
 							<FilterMenu
 								name="from"
 								label="Filed from"
-								icon={<FileIcon size={14} />}
+								icon={filters.from ? <SourceGlyph source={filters.from} /> : <FileIcon size={14} />}
 								value={filters.from ? SOURCE_WORD[filters.from] : "all"}
-								choices={ITEM_SOURCES.map(source => ({ key: source, name: SOURCE_WORD[source] }))}
+								choices={ITEM_SOURCES.map(source => ({
+									key: source,
+									name: SOURCE_WORD[source],
+									icon: <SourceGlyph source={source} />,
+								}))}
 								chosen={filters.from ?? null}
 								onChoose={key =>
 									choose({ repository: filters.repository, from: ITEM_SOURCES.find(source => source === key) })

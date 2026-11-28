@@ -119,6 +119,9 @@ export class FakeRunner {
 				case "remove":
 					send({ kind: "removed", sandbox: frame.sandbox });
 					break;
+				case "forget-backup":
+					send({ kind: "backup-forgotten", sessionId: frame.sessionId });
+					break;
 			}
 		});
 		return { ws, frames, proof: () => signature, send };

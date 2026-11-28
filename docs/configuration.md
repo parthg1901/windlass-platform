@@ -167,6 +167,8 @@ GitLab work items need one GitLab instance's OAuth application and work items tu
 
 Each project hook delivers to `/gitlab/webhook` under `WLP_PUBLIC_URL`, path prefix included. Windlass generates the hook's secret when a user saves a project.
 
+The OAuth application needs the `api` scope: Windlass uses it to register hooks, open merge requests, write notes, read pipelines and create project access tokens. That grant stays on the server. For each clone, fetch or push in a sandbox, Windlass creates a project access token for that one project (`read_repository` as Reporter to clone or fetch, `write_repository` as Developer to push) and revokes it as soon as the operation ends. GitLab expiry dates are whole days, so a token Windlass could not revoke expires within about a day, and the next operation on that project revokes it. Creating project access tokens needs Maintainer on the project and, on GitLab.com, a Premium or Ultimate plan. Self-managed GitLab allows them on any plan unless an administrator or group owner has turned them off. Without them, the clone or push stops and says what is needed. Windlass does not fall back to the user's sign-in.
+
 ## Linear
 
 Linear intake requires work items, a GitHub repository connection and a configured Linear OAuth app. A partial set of credentials leaves the integration unavailable.

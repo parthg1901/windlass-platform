@@ -91,3 +91,39 @@ test("a cross-repo feature is handed over when its run reaches merged, without t
 	assert.deepEqual(effects({ ...before, repos: [repos[0]] }, { ...next, repos: [repos[0]] }), [], "one repository");
 	assert.deepEqual(effects(next, { ...next, revision: 6 }), [], "already merged");
 });
+
+test("a planner's case for one implementer is a plan update: the plan post in Slack, the link-only notice elsewhere", () => {
+	const id = "i_single";
+	const run = { n: 1, step: { n: 1, attempt: 1, kind: "refine" }, ci: null };
+	const before = {
+		id,
+		revision: 3,
+		state: "working",
+		question: null,
+		pr: null,
+		featurePlan: { status: "proposed" },
+		filedTurn: `${id}:1:1:1`,
+		run,
+	};
+	const question = (kind: string) => ({
+		id: `${id}:q4`,
+		kind,
+		choices: [
+			{ id: "run_single", label: "Approve the current Windlass session as one implementer" },
+			{ id: "orchestrate_anyway", label: "Ask for subtasks" },
+		],
+	});
+	const next = { ...before, revision: 4, state: "waiting", question: question("single_suggested") };
+	const updates = itemUpdates(before as FactoryItem, next as FactoryItem, { kind: "turn_ended" });
+	assert.deepEqual(updates, [{ kind: "plan", question: `${id}:q4` }]);
+	const meta = { meta: { linear: {}, jira: {}, slack: {} } } as Recorded;
+	assert.deepEqual(rows(sourceEffects(bindingsOf(meta), updates, next as FactoryItem, { url: "u" })), [
+		{ kind: "linear_write", key: "owner_needed", questionId: `${id}:q4`, commentId: "*", itemUrl: "u", plan: true },
+		{ kind: "slack_write", event: "plan", key: `${id}:plan:${id}:q4`, question: `${id}:q4` },
+	]);
+	// Any other question stays a question, and a plan from an earlier turn is not posted as this one.
+	const other = { ...next, question: question("turn_refused") };
+	assert.equal(itemUpdates(before as FactoryItem, other as FactoryItem)[0]?.kind, "question");
+	const stale = { ...next, filedTurn: `${id}:1:0:1` };
+	assert.equal(itemUpdates(before as FactoryItem, stale as FactoryItem)[0]?.kind, "question");
+});

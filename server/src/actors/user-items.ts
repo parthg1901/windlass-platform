@@ -84,6 +84,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { UserError } from "rivetkit";
 import type { RawAccess } from "rivetkit/db";
 import { mayUse } from "../access.js";
+import { shortLabel } from "../factory/answered.js";
 import { slackChoices } from "../slack/blocks.js";
 import { type CleanPage, ItemPageProblem, cleanItemPage, itemFeed, itemPage, listedItems } from "../item-pages.js";
 import {
@@ -2252,7 +2253,9 @@ export const itemActions = {
 		const choices = view.question ? slackChoices(view.question, view.plan) : [];
 		if (!view.question || !choices.length) return { kind: "none" };
 		const wanted = words(input.text);
-		const choice = choices.find(ch => words(ch.label) === wanted || words(ch.id) === wanted);
+		const choice = choices.find(
+			ch => words(ch.label) === wanted || words(shortLabel(ch)) === wanted || words(ch.id) === wanted,
+		);
 		if (!choice) return { kind: "choices", labels: choices.map(ch => ch.label) };
 		await slackAct(c, {
 			id: input.id,

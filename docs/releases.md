@@ -71,6 +71,19 @@ Compare the full reference printed above with the runner digest in the Machines 
 
 Publish the reviewed draft in GitHub Releases. For deployment, upgrade all server nodes first, leaving their existing runner settings in place. Signed runner connections use protocol 2. At cutover, install the certified online platform key, set `WLP_REQUIRE_SIGNED_RUNNER=1` on every server, and advertise the verified `WLP_RUNNER_IMAGE` together with the `WLP_RUNNER_CAPABILITIES` read from that image. Recreate the servers, check health, and re-pair each machine. Compare the root fingerprint printed during pairing with the owner's offline copy. [Self-hosted cutover commands](../deploy/selfhost/README.md#enable-signed-runner-connections)
 
+## A release with session copies on machines
+
+The first runner release after 0.3.11 carries the `session-backups` capability: the runner keeps copies of
+its Claude Code, Codex, OpenCode and own-volume Windlass sessions in `wlp-machine-<machine id>-backups` on
+the machine ([architecture.md](architecture.md#on-a-machine-the-copy-stays-on-the-machine)). As for every
+capability, deploy the server first, then publish the runner. A server of this revision names the
+capability to every runner; an older runner ignores the name and keeps no copies, with no error. A newer
+runner on an older server is not asked for it, sends no `sessionBackups` field and no `backup-forgotten`
+frame, and keeps no copies. Bump `runner/package.json` for that release, refresh `WLP_RUNNER_CAPABILITIES`
+from the new image (its `capabilities` command lists `session-backups`), and after the swap check one
+machine session: a turn logs `[wlp] backup.saved`, `docker volume ls` shows the backups volume, and
+removing the session's container then sending a prompt logs `[wlp] backup.restored`.
+
 ## Developer checks
 
 From the workspace root, `pnpm check:release` checks workflow permissions, action pins, build arguments, bundle scanning and the release gate. The setup and architecture regressions run with `node --test scripts/runner-setup-check.mjs`. Run `actionlint .github/workflows/ci.yml .github/workflows/release-images.yml` to check Actions syntax and expressions.

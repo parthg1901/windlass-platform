@@ -577,6 +577,10 @@ rivet deploy ... --secret WLP_GITHUB_CLIENT_SECRET \
 
 ## The bucket for agent memory
 
+A machine's sessions need no bucket: their copies stay on the machine, in a volume of the runner's
+([architecture.md](architecture.md#on-a-machine-the-copy-stays-on-the-machine)). `WLP_BACKUP_MAX_BYTES`
+is their limit too.
+
 Where sandboxes are E2B's, a bucket keeps a copy of each agent's Windlass session so a replaced sandbox can
 go on with it ([architecture.md, "The agent's memory outlives its sandbox"](architecture.md#the-agents-memory-outlives-its-sandbox)).
 Work items' screenshots are stored in the same bucket ([work-items.md](work-items.md#screenshots-on-work-items)).

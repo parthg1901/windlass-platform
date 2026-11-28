@@ -171,6 +171,16 @@ class Conversation {
 			// Not serial: a save runs for minutes in its own helper container, outside the sandbox.
 			case "saveMirror":
 				return o.saveMirror(this.session, op.args.id, op.args.stage, op.args.partial);
+			// The session's own copies (session-backups.ts): its own sandbox, and its own name, checked there.
+			case "backupSave":
+			case "backupRestore":
+				this.requireActive();
+				return op.name === "backupSave"
+					? o.backup(this.session, "backupSave", op.args)
+					: o.backup(this.session, "backupRestore", op.args);
+			case "backupCopy":
+				this.requireActive();
+				return o.backupCopy(this.session, op.args);
 			case "saveSnapshot": {
 				const { id, source } = op.args;
 				return o.serial(() => {

@@ -10,6 +10,9 @@ export class TurnProblem extends Error {}
 /** A confirmed checkout or policy failure. Transport and provider failures use the interruption budget. */
 export class ReviewRefused extends TurnProblem {}
 
+/** The code host would not give the sandbox a scoped Git credential (`GitCredentialRefused`): the owner has to act. */
+export class GitAccessRefused extends TurnProblem {}
+
 export function tail(text: string, lines = 6, chars = 800): string {
 	const kept = text
 		.split("\n")

@@ -21,41 +21,49 @@ import { hostFor } from "../server/src/codehost/item.js";
 import { freeBranchAt } from "../server/src/codehost/branch.js";
 import { gitlabCodeHost } from "../server/src/gitlab/host.js";
 
-/** Exercise the same clone, fetch, scanned push and actor-held receipt as a live session. */
-async function pushBranch(access: import("../server/src/gitlab/workspace.js").GitlabAccess, branch: string) {
-	const { cloneGitlab, fetchGitlab, pushGitlab } = await import("../server/src/gitlab/workspace.js");
-	const { createFakeSandboxLayer } = await import("../server/src/sandbox-fake.js");
+type GitlabAccess = import("../server/src/gitlab/workspace.js").GitlabAccess;
+type SandboxCommand = import("./gitlab-workspace-fixture.js").SandboxCommand;
+/** Every command, environment and standard input the fake sandbox layer saw: the Git credential arrives on stdin. */
+const sandboxCommands: SandboxCommand[] = [];
+const workspaceHome = await mkdtemp(join(tmpdir(), "gitlab-protocol-"));
+{
 	const { installGitlabWorkspaceFixture } = await import("./gitlab-workspace-fixture.js");
-	const home = await mkdtemp(join(tmpdir(), "gitlab-protocol-"));
-	try {
-		installGitlabWorkspaceFixture(home);
-		const { sandboxes } = createFakeSandboxLayer({ signIns: "memory" });
-		const id = await sandboxes.create({ uid: "tester", sessionId: "workspace", profile: "docker-hardened" });
-		const sandbox = await sandboxes.connect(id);
-		assert.ok(sandbox);
-		const repo = { ...access.project, installationId: access.project.id, baseSha: null as string | null };
-		assert.deepEqual(await cloneGitlab(access, repo, sandbox, new AbortController().signal), {
-			workGone: false,
-			workAt: null,
-			directory: ".",
-		});
-		assert.match(repo.baseSha!, /^[0-9a-f]{40}$/);
-		const input = { repository: repo, branch, pushed: null, sandbox, sessionId: "workspace" };
-		await assert.rejects(
-			pushGitlab(
-				access,
-				{ ...input, redact: text => text.replaceAll("Built by the fixture model", "[redacted]") },
-				"Not safe",
-			),
-			/Nothing was pushed/,
-		);
-		const result = await pushGitlab(access, input, "Protocol check");
-		assert.ok(result.pushed && result.head && !result.workspaceChanged);
-		assert.equal(await fetchGitlab(access, repo, sandbox, branch), true);
-		return result.head;
-	} finally {
-		await rm(home, { recursive: true, force: true });
-	}
+	installGitlabWorkspaceFixture(workspaceHome, entry => sandboxCommands.push(entry));
+}
+
+async function newSandbox() {
+	const { createFakeSandboxLayer } = await import("../server/src/sandbox-fake.js");
+	const { sandboxes } = createFakeSandboxLayer({ signIns: "memory" });
+	const id = await sandboxes.create({ uid: "tester", sessionId: "workspace", profile: "docker-hardened" });
+	const sandbox = await sandboxes.connect(id);
+	assert.ok(sandbox);
+	return sandbox;
+}
+
+/** Exercise the same clone, fetch, scanned push and actor-held receipt as a live session. */
+async function pushBranch(access: GitlabAccess, branch: string) {
+	const { cloneGitlab, fetchGitlab, pushGitlab } = await import("../server/src/gitlab/workspace.js");
+	const sandbox = await newSandbox();
+	const repo = { ...access.gitlab.project, installationId: access.gitlab.project.id, baseSha: null as string | null };
+	assert.deepEqual(await cloneGitlab(access, repo, sandbox, new AbortController().signal), {
+		workGone: false,
+		workAt: null,
+		directory: ".",
+	});
+	assert.match(repo.baseSha!, /^[0-9a-f]{40}$/);
+	const input = { repository: repo, branch, pushed: null, sandbox, sessionId: "workspace" };
+	await assert.rejects(
+		pushGitlab(
+			access,
+			{ ...input, redact: text => text.replaceAll("Built by the fixture model", "[redacted]") },
+			"Not safe",
+		),
+		/Nothing was pushed/,
+	);
+	const result = await pushGitlab(access, input, "Protocol check");
+	assert.ok(result.pushed && result.head && !result.workspaceChanged);
+	assert.equal(await fetchGitlab(access, repo, sandbox, branch), true);
+	return result.head;
 }
 
 async function hookReceiver(route: (request: Request) => Promise<Response | null>) {
@@ -161,46 +169,38 @@ try {
 		app.call({ path: `/projects/${hidden.id}`, token }),
 		(e: unknown) => e instanceof GitlabError && e.status === 404,
 	);
-	const hiddenGit = await fetch(host.cloneUrl(owner, hidden.name) + "/info/refs?service=git-upload-pack", {
-		headers: { authorization: "Basic " + Buffer.from("oauth2:" + token).toString("base64") },
-	});
-	assert.equal(hiddenGit.status, 404);
+	const smart = (owner_: string, name_: string, password: string, service = "git-upload-pack") =>
+		fetch(`${host.cloneUrl(owner_, name_)}/info/refs?service=${service}`, {
+			headers: { authorization: "Basic " + Buffer.from("oauth2:" + password).toString("base64") },
+		}).then(r => r.status);
+	// Git over HTTPS takes no OAuth grant here: only a project token, so a sandbox can never need the owner's.
+	assert.equal(await smart(owner, name, token), 401);
 	const target = { owner, name, installationId: connection.id, repositoryId: projectId };
-	let entered = false;
-	await assert.rejects(
-		host.withToken({ ...target, repositoryId: String(other.id) }, "push", async () => {
-			entered = true;
-		}),
-	);
-	await assert.rejects(
-		host.withToken({ ...target, installationId: "999" }, "clone", async () => {
-			entered = true;
-		}),
-	);
-	assert.equal(entered, false);
+	const tokensBefore = fixture.projectTokens.length;
+	await assert.rejects(host.gitCredential({ ...target, repositoryId: String(other.id) }, "write"));
+	await assert.rejects(host.gitCredential({ ...target, installationId: "999" }, "read"));
+	assert.equal(fixture.projectTokens.length, tokensBefore, "no token for another project or connection");
 	Object.assign(process.env, {
 		WLP_GITLAB_CLIENT_ID: app.settings.clientId,
 		WLP_GITLAB_CLIENT_SECRET: fixture.clientSecret,
 		WLP_GITLAB_BASE_URL: fixture.url,
 	});
-	const head = await host.withToken(target, "push", t =>
-		pushBranch(
-			{
-				project: {
-					provider: "gitlab",
-					id: projectId,
-					owner,
-					name,
-					branch: project.defaultBranch,
-					private: true,
-					url: host.cloneUrl(owner, name).slice(0, -4),
-				},
-				viewer: String(fixture.user.id),
-				token: t,
-			},
-			branch,
-		),
-	);
+	const selectedProject = {
+		provider: "gitlab" as const,
+		id: projectId,
+		owner,
+		name,
+		branch: project.defaultBranch,
+		private: true,
+		url: host.cloneUrl(owner, name).slice(0, -4),
+	};
+	const access: GitlabAccess = {
+		gitCredential: git => host.gitCredential(target, git),
+		gitlab: { project: selectedProject, viewer: String(fixture.user.id), token },
+	};
+	const commandsFrom = sandboxCommands.length,
+		authFrom = fixture.gitAuth.length;
+	const head = await pushBranch(access, branch);
 	assert.equal(fixture.branchHead(project, branch), head);
 	const author = execFileSync("git", ["log", "-1", "--format=%an <%ae>", head], {
 		cwd: project.path,
@@ -210,7 +210,130 @@ try {
 		author,
 		`${fixture.user.username} <${fixture.user.id}-${fixture.user.username}@users.noreply.127.0.0.1>`,
 	);
+	// One read token for the clone, one write token for the push, one read token for the fetch: each revoked after.
+	const made = fixture.projectTokens.slice(tokensBefore);
+	assert.deepEqual(
+		made.map(t => [String(t.projectId), t.scopes.join(), t.accessLevel, t.name]),
+		[
+			[projectId, "read_repository", 20, "windlass-git-read"],
+			[projectId, "write_repository", 30, "windlass-git-write"],
+			[projectId, "read_repository", 20, "windlass-git-read"],
+		],
+	);
+	assert.ok(
+		made.every(t => t.revoked),
+		"every project token is revoked when its operation has ended",
+	);
+	const soonest = Date.parse(made[0].expiresAt + "T00:00:00Z") - Date.now();
+	assert.ok(soonest > 55 * 60 * 1000 && soonest <= 25 * 60 * 60 * 1000, `expiry backstop ${soonest}ms`);
+	// Git first asks without a credential and is challenged; every request that carried one carried a project token.
+	const auth = fixture.gitAuth.slice(authFrom).filter(a => a.kind !== "none");
+	assert.ok(auth.length && auth.every(a => a.kind === "project" && a.status === 200), JSON.stringify(auth));
+	const scopeOf = (a: (typeof auth)[number]) => made.find(t => t.id === a.tokenId)?.scopes.join();
+	assert.ok(auth.some(a => a.service === "git-receive-pack"));
+	assert.ok(auth.filter(a => a.service === "git-receive-pack").every(a => scopeOf(a) === "write_repository"));
+	assert.ok(auth.filter(a => scopeOf(a) === "read_repository").every(a => a.service === "git-upload-pack"));
+	assert.equal(auth[0].tokenId, made[0].id, "the clone used the read token");
+	const commands = sandboxCommands.slice(commandsFrom);
+	const grants = [...fixture.issued, fixture.token, fixture.clientSecret];
+	assert.ok(fixture.issued.has(token) && commands.length > 0);
+	for (const entry of commands) {
+		const seen = JSON.stringify(entry);
+		assert.ok(!grants.some(g => seen.includes(g)), "the owner's OAuth grant entered the sandbox");
+		for (const t of made)
+			assert.ok(
+				!entry.command.includes(t.token) && !JSON.stringify(entry.env).includes(t.token),
+				"a project token reaches a command only on its standard input",
+			);
+	}
+	assert.ok(made.every(t => commands.some(c => c.stdin.includes(t.token))));
 	console.log("ok  paged project discovery, large project ID, project access and authenticated smart HTTP clone/push");
+	console.log(
+		"ok  clone and fetch take a read-only project token, push a write one; each revoked, the OAuth grant never in the sandbox",
+	);
+
+	// A token for one project reaches no other: not over Git, not to revoke there, and not the API at all.
+	const neighbour = fixture.addProject({ owner, name: "neighbour" });
+	const scoped = await app.createGitToken(token, projectId, "write");
+	assert.equal(await smart(owner, name, scoped.token, "git-receive-pack"), 200);
+	assert.equal(await smart(owner, neighbour.name, scoped.token), 404);
+	assert.equal(await smart(owner, neighbour.name, scoped.token, "git-receive-pack"), 404);
+	assert.equal(await smart(owner, hidden.name, scoped.token), 404);
+	await assert.rejects(app.call({ path: `/projects/${neighbour.id}`, token: scoped.token }), denied);
+	await app.revokeProjectToken(token, String(neighbour.id), scoped.id); // Not that project's token: nothing to revoke there.
+	assert.ok(!fixture.projectTokens.find(t => t.token === scoped.token)!.revoked);
+	const read = await app.createGitToken(token, projectId, "read");
+	assert.equal(await smart(owner, name, read.token, "git-receive-pack"), 403, "a read token cannot push");
+	await app.revokeProjectToken(token, projectId, read.id);
+	assert.equal(await smart(owner, name, read.token), 401, "a revoked token stops working at once");
+	const lapsed = fixture.projectTokens.find(t => t.token === scoped.token)!;
+	fixture.expire(lapsed);
+	assert.equal(await smart(owner, name, scoped.token), 401, "an expired token stops working");
+	console.log("ok  a project token reaches only its own project, only for its access, and not after revoke or expiry");
+
+	// A token an operation never revoked (the server stopped between making and revoking it) is revoked by the next one.
+	const left = await app.createGitToken(token, projectId, "read");
+	const leftRow = fixture.projectTokens.find(t => t.token === left.token)!;
+	const recent = await app.createGitToken(token, projectId, "read");
+	leftRow.createdAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+	const sweeping = await host.gitCredential(target, "read");
+	assert.ok(leftRow.revoked, "a stale token of ours is swept");
+	assert.ok(!fixture.projectTokens.find(t => t.token === recent.token)!.revoked, "a recent one may still be in use");
+	await sweeping.revoke();
+	await sweeping.revoke(); // Once only, and never throws.
+	assert.ok(fixture.projectTokens.find(t => t.token === sweeping.token)!.revoked);
+	await app.revokeProjectToken(token, projectId, recent.id);
+	const unrevokable = await host.gitCredential(target, "read");
+	fixture.projectTokens.find(t => t.token === unrevokable.token)!.revoked = true;
+	await unrevokable.revoke(); // GitLab refuses the DELETE: logged, not thrown; expiry is the backstop.
+	console.log("ok  a token left by an unfinished operation is revoked by the next, and revoke never throws");
+
+	// No scoped token, no Git: never the OAuth grant instead, and the reason says what is needed.
+	const { cloneGitlab, pushGitlab } = await import("../server/src/gitlab/workspace.js");
+	const refusedRepo = { ...selectedProject, installationId: projectId, baseSha: null as string | null };
+	const refusedFrom = {
+		commands: sandboxCommands.length,
+		auth: fixture.gitAuth.length,
+		tokens: fixture.projectTokens.length,
+	};
+	project.level = 30;
+	const developer = await newSandbox();
+	await assert.rejects(
+		cloneGitlab(access, refusedRepo, developer, new AbortController().signal),
+		(e: Error) =>
+			e.name === "GitCredentialRefused" &&
+			e.message.startsWith(
+				`Windlass needs Maintainer access on ${owner}/${name} to create a short-lived project token for Git, so the clone or fetch did not run.`,
+			),
+	);
+	project.level = 40;
+	project.tokensAllowed = false;
+	await assert.rejects(
+		cloneGitlab(access, refusedRepo, developer, new AbortController().signal),
+		/GitLab refused to create a short-lived project token on windlass\/subgroup\/harbor, so the clone or fetch did not run\. .*Premium or Ultimate/,
+	);
+	assert.equal(fixture.projectTokens.length, refusedFrom.tokens);
+	assert.equal(fixture.gitAuth.length, refusedFrom.auth, "no Git request at all without a scoped token");
+	assert.ok(sandboxCommands.slice(refusedFrom.commands).every(c => !c.command.includes("wlp_git clone")));
+	// A push refused its token leaves nothing pushed and no handover behind.
+	project.tokensAllowed = true;
+	const pushing = await newSandbox();
+	const pushRepo = { ...refusedRepo };
+	await cloneGitlab(access, pushRepo, pushing, new AbortController().signal);
+	const pushAuth = fixture.gitAuth.length;
+	project.level = 30;
+	await assert.rejects(
+		pushGitlab(
+			access,
+			{ repository: pushRepo, branch: "refused/push", pushed: null, sandbox: pushing, sessionId: "workspace" },
+			"Refused",
+		),
+		/Maintainer access on windlass\/subgroup\/harbor .*so the push did not run/,
+	);
+	project.level = 40;
+	assert.equal(fixture.gitAuth.length, pushAuth);
+	assert.equal(fixture.branchHead(project, "refused/push"), null);
+	console.log("ok  a refused project token stops clone and push with what is needed, never using the OAuth grant");
 
 	const input = { title: "Add guide", body: "A new guide", head: branch, base: project.defaultBranch };
 	const mr = await host.openPull(token, owner, name, input);
@@ -359,7 +482,7 @@ try {
 	const title = "Add the harbor guide";
 	const named = await freeBranchAt(hub, title);
 	assert.equal(named, "windlass/add-the-harbor-guide");
-	const namedHead = await pushBranch({ project: selected, viewer: String(fixture.user.id), token }, named);
+	const namedHead = await pushBranch(hub, named);
 	assert.equal(fixture.branchHead(project, named), namedHead);
 	assert.equal(await freeBranchAt(hub, title), "windlass/add-the-harbor-guide-2");
 	await assert.rejects(hub.host.hasBranch("not-a-token", owner, name, named), GitlabError);
@@ -591,4 +714,5 @@ try {
 	await assert.rejects(app.viewer(token), denied);
 } finally {
 	await fixture.stop();
+	await rm(workspaceHome, { recursive: true, force: true });
 }

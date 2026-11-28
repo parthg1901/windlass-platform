@@ -1,0 +1,598 @@
+/*
+ * Integrations (components/IntegrationCard.tsx): one pattern for every connected service in Settings. The
+ * service's mark on a tile, its name with a connection state, one line on what it does, one action at the end;
+ * under it, who and where it is connected, its mappings as "source → repository" rows, and the row that adds one.
+ * The body lines up with the name, not the tile, on a wide card, and runs the full width on a phone.
+ */
+
+.integration {
+	--mark: 36px;
+	--mark-gap: 14px;
+}
+
+.integration-head {
+	display: grid;
+	grid-template-columns: var(--mark) minmax(0, 1fr) auto auto;
+	align-items: start;
+	gap: 10px var(--mark-gap);
+}
+
+.integration-mark {
+	display: grid;
+	place-items: center;
+	width: var(--mark);
+	height: var(--mark);
+	border-radius: 9px;
+	background: var(--bg-overlay);
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	color: var(--ink);
+}
+:root[data-theme="light"] .integration-mark {
+	background: var(--bg-raised);
+	box-shadow:
+		inset 0 0 0 1px var(--line-strong),
+		0 1px 2px rgb(16 17 20 / 0.05);
+}
+
+.integration-heading {
+	min-width: 0;
+	padding-top: 1px;
+}
+.integration-name {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 10px;
+	font-size: var(--text-14);
+	font-weight: var(--weight-strong);
+	letter-spacing: -0.01em;
+	line-height: 1.35;
+}
+.integration-what {
+	margin-top: 2px;
+	max-width: 68ch;
+	font-size: var(--text-13);
+	line-height: 1.5;
+	color: var(--ink-dim);
+}
+
+/* Connected, not connected, needs reconnecting: a dot and a word, never colour alone. */
+.integration-state {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 20px;
+	padding: 0 8px 0 7px;
+	border-radius: var(--radius-pill);
+	font-size: var(--text-12);
+	font-weight: var(--weight-medium);
+	letter-spacing: 0;
+	white-space: nowrap;
+}
+.integration-state-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+}
+.integration-state-connected {
+	background: var(--ok-wash);
+	color: var(--ok);
+}
+.integration-state-disconnected {
+	background: var(--bg-hover);
+	box-shadow: inset 0 0 0 1px var(--line);
+	color: var(--ink-faint);
+}
+.integration-state-disconnected .integration-state-dot {
+	background: none;
+	box-shadow: inset 0 0 0 1.5px currentColor;
+}
+.integration-state-reconnect {
+	background: var(--warn-wash);
+	color: var(--warn);
+}
+
+.integration-actions {
+	grid-column: 3;
+	grid-row: 1;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	justify-self: end;
+}
+.integration-more-slot {
+	grid-column: 4;
+	grid-row: 1;
+	margin-right: -6px;
+}
+.integration-actions .button {
+	white-space: nowrap;
+}
+.integration-more {
+	font-size: var(--text-16);
+	letter-spacing: 0.04em;
+}
+
+.integration-body {
+	display: grid;
+	gap: 14px;
+	min-width: 0;
+	margin-top: 14px;
+	padding-left: calc(var(--mark) + var(--mark-gap));
+}
+.integration-body > * {
+	margin: 0;
+}
+.integration-body > .callout {
+	margin: 0;
+}
+.integration-body .usage-loading {
+	margin: 0;
+}
+
+/* Who and where it is connected. */
+.integration-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 28px;
+	margin: 0;
+}
+.integration-fact {
+	display: grid;
+	gap: 1px;
+	min-width: 0;
+}
+.integration-fact dt {
+	font-size: var(--text-12);
+	color: var(--ink-faint);
+}
+.integration-fact dd {
+	margin: 0;
+	font-size: var(--text-13);
+	font-weight: var(--weight-medium);
+	color: var(--ink);
+	overflow-wrap: anywhere;
+}
+.integration-fact dd code,
+.integration-fact .mono {
+	font-family: var(--font-mono);
+	font-size: var(--text-12);
+	font-weight: var(--weight-regular);
+}
+.integration-fact dd .faint {
+	font-weight: var(--weight-regular);
+	color: var(--ink-faint);
+}
+
+/* While not connected: what connecting it gets you, in three steps. */
+.integration-steps {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+	gap: 8px 20px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	counter-reset: step;
+}
+.integration-steps li {
+	display: grid;
+	grid-template-columns: 18px minmax(0, 1fr);
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	font-size: var(--text-13);
+	line-height: 1.45;
+	color: var(--ink-dim);
+	counter-increment: step;
+}
+.integration-steps li::before {
+	content: counter(step);
+	flex: none;
+	display: inline-grid;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+	color: var(--ink-faint);
+	transform: translateY(-1px);
+}
+.integration-steps code,
+.integration-what code,
+.integration-details code {
+	font-size: 0.92em;
+}
+
+/* A "How filing works" fold. */
+.integration-details {
+	font-size: var(--text-13);
+	line-height: 1.5;
+	color: var(--ink-dim);
+}
+.integration-details > summary {
+	width: fit-content;
+	font-weight: var(--weight-medium);
+	color: var(--ink-dim);
+	cursor: pointer;
+	border-radius: var(--radius-s);
+}
+.integration-details > summary:hover {
+	color: var(--ink);
+}
+.integration-details[open] > summary {
+	margin-bottom: 4px;
+	color: var(--ink);
+}
+
+/* A sub-part of one service (Slack's own account). */
+.integration-part {
+	display: grid;
+	gap: 8px;
+	padding-top: 14px;
+	border-top: 1px solid var(--line);
+}
+.integration-part > * {
+	margin: 0;
+}
+.integration-part > .usage-title {
+	min-height: 0;
+	font-size: var(--text-13);
+}
+
+/* ---- mappings: source → repository ------------------------------------------------------------ */
+
+.mapping-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border: 1px solid var(--line);
+	border-radius: var(--r-control);
+	overflow: hidden;
+}
+.mapping-row {
+	padding: 9px 8px 9px 12px;
+}
+.mapping-row + .mapping-row {
+	border-top: 1px solid var(--line);
+}
+.mapping-line {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1.25fr) auto;
+	align-items: center;
+	gap: 4px 10px;
+	min-height: 26px;
+}
+.mapping-from {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+.mapping-from-name {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+	font-size: var(--text-13);
+	font-weight: var(--weight-medium);
+	color: var(--ink);
+	overflow-wrap: anywhere;
+}
+.mapping-from-name > svg {
+	flex: none;
+	color: var(--ink-faint);
+}
+.mapping-from-note {
+	flex: none;
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+	color: var(--ink-faint);
+}
+.mapping-arrow {
+	text-align: center;
+	color: var(--ink-faint);
+}
+.mapping-to {
+	min-width: 0;
+}
+.mapping-repo {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 100%;
+	font-family: var(--font-mono);
+	font-size: var(--text-12);
+	color: var(--code);
+}
+.mapping-repo > svg {
+	flex: none;
+	color: var(--ink-faint);
+}
+.mapping-repo-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mapping-none {
+	font-size: var(--text-12);
+	color: var(--ink-faint);
+}
+.mapping-row-unmapped .mapping-from-name {
+	color: var(--ink-dim);
+	font-weight: var(--weight-regular);
+}
+.mapping-actions {
+	display: inline-flex;
+	justify-content: flex-end;
+	gap: 2px;
+	min-width: 24px;
+}
+.mapping-actions .icon-button {
+	color: var(--ink-faint);
+}
+.mapping-actions .link {
+	font-size: var(--text-12);
+	text-decoration: none;
+	padding: 0 6px;
+}
+.mapping-actions .link:hover:not(:disabled) {
+	text-decoration: underline;
+}
+.mapping-options {
+	margin-top: 6px;
+}
+.mapping-options .check {
+	font-size: var(--text-12);
+	color: var(--ink-dim);
+}
+
+/* The row that adds a mapping. */
+.mapping-form {
+	display: grid;
+	gap: 8px;
+	padding: 12px;
+	border: 1px dashed var(--line-strong);
+	border-radius: var(--r-control);
+}
+.mapping-form-title {
+	margin: 0;
+	font-size: var(--text-12);
+	font-weight: var(--weight-medium);
+	color: var(--ink-dim);
+}
+.mapping-form-fields {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1.25fr) auto;
+	align-items: start;
+	gap: 8px 10px;
+}
+.mapping-form-fields > .mapping-arrow {
+	align-self: center;
+}
+.mapping-form-fields-single {
+	grid-template-columns: minmax(0, 1fr) auto;
+	max-width: 560px;
+}
+.mapping-form-to {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+}
+.mapping-form-from {
+	min-width: 0;
+}
+.mapping-form-submit {
+	display: flex;
+	gap: 6px;
+}
+.mapping-form-submit .button {
+	min-height: var(--h-lg);
+	white-space: nowrap;
+}
+.mapping-form-note .field-note {
+	margin: 0;
+}
+.mapping-form-note {
+	display: grid;
+	gap: 2px;
+}
+
+/* ---- narrow: the body runs the full width, actions sit under the name ---------------------- */
+
+@container (max-width: 620px) {
+	.integration {
+		--mark: 32px;
+		--mark-gap: 12px;
+	}
+	.integration-mark {
+		border-radius: 8px;
+	}
+	.integration-head {
+		grid-template-columns: var(--mark) minmax(0, 1fr) auto;
+	}
+	.integration-actions {
+		grid-column: 2 / -1;
+		grid-row: 2;
+		justify-self: start;
+	}
+	.integration-more-slot {
+		grid-column: 3;
+	}
+	.integration-body {
+		padding-left: 0;
+	}
+	.mapping-line {
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-areas:
+			"from actions"
+			"to to";
+	}
+	.mapping-from {
+		grid-area: from;
+	}
+	.mapping-line > .mapping-arrow {
+		display: none;
+	}
+	.mapping-to {
+		grid-area: to;
+	}
+	.mapping-to::before {
+		content: "→ " / "";
+		color: var(--ink-faint);
+		font-family: var(--font-mono);
+		font-size: var(--text-12);
+	}
+	.mapping-actions {
+		grid-area: actions;
+	}
+	.mapping-form-fields {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.mapping-form-fields > .mapping-arrow {
+		display: none;
+	}
+	.mapping-form-submit .button {
+		width: 100%;
+	}
+}
+
+.mapping-line-account {
+	grid-template-columns: minmax(0, 1fr) auto;
+}
+.mapping-line-account .owner-avatar,
+.mapping-line-account .repo-tile {
+	flex: none;
+}
+.mapping-line-account .mapping-actions .button {
+	gap: 6px;
+}
+
+/* ---- where a work item came from (components/ItemSource.tsx), on rows, cards and the item page ---- */
+
+.item-source {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 5px;
+	color: inherit;
+	white-space: nowrap;
+	vertical-align: baseline;
+}
+.item-source > .provider-icon {
+	flex: none;
+	align-self: center;
+	opacity: 0.9;
+}
+.item-source-link > svg:last-child {
+	color: var(--ink-faint);
+}
+
+/* A repository on another host than GitHub: its host's mark in the tile's corner (RepoTile.tsx). */
+.repo-tile {
+	position: relative;
+}
+.repo-tile-host {
+	position: absolute;
+	right: -4px;
+	bottom: -4px;
+	display: grid;
+	place-items: center;
+	width: 12px;
+	height: 12px;
+	border-radius: 3px;
+	background: var(--bg);
+	box-shadow: 0 0 0 1px var(--line-strong);
+}
+.repo-tile-sm .repo-tile-host,
+.repo-tile-xs .repo-tile-host {
+	right: -3px;
+	bottom: -3px;
+	width: 10px;
+	height: 10px;
+}
+.repo-tile-sm .repo-tile-host svg,
+.repo-tile-xs .repo-tile-host svg {
+	width: 7px;
+	height: 7px;
+}
+
+/* The item page's origin: the source's mark beside the issue key or the source's name. */
+.item-origin-issue {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 4px;
+	margin-left: 1px;
+}
+.item-origin-issue > .provider-icon {
+	flex: none;
+	align-self: center;
+	color: var(--ink);
+}
+.item-meta .branch-name {
+	margin-left: 2px;
+}
+
+/* Every source named in a sentence, each with its mark (Usage's limits). */
+.source-name {
+	display: inline-flex;
+	align-items: baseline;
+	gap: 4px;
+	white-space: nowrap;
+	color: var(--ink);
+}
+.source-name > .provider-icon {
+	flex: none;
+	align-self: center;
+}
+
+/* ---- API tokens (ApiTokens.tsx): the integrations' head, and its tokens as rows like the mappings ---- */
+
+.api-tokens .integration-mark {
+	color: var(--ink-dim);
+}
+.token-line {
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	gap: 4px 16px;
+}
+.token-main {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+.token-meta,
+.token-used {
+	font-family: var(--font-mono);
+	font-size: var(--text-12);
+	color: var(--ink-faint);
+	overflow-wrap: anywhere;
+}
+.token-used {
+	white-space: nowrap;
+}
+.token-revoke {
+	color: var(--ink-dim);
+}
+.token-revoke:hover:not(:disabled) {
+	color: var(--bad);
+	background: var(--bad-wash);
+}
+@container (max-width: 620px) {
+	.token-line {
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-areas:
+			"main actions"
+			"used actions";
+	}
+	.token-main {
+		grid-area: main;
+	}
+	.token-used {
+		grid-area: used;
+	}
+	.token-line > .mapping-actions {
+		grid-area: actions;
+	}
+}

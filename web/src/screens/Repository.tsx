@@ -297,7 +297,7 @@ function Pulls({ page, now }: { page: RepositoryPage; now: number }) {
 									</a>
 									<p className="agent-meta">
 										<span>
-											<BranchName branch={pull.branch} /> into {pull.base}
+											<BranchName branch={pull.branch} /> into <BranchName branch={pull.base} />
 										</span>
 										<span>
 											by{" "}

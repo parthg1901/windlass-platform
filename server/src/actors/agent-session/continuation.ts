@@ -66,7 +66,7 @@ export async function forkSource(c: Ctx, meta: SessionMeta): Promise<ForkSource>
 
 /** What a session made by `continueSession` adds to its meta at creation. Nothing of the earlier session's publish, pull or checks. */
 export function continuationMeta(continuation: Continuation): Partial<SessionMeta> {
-	const { from, copy, handoff } = continuation;
+	const { from, copy, handoff, machineCopy } = continuation;
 	return {
 		continuedFrom: {
 			id: String(from.id),
@@ -83,6 +83,16 @@ export function continuationMeta(continuation: Continuation): Partial<SessionMet
 			backup: { windlassSessionId: copy.windlassSessionId, ...copy.backup, turn: 0 },
 			copiedSession: true,
 		}),
+		...(!copy &&
+			machineCopy &&
+			typeof machineCopy.from === "string" &&
+			typeof machineCopy.windlassSessionId === "string" && {
+				pendingCopy: {
+					from: machineCopy.from,
+					windlassSessionId: machineCopy.windlassSessionId,
+					backup: machineCopy.backup,
+				},
+			}),
 		...(continuation.tainted && { tainted: true }),
 		...(continuation.secretRequestBlocked && { secretRequestBlocked: true }),
 	};

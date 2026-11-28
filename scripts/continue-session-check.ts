@@ -22,6 +22,7 @@ import type { Continuation, ForkSource } from "../server/src/actors/internal.js"
 import { sessionHandoff } from "../server/src/actors/turn-resume.js";
 import { SandboxSessionBackups } from "../server/src/sandbox/backup.js";
 import type { SandboxLayer } from "../server/src/sandbox/api.js";
+import { copyOnMachine } from "../server/src/actors/agent-session/sandbox.js";
 import { untrustedWords } from "../server/src/factory/untrusted.js";
 import { Report } from "./check-report.js";
 
@@ -399,5 +400,92 @@ await check("no copy on a machine, without a store, on shared agent data, or wit
 		assert((await store.size(backups.keyOf({ ...owner, sessionId: id }))) === null, `an object was made for ${id}`);
 	return Object.keys(tried).join(", ");
 });
+
+await check(
+	"on a machine, the new meta waits to copy the earlier session's copy, and only without a copy already made",
+	() => {
+		const saved = { size: 10, sha256: "f".repeat(64), at: 5 };
+		const machineCopy = { from: "s_parent", windlassSessionId: "ses_abc", backup: saved };
+		const base = { from: FROM, handoff: HANDOFF, tainted: false, secretRequestBlocked: false };
+		const pending = continuationMeta({ ...base, copy: null, machineCopy });
+		assert(
+			pending.pendingCopy?.from === "s_parent" && pending.pendingCopy.windlassSessionId === "ses_abc",
+			`pending: ${JSON.stringify(pending.pendingCopy)}`,
+		);
+		assert(pending.windlassSessionId === undefined && pending.backup === undefined, "an id was taken before the copy");
+		const both = continuationMeta({ ...base, copy: { windlassSessionId: "ses_abc", backup: saved }, machineCopy });
+		assert(both.pendingCopy === undefined, "a second copy was asked for");
+		return "pendingCopy";
+	},
+);
+
+await check(
+	"a continued machine session copies on the machine only where the runner keeps copies and the data is its own",
+	async () => {
+		const saved = { size: 10, sha256: "f".repeat(64), at: 5 };
+		const pending = { from: "s_parent", windlassSessionId: "ses_abc", backup: saved };
+		const asked: string[] = [];
+		const layerOf = (available: boolean, copy: () => Promise<boolean>) =>
+			({
+				backups: {
+					available: async () => available,
+					copy: async (from: { sessionId: string }, to: { sessionId: string }) => {
+						asked.push(`${from.sessionId}>${to.sessionId}`);
+						return copy();
+					},
+				},
+				sandboxes: { sessionsLiveInSandbox: false, privateSessionData: async () => false },
+			}) as unknown as SandboxLayer;
+		const machine = { place: { kind: "machine", machineId: "m_1" } as SessionMeta["place"], sessionId: "s_child" };
+		const claude = meta({ ...machine, harness: "claude" });
+		const ok = async () => true;
+		const results = {
+			claude: await copyOnMachine(claude, pending, layerOf(true, ok), "box1"),
+			oldRunner: await copyOnMachine(claude, pending, layerOf(false, ok), "box1"),
+			hosted: await copyOnMachine(
+				meta({ harness: "claude", sessionId: "s_child" }),
+				pending,
+				layerOf(true, ok),
+				"box1",
+			),
+			sharedWindlass: await copyOnMachine(
+				meta({ ...machine, harness: "windlass", ownDataSandbox: null }),
+				pending,
+				layerOf(true, ok),
+				"box1",
+			),
+			ownWindlass: await copyOnMachine(
+				meta({ ...machine, harness: "windlass", ownDataSandbox: "box1" }),
+				pending,
+				layerOf(true, ok),
+				"box1",
+			),
+			missing: await copyOnMachine(
+				claude,
+				pending,
+				layerOf(true, async () => false),
+				"box1",
+			),
+			failing: await copyOnMachine(
+				claude,
+				pending,
+				layerOf(true, async () => Promise.reject(new Error("down"))),
+				"box1",
+			),
+		};
+		assert(
+			results.claude && results.ownWindlass && !results.oldRunner && !results.hosted && !results.sharedWindlass,
+			`results: ${JSON.stringify(results)}`,
+		);
+		assert(!results.missing && !results.failing, `a failed copy counted: ${JSON.stringify(results)}`);
+		assert(
+			asked.every(a => a === "s_parent>s_child"),
+			`asked ${asked.join(", ")}`,
+		);
+		return Object.entries(results)
+			.map(([k, v]) => `${k}=${v}`)
+			.join(" ");
+	},
+);
 
 process.exit(report.summary(true));

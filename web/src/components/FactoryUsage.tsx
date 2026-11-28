@@ -3,7 +3,7 @@ import { linkProps } from "../lib/router";
 import { FoldRows } from "./Fold";
 import { useItems } from "../state/items";
 import type { FactoryLimits } from "@contract";
-import { sourceNames } from "../../../server/src/sources/registry.js";
+import { SourceNames } from "./ProviderIcon";
 
 function Of({ spent, budget, spell }: { spent: number; budget: number; spell(value: number): string }) {
 	return (
@@ -42,9 +42,10 @@ export function FactoryUsage({ value }: { value: FactoryLimits }) {
 						</dd>
 					</div>
 					<div>
-						<dt>Items from issues and Slack</dt>
+						<dt>Items filed from connected services</dt>
 						<dd className="factory-limit-text">
-							{count(value.githubItemsPerDay)} per UTC day, shared by {sourceNames()}, including drafts
+							{count(value.githubItemsPerDay)} a day (UTC) in total, whether they come from <SourceNames join="or" />.
+							Drafts count.
 						</dd>
 					</div>
 					<div>

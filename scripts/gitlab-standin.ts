@@ -2,6 +2,9 @@
  * Seed an inaccessible project with addProject({owner, name, accessible:false}); it is absent from
  * discovery and denied over REST and git. Use deliverHook(hookId, event, payload, {guid?, omitToken?})
  * for a real HTTP delivery with a registered hook's URL and token.
+ * Git over HTTPS takes only a live project access token of that project (`projectTokens`), with `read_repository`
+ * or `write_repository` to fetch and `write_repository` to push; the owner's OAuth token is refused there, and every
+ * attempt is in `gitAuth`. A project's `level` is the owner's role; `tokensAllowed: false` refuses new tokens.
  */
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -107,6 +110,30 @@ export interface StandinProject {
 	pipelines: Pipeline[];
 	jobs: Job[];
 	traces: Map<string, string>;
+	/** The owner's role on the project: 40 is Maintainer, which creating a project access token takes. */
+	level: number;
+	/** False as on a GitLab.com Free plan, or where a group owner turned project access tokens off. */
+	tokensAllowed: boolean;
+}
+export interface ProjectToken {
+	id: number;
+	projectId: Id;
+	name: string;
+	scopes: string[];
+	accessLevel: number;
+	/** YYYY-MM-DD: the token stops working at midnight UTC on that date. */
+	expiresAt: string;
+	token: string;
+	createdAt: string;
+	revoked: boolean;
+}
+export interface GitAuth {
+	project: string;
+	service: string;
+	/** Which credential the request carried: a project token (by ID), the owner's OAuth token, or something else. */
+	kind: "project" | "oauth" | "other" | "none";
+	tokenId: number | null;
+	status: number;
 }
 interface Session {
 	access: string;
@@ -148,6 +175,10 @@ export class GitlabStandin {
 	readonly reactions = new Set<string>();
 	readonly root = mkdtempSync(join(tmpdir(), "wlp-gitlab-"));
 	readonly sessions = new Map<string, Session>();
+	/** Every OAuth access and refresh token this stand-in has issued, including rotated ones. */
+	readonly issued = new Set<string>();
+	readonly projectTokens: ProjectToken[] = [];
+	readonly gitAuth: GitAuth[] = [];
 	private readonly codes = new Map<string, { challenge: string; scope: string }>();
 	private nextId = 1000;
 	private server: Server | null = null;
@@ -212,6 +243,8 @@ export class GitlabStandin {
 			accessible: input.accessible ?? true,
 			visibility: input.visibility ?? "private",
 			archived: false,
+			level: 40,
+			tokensAllowed: true,
 			issues: [],
 			mergeRequests: [],
 			pipelines: [],
@@ -221,6 +254,14 @@ export class GitlabStandin {
 		this.commit(p, defaultBranch, input.files ?? { "README.md": `# ${p.name}\n` }, "Initial commit");
 		this.projects.push(p);
 		return p;
+	}
+	/** Not revoked, and before midnight UTC of its expiry date. */
+	live(t: ProjectToken) {
+		return !t.revoked && Date.now() < Date.parse(t.expiresAt + "T00:00:00Z");
+	}
+	/** Lets a token run out without being revoked, as one left by a crash eventually does. */
+	expire(t: ProjectToken) {
+		t.expiresAt = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
 	}
 	branchHead(p: StandinProject, branch: string) {
 		try {
@@ -461,26 +502,39 @@ export class GitlabStandin {
 			const suffix = path.slice(`/${remote.owner}/${remote.name}.git`.length);
 			if (!["/info/refs", "/git-receive-pack", "/git-upload-pack"].includes(suffix)) return missing();
 			const creds = auth.startsWith("Basic ") ? Buffer.from(auth.slice(6), "base64").toString() : "";
-			const grants = scopes(creds.slice(creds.indexOf(":") + 1));
-			if (!grants.length || !creds.includes(":")) {
-				res.setHeader("www-authenticate", 'Basic realm="GitLab"');
-				return fail(401, "Unauthorized");
-			}
-			if (!remote.accessible) return missing();
+			const user = creds.slice(0, Math.max(0, creds.indexOf(":"))),
+				password = creds.slice(creds.indexOf(":") + 1);
 			const advertise = suffix === "/info/refs";
-			const service = advertise ? q.get("service") : suffix.slice(1);
+			const service = (advertise ? q.get("service") : suffix.slice(1)) ?? "";
+			const projectToken = creds.includes(":") ? this.projectTokens.find(t => t.token === password) : undefined;
+			const seen: GitAuth = {
+				project: `${remote.owner}/${remote.name}`,
+				service,
+				kind: projectToken ? "project" : !creds ? "none" : scopes(password).length ? "oauth" : "other",
+				tokenId: projectToken?.id ?? null,
+				status: 0,
+			};
+			this.gitAuth.push(seen);
+			const refuse = (status: number, message: string) => {
+				seen.status = status;
+				if (status === 401) res.setHeader("www-authenticate", 'Basic realm="GitLab"');
+				return fail(status, message);
+			};
+			// Only a live project token, with any non-blank user name. The owner's grant never belongs in a sandbox.
+			if (!projectToken || !user || !this.live(projectToken)) return refuse(401, "Unauthorized");
+			if (!remote.accessible || String(projectToken.projectId) !== String(remote.id)) return refuse(404, "Not Found");
 			if (
 				(advertise ? method !== "GET" : method !== "POST") ||
 				(service !== "git-receive-pack" && service !== "git-upload-pack")
 			)
-				return missing();
+				return refuse(404, "Not Found");
 			const push = service === "git-receive-pack";
-			if (
-				!grants.includes("api") &&
-				!grants.includes("write_repository") &&
-				(push || !grants.includes("read_repository"))
-			)
-				return fail(403, "Forbidden");
+			const allowed = push
+				? projectToken.scopes.includes("write_repository") && projectToken.accessLevel >= 30
+				: projectToken.scopes.some(s => s === "read_repository" || s === "write_repository") &&
+					projectToken.accessLevel >= 20;
+			if (!allowed) return refuse(403, "Forbidden");
+			seen.status = 200;
 			// Only fixture-sized packs are supported. All request and response bytes, including packfiles, stay binary.
 			const raw = execFileSync("git", ["http-backend"], {
 				input: body,
@@ -558,6 +612,7 @@ export class GitlabStandin {
 			} else return json(400, { error: "unsupported_grant_type" });
 			const s = { access: secret(), refresh: secret(), scope, expiresAt: Date.now() + 7200000 };
 			this.sessions.set(s.access, s);
+			this.issued.add(s.access).add(s.refresh);
 			return json(200, {
 				access_token: s.access,
 				refresh_token: s.refresh,
@@ -586,7 +641,7 @@ export class GitlabStandin {
 			archived: p.archived,
 			web_url: this.web(p),
 			http_url_to_repo: this.web(p) + ".git",
-			permissions: { project_access: { access_level: 40 }, group_access: null },
+			permissions: { project_access: { access_level: p.level }, group_access: null },
 		});
 		if (api === "/projects" && method === "GET")
 			return page(
@@ -611,6 +666,66 @@ export class GitlabStandin {
 				return json(201, this.addIssueNote(issue, fields.body));
 			const note = notes.find(n => String(n.id) === subId);
 			if (action === "notes" && method === "GET" && note) return json(200, note);
+			return missing();
+		}
+		if (resource === "access_tokens") {
+			const shown = (t: ProjectToken) => ({
+				id: t.id,
+				name: t.name,
+				scopes: t.scopes,
+				revoked: t.revoked,
+				active: this.live(t),
+				access_level: t.accessLevel,
+				expires_at: t.expiresAt,
+				created_at: t.createdAt,
+				user_id: 9000 + t.id,
+			});
+			const mine = this.projectTokens.filter(t => String(t.projectId) === String(p.id));
+			if (!key && method === "GET")
+				return page(mine.filter(t => q.get("state") !== "active" || this.live(t)).map(shown));
+			if (!key && method === "POST") {
+				if (p.level < 40) return fail(403, "403 Forbidden");
+				if (!p.tokensAllowed) return fail(400, "Project access token creation is disabled");
+				const requested = fields.scopes as unknown;
+				const known = ["api", "read_api", "read_repository", "write_repository", "read_registry", "write_registry"];
+				const level = Number(fields.access_level ?? 40);
+				const day = /^\d{4}-\d{2}-\d{2}$/.test(fields.expires_at ?? "")
+					? Date.parse(fields.expires_at + "T00:00:00Z")
+					: NaN;
+				if (
+					!fields.name ||
+					!Array.isArray(requested) ||
+					!requested.length ||
+					!requested.every(x => known.includes(x)) ||
+					![10, 15, 20, 30, 40].includes(level) ||
+					level > p.level ||
+					!(day > Date.now()) ||
+					day > Date.now() + 365 * 86400000
+				)
+					return fail(400, "Invalid project access token");
+				const made: ProjectToken = {
+					id: ++this.nextId,
+					projectId: p.id,
+					name: fields.name,
+					scopes: requested as string[],
+					accessLevel: level,
+					expiresAt: fields.expires_at,
+					token: `glpat-${secret()}`,
+					createdAt: now(),
+					revoked: false,
+				};
+				this.projectTokens.push(made);
+				return json(201, { ...shown(made), token: made.token });
+			}
+			const found = mine.find(t => String(t.id) === key);
+			if (!found || action) return missing();
+			if (method === "GET") return json(200, shown(found));
+			if (method === "DELETE") {
+				if (found.revoked) return fail(400, "Token already revoked");
+				found.revoked = true;
+				res.writeHead(204).end();
+				return;
+			}
 			return missing();
 		}
 		if (resource === "hooks" && method === "POST" && !key) {

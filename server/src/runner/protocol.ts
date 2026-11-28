@@ -17,8 +17,16 @@ import { isIP } from "node:net";
 import { DEFERRED_INPUTS } from "../sandbox/snapshot-key.js";
 import { helloFields, welcomeFields } from "./frame-auth.js";
 import { MACHINE_HARNESS_IDS, MODEL_PROVIDERS, type SandboxProfileId } from "../contract.js";
-import type { CreateSandboxInput, ExecOptions, ExecResult } from "../sandbox/api.js";
-import { RUN_TAG, type Answer, type SandboxProcess, type StartOptions, type TurnSandbox } from "../sandbox/provider.js";
+import type { BackupOwner, CreateSandboxInput, ExecOptions, ExecResult } from "../sandbox/api.js";
+import { PACK_PATH, SESSION } from "../sandbox/backup-names.js";
+import {
+	NAME,
+	RUN_TAG,
+	type Answer,
+	type SandboxProcess,
+	type StartOptions,
+	type TurnSandbox,
+} from "../sandbox/provider.js";
 import {
 	type Assert,
 	type Check,
@@ -133,6 +141,12 @@ const refusalEntry = object({
 	lastAt: count,
 	count: positiveLimit,
 });
+/** A copy's owner (`BackupOwner`): a user id and a session id of the platform's form, as a copy's name takes them. */
+const backupOwner = object({
+	uid: is<string>(v => typeof v === "string" && NAME.test(v)),
+	sessionId: is<string>(v => typeof v === "string" && SESSION.test(v)),
+});
+const packPath = is<string>(v => typeof v === "string" && PACK_PATH.test(v));
 const operations = {
 	openCodeDefault: [object({ providers: list(oneOf(...MODEL_PROVIDERS), MODEL_PROVIDERS.length) }), text(512)],
 	memoryEvents: [object(sandbox), nullable(object({ oomKills: count, totalMiB: positiveLimit }))],
@@ -260,6 +274,32 @@ const operations = {
 		nil,
 	],
 	modelRelayClose: [object({ ...sandbox, lease: relayLease }), nil],
+	/**
+	 * The copies of a session's agent session that the machine keeps (machine-backups.ts), only to a
+	 * runner whose report said `sessionBackups`. The runner holds each in a volume of its own and checks
+	 * every one against the session whose socket asks: `owner` is that session, and `id` its sandbox.
+	 *
+	 *   backupSave     takes the archive the sandbox packed at `pack` (and removes it there), and keeps
+	 *                  it when it is `size` bytes with `sha256`, at most `max`: `saved` with what the
+	 *                  runner itself measured, `changed` (not what was packed), `too_large`, or `full`
+	 *                  (the machine's volume of copies has no room for it)
+	 *   backupRestore  puts the session's copy at `pack` in the sandbox when it is `size` bytes with
+	 *                  `sha256`: `placed`, `missing` (none), or `changed` (not the copy recorded)
+	 *   backupCopy     copies `from`'s copy to `to`'s name (`to` is the asking session): false when
+	 *                  `from` has none
+	 *
+	 * A copy's removal is the machine's control socket's (`forget-backup`, control.ts), so that it
+	 * happens after the session is gone.
+	 */
+	backupSave: [
+		object({ ...sandbox, owner: backupOwner, pack: packPath, size: count, sha256: fingerprint, max: positiveLimit }),
+		object({ outcome: oneOf("saved", "changed", "too_large", "full"), size: count, sha256: optional(fingerprint) }),
+	],
+	backupRestore: [
+		object({ ...sandbox, owner: backupOwner, pack: packPath, size: count, sha256: fingerprint }),
+		oneOf("placed", "missing", "changed"),
+	],
+	backupCopy: [object({ from: backupOwner, to: backupOwner }), boolean],
 } as const satisfies Record<string, readonly [Check<unknown>, Check<unknown>]>;
 
 export type Name = keyof typeof operations;
@@ -367,4 +407,5 @@ export type Drift = [
 	Assert<Same<Args<"sweep">["options"], Parameters<TurnSandbox["sweep"]>[1]>>,
 	Assert<Same<Args<"signal">["sig"] | Args<"signal">["who"], Parameters<SandboxProcess["signal"]>[number]>>,
 	Assert<Same<Args<"create">["profile"], Extract<SandboxProfileId, `docker-${string}`>>>,
+	Assert<Same<Args<"backupCopy">["from"], BackupOwner>>,
 ];

@@ -1,7 +1,8 @@
 /** Run from server with npx tsx --test src/slack/blocks.test.ts. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { FeaturePlan, ItemQuestion } from "../contract.js";
+import type { ChoiceId, FeaturePlan, ItemQuestion } from "../contract.js";
+import { CHOICES, choice } from "../factory/answered.js";
 import { cut, LIMITS, planPost, questionPost, resolvedMessage, slackChoices, type Block } from "./blocks.js";
 import { resolvedLine } from "./thread.js";
 
@@ -82,7 +83,13 @@ test("plan post summarises the plan, cuts long lists and offers Approve, Request
 	assert.doesNotMatch(full, /Answered/);
 	assert.match(full, /900,000 tokens/);
 	assert.match(full, /Full plan/);
-	const buttons = elements(post.full!.blocks);
+	// Approval waits for the open question.
+	assert.deepEqual(
+		elements(post.full!.blocks).map(b => b.action_id),
+		["revise", "open"],
+	);
+	const ready = planPost("i_1", ask, plan({ questions: [{ id: "p2", text: "Answered", answer: "yes" }] }), url);
+	const buttons = elements(ready.full!.blocks);
 	assert.deepEqual(
 		buttons.map(b => b.action_id),
 		["approve", "revise", "open"],
@@ -92,7 +99,7 @@ test("plan post summarises the plan, cuts long lists and offers Approve, Request
 	assert.doesNotMatch(post.brief.text, /Ship/);
 	assert.doesNotMatch(texts(post.brief.blocks), /Ship/);
 	assert.deepEqual(
-		elements(post.brief.blocks).map(b => b.action_id),
+		elements(ready.brief.blocks).map(b => b.action_id),
 		["approve", "revise", "open"],
 	);
 	assert.ok(post.full!.blocks!.length <= 50);
@@ -198,4 +205,133 @@ test("resolution lines say who answered and where, without buttons", () => {
 	const message = resolvedMessage(line, url);
 	assert.match(JSON.stringify(message.blocks), /<@U1>.*&lt;now&gt;/);
 	assert.deepEqual(elements(message.blocks), []);
+});
+
+const singleAsk = (over: Partial<ItemQuestion> = {}) =>
+	question({
+		id: "single-q",
+		kind: "single_suggested",
+		text: "Automatic approval requires a plan based on trusted inputs.\nOne small docs edit to CONTRIBUTING.md.",
+		recommended: "run_single",
+		choices: [choice("run_single"), choice("orchestrate_anyway")],
+		...over,
+	});
+const singlePlan = (questions: FeaturePlan["questions"]) =>
+	plan({ subtasks: [], singleSuggested: "One small docs edit to CONTRIBUTING.md.", questions });
+const labelled = (blocks: Block[] | undefined) =>
+	elements(blocks).map(b => [b.action_id, (b.text as { text: string }).text, b.style ?? null]);
+
+test("a one-implementer plan is posted as a plan, listing its open questions and holding back its approval", () => {
+	const ask = singleAsk();
+	const open = singlePlan([
+		{ id: "p1", text: "Keep the old index?", recommended: "No" },
+		{ id: "p2", text: "Answered", answer: "yes" },
+	]);
+	assert.deepEqual(
+		slackChoices(ask, open).map(c => c.id),
+		["orchestrate_anyway"],
+	);
+	const post = planPost("i_1", ask, open, url);
+	const full = texts(post.full!.blocks);
+	assert.match(full, /One implementer suggested \(version 2\)/);
+	assert.match(full, /Goal: Ship <!channel> search/);
+	assert.match(full, /One small docs edit to CONTRIBUTING\.md/);
+	assert.match(full, /Keep the old index\? \(recommended: No\)/);
+	assert.match(full, /Answer the open questions in Windlass before approving\./);
+	assert.match(full, /pnpm test passes/);
+	assert.match(full, /Full plan/);
+	assert.doesNotMatch(full, /Parts/, "no empty parts list");
+	for (const message of [post.brief, post.full!])
+		assert.deepEqual(labelled(message.blocks), [
+			["choice:orchestrate_anyway", "Split into parts", null],
+			["open", "Open in Windlass", null],
+		]);
+	// What the button carries is the web's answer to that question.
+	assert.deepEqual(JSON.parse(String(elements(post.full!.blocks)[0]!.value)), {
+		i: "i_1",
+		q: "single-q",
+		v: 2,
+		c: "orchestrate_anyway",
+	});
+	// Posted as a plain question (a plan from an earlier turn), the plan still holds the approval back.
+	assert.deepEqual(
+		elements(questionPost("i_1", ask, url, open).full!.blocks).map(b => b.action_id),
+		["choice:orchestrate_anyway", "open"],
+	);
+});
+
+test("with its questions answered, a one-implementer plan offers both of the web's choices in short words", () => {
+	const answered = singlePlan([{ id: "p1", text: "Keep the old index?", answer: "No" }]);
+	const post = planPost("i_1", singleAsk(), answered, url);
+	assert.deepEqual(labelled(post.full!.blocks), [
+		["choice:run_single", "Approve as one implementer", "primary"],
+		["choice:orchestrate_anyway", "Split into parts", null],
+		["open", "Open in Windlass", null],
+	]);
+	assert.doesNotMatch(texts(post.full!.blocks), /Answer the open questions/);
+	assert.deepEqual(JSON.parse(String(elements(post.full!.blocks)[0]!.value)).c, "run_single");
+	// The web offers no revision here, so neither does Slack.
+	assert.ok(!elements(post.full!.blocks).some(b => b.action_id === "revise"));
+});
+
+test("an approval block holds back approving the feature, as on the web, and says why", () => {
+	const block = "This repository runs no CI on pushes to feature branches.";
+	const ask = question({
+		kind: "plan_approval",
+		approvalBlock: block,
+		choices: [
+			{ id: "run_single", label: "Use the current Windlass session as one implementer" },
+			choice("revise"),
+			choice("give_up"),
+		],
+	});
+	const answered = plan({ questions: [] });
+	const post = planPost("i_1", ask, answered, url);
+	// One implementer needs no feature CI: the web offers it in the block's place.
+	assert.deepEqual(labelled(post.full!.blocks), [
+		["choice:run_single", "Approve as one implementer", "primary"],
+		["revise", "Request changes", null],
+		["open", "Open in Windlass", null],
+	]);
+	assert.match(texts(post.full!.blocks), /no CI on pushes/);
+	const withApprove = { ...ask, choices: [choice("approve"), ...ask.choices] };
+	assert.ok(!slackChoices(withApprove, answered).some(c => c.id === "approve"));
+	// Where one implementer is what the question approves, the block holds it back too.
+	assert.deepEqual(
+		slackChoices(singleAsk({ approvalBlock: block }), answered).map(c => c.id),
+		["orchestrate_anyway"],
+	);
+});
+
+test("every choice Slack can show has a short label that Slack does not cut", () => {
+	const ids = Object.keys(CHOICES) as ChoiceId[];
+	// One question per choice: a message holds at most 25 buttons.
+	const shown = ids.flatMap(id =>
+		elements(questionPost("i_1", question({ choices: [choice(id)] }), url).full!.blocks).filter(
+			b => b.action_id !== "open",
+		),
+	);
+	assert.equal(shown.length, ids.length - 3, "reply, raise and add_secret need input");
+	for (const b of shown) {
+		const text = (b.text as { text: string }).text;
+		assert.ok(text.length <= 30 && text.length <= LIMITS.button && !text.endsWith("…"), text);
+	}
+	for (const kind of ["plan_approval", "replan_approval", "single_suggested"] as const) {
+		const ask = question({ kind, choices: ids.map(choice) });
+		for (const b of elements(planPost("i_1", ask, plan({ questions: [] }), url).full!.blocks)) {
+			const text = (b.text as { text: string }).text;
+			assert.ok(text.length <= 30 && !text.endsWith("…"), `${kind}: ${text}`);
+		}
+	}
+});
+
+test("resolution lines say one implementer and a split as what was done", () => {
+	const ask = singleAsk();
+	const by = (picked: string) => ({ kind: "answer", question: "single-q", choice: picked, by: "person:u" }) as never;
+	assert.equal(resolvedLine(ask, by("run_single"), "U1"), "Approved as one implementer by <@U1> in Slack");
+	assert.equal(resolvedLine(ask, by("run_single")), "Approved as one implementer on the web");
+	assert.equal(resolvedLine(ask, by("orchestrate_anyway"), "U1"), "Asked to split into parts by <@U1> in Slack");
+	// The plan question that did not list one implementer accepts it as well.
+	const planAsk = question({ id: "single-q", kind: "plan_approval", choices: [choice("revise")] });
+	assert.equal(resolvedLine(planAsk, by("run_single"), "U1"), "Approved as one implementer by <@U1> in Slack");
 });

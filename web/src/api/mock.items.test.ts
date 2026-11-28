@@ -150,6 +150,7 @@ describe("the mock's work items", () => {
 				"agent_ask",
 				"check_environment",
 				"secret_needed",
+				"ready_refused",
 			]),
 		);
 		expect(new Set(list.flatMap(item => (item.verdict ? [item.verdict.result] : [])))).toEqual(

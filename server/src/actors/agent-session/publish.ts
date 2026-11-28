@@ -37,7 +37,6 @@ import {
 import { githubApp } from "../../github/app.js";
 import { gitlabApp } from "../../gitlab/connect.js";
 import { fetchGitlab, pushGitlab } from "../../gitlab/workspace.js";
-import { gitlabAccess } from "../internal.js";
 import { gitlabOf } from "../gitlab-item.js";
 import { hostFor } from "../../codehost/item.js";
 import { branchFor, freeBranchAt, wantedBranch } from "../../codehost/branch.js";
@@ -406,7 +405,12 @@ export async function publishSession(
 			};
 			const pushed =
 				repo.provider === "gitlab"
-					? await pushGitlab(await gitlabAccess(c, meta.uid, String(repo.id)), input, message.title, updateFromBase)
+					? await pushGitlab(
+							gitlabOf(await hostFor(c, { uid: meta.uid, repository: repo })),
+							input,
+							message.title,
+							updateFromBase,
+						)
 					: updateFromBase
 						? await updateBranchFromBase(input, updateFromBase)
 						: await pushWork(input, message.title);
@@ -813,7 +817,7 @@ export async function agentPush(
 		};
 		const pushed =
 			repo.provider === "gitlab"
-				? await pushGitlab(await gitlabAccess(c, meta.uid, String(repo.id)), input, checked.commit)
+				? await pushGitlab(gitlabOf(await hostFor(c, { uid: meta.uid, repository: repo })), input, checked.commit)
 				: await pushWork({ ...input, app: app!, connection: await githubConnection(c, meta) }, checked.commit);
 		if (pushed.pushed && pushed.head) pushed.pushed = recordPushHead(meta, sandbox, pushed.head);
 		if (pushed.workspaceChanged) {
@@ -885,7 +889,7 @@ export async function fetchSessionBase(
 	work: string | null = null,
 ) {
 	if (repo.provider === "gitlab")
-		return fetchGitlab(await gitlabAccess(c, meta.uid, String(repo.id)), repo, sandbox, work);
+		return fetchGitlab(gitlabOf(await hostFor(c, { uid: meta.uid, repository: repo })), repo, sandbox, work);
 	const app = githubApp();
 	if (!app) throw new Error("GitHub is not configured.");
 	return fetchBase(app, await githubConnection(c, meta), repo, sandbox, work);

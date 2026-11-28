@@ -5,6 +5,8 @@
 import { useEffect } from "react";
 import { useGithub, type GithubNotice } from "../state/github";
 import { ExternalIcon, WarnIcon } from "./Icons";
+import { IntegrationCard, IntegrationFacts, IntegrationSteps } from "./IntegrationCard";
+import { OwnerAvatar } from "./RepoTile";
 
 /** Notices said here already: the account menu does not open to say them again. */
 export const shownInSettings = new WeakSet<GithubNotice>();
@@ -23,45 +25,50 @@ export function GithubSettings() {
 	const busy = github.busy !== null;
 	const opening =
 		github.busy === "leaving" ? "Opening GitHub…" : github.busy === "popup" ? "In the GitHub window…" : null;
+	const state = github.status === null && !github.error ? "loading" : connection ? "connected" : "disconnected";
+	const canStart = github.status !== null && !github.error;
 	return (
-		<section className="usage-section repo-saved" id="settings-github" aria-labelledby="settings-github-title">
-			<h3 className="usage-title" id="settings-github-title">
-				GitHub
-				{connection ? (
-					<span className="gh-settings-actions">
-						<button
-							type="button"
-							className="link secret-add"
-							onClick={() => github.connect({ where: "account", install: true })}
-							disabled={busy && github.busy !== "popup"}
-						>
-							{opening ?? "Add an account"}
-						</button>
-						<button type="button" className="link secret-add" onClick={() => void github.disconnect()} disabled={busy}>
-							{github.busy === "disconnecting" ? "Disconnecting…" : "Disconnect…"}
-						</button>
-					</span>
-				) : github.status !== null && !github.error ? (
+		<IntegrationCard
+			id="settings-github"
+			provider="github"
+			name="GitHub"
+			what="Agents work on your repositories, private ones included, and hand their work back as pull requests."
+			state={state}
+			action={
+				connection ? (
 					<button
 						type="button"
-						className="link secret-add"
+						className="button button-outline button-small"
+						onClick={() => github.connect({ where: "account", install: true })}
+						disabled={busy && github.busy !== "popup"}
+					>
+						{opening ?? "Add an account"}
+					</button>
+				) : canStart ? (
+					<button
+						type="button"
+						className="button button-outline button-small"
 						onClick={() => github.connect({ where: "account" })}
 						disabled={busy && github.busy !== "popup"}
 					>
 						{opening ?? "Connect GitHub…"}
 					</button>
-				) : null}
-			</h3>
-			<p className="usage-lede">
-				{connection ? (
-					<>
-						Connected as <strong>{connection.login}</strong>. Agents work on the repositories the app may see in these
-						accounts.
-					</>
-				) : (
-					"Launch agents on your own repositories, private ones included, and get their work back as pull requests."
-				)}
-			</p>
+				) : null
+			}
+			more={
+				connection
+					? [
+							{
+								id: "disconnect",
+								label: github.busy === "disconnecting" ? "Disconnecting…" : "Disconnect…",
+								tone: "warn",
+								disabled: busy,
+								onSelect: () => void github.disconnect(),
+							},
+						]
+					: []
+			}
+		>
 			{notice ? (
 				<p
 					className={`callout${notice.tone === "bad" ? " callout-warn" : ""}`}
@@ -90,27 +97,48 @@ export function GithubSettings() {
 					<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
 				</div>
 			) : connection ? (
-				<ul className="settings-list" aria-label="GitHub accounts">
-					{connection.accounts.map(account => (
-						<li key={account.installationId} className="usage-kept-row">
-							<div className="usage-kept-main">
-								<span className="usage-kept-title">{account.login}</span>
-								<p className="agent-meta">{account.kind === "organization" ? "Organization" : "Personal account"}</p>
-							</div>
-							<a
-								className="button button-outline button-small"
-								href={account.manageUrl}
-								target="_blank"
-								rel="noreferrer"
-							>
-								Repositories
-								<span className="visually-hidden"> of {account.login}, at GitHub</span>
-								<ExternalIcon size={11} />
-							</a>
-						</li>
-					))}
-				</ul>
-			) : null}
-		</section>
+				<>
+					<IntegrationFacts facts={[["Signed in as", <span className="mono">@{connection.login}</span>]]} />
+					<ul className="mapping-list" aria-label="GitHub accounts">
+						{connection.accounts.map(account => (
+							<li key={account.installationId} className="mapping-row">
+								<div className="mapping-line mapping-line-account">
+									<span className="mapping-from">
+										<span className="mapping-from-name">
+											<OwnerAvatar owner={account.login} />
+											{account.login}
+										</span>
+										<span className="mapping-from-note">
+											{account.kind === "organization" ? "Organization" : "Personal account"}
+										</span>
+									</span>
+									<span className="mapping-actions">
+										<a
+											className="button button-quiet button-small"
+											href={account.manageUrl}
+											target="_blank"
+											rel="noreferrer"
+										>
+											Repositories
+											<span className="visually-hidden"> of {account.login}, at GitHub</span>
+											<ExternalIcon size={11} />
+										</a>
+									</span>
+								</div>
+							</li>
+						))}
+					</ul>
+					<p className="field-note">Agents see the repositories you let the Windlass app reach in these accounts.</p>
+				</>
+			) : (
+				<IntegrationSteps
+					steps={[
+						"Install the Windlass app on your account or organization.",
+						"Choose the repositories it may reach.",
+						"Start an agent on one; its work comes back as a pull request.",
+					]}
+				/>
+			)}
+		</IntegrationCard>
 	);
 }

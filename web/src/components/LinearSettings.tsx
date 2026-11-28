@@ -1,14 +1,26 @@
 /**
  * Settings: the Linear integration. The owner connects a workspace through Linear's OAuth, then maps a team
- * to one repository of their GitHub connection. An issue of a mapped team that gains a Windlass filing label, or is
+ * to one repository they can push to. An issue of a mapped team that gains a Windlass filing label, or is
  * assigned to the Windlass app user, is filed as a work item.
  *
  * The signed-in user redeems the ticket returned by the OAuth callback.
  */
 import type { GithubRepository, LinearStatus, LinearTeam } from "@contract";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useApp, useAuth } from "../state/app";
 import { WarnIcon } from "./Icons";
+import {
+	IntegrationCard,
+	IntegrationFacts,
+	IntegrationSteps,
+	MappedRepository,
+	MappingForm,
+	MappingList,
+	MappingRow,
+	useReturnRound,
+} from "./IntegrationCard";
+
+const RETURN = /^#linear(?:-error)?=/;
 
 const ERRORS: Record<string, string> = {
 	access_denied: "Linear was not given access, so nothing is connected.",
@@ -29,6 +41,9 @@ export function LinearSettings() {
 	const [error, setError] = useState<string | null>(null);
 	const [failed, setFailed] = useState<string | null>(null);
 	const [repositoryProblem, setRepositoryProblem] = useState<string | null>(null);
+	const repositorySelect = useRef<HTMLSelectElement>(null);
+	// A return to the page already open (only its fragment changes) is read again.
+	const returned = useReturnRound(RETURN);
 
 	useEffect(() => {
 		const back = /^#(linear|linear-error)=(.+)$/.exec(location.hash);
@@ -48,7 +63,7 @@ export function LinearSettings() {
 				() => setConnected(true),
 				failure => setError(explain(failure)),
 			);
-	}, [client, auth, explain]);
+	}, [client, auth, explain, returned]);
 
 	useEffect(() => {
 		let live = true;
@@ -123,23 +138,45 @@ export function LinearSettings() {
 	if (status?.state === "off") return null;
 	const ready = teamId !== "" && repositoryId !== "";
 	const unmapped = teams?.filter(team => !team.mapping) ?? [];
+	const canMap = !repositoryProblem && teams !== null && repositories !== null && unmapped.length > 0;
 	return (
-		<section className="usage-section repo-saved" aria-labelledby="settings-linear" data-testid="linear-settings">
-			<h3 className="usage-title" id="settings-linear">
-				Linear
-				{status?.state === "disconnected" ? (
-					<button type="button" className="link secret-add" onClick={() => void connect()} disabled={busy}>
+		<IntegrationCard
+			id="settings-linear"
+			provider="linear"
+			name="Linear"
+			what={
+				<>
+					File work items from Linear issues labelled <code>windlass</code>.
+				</>
+			}
+			state={
+				status === null
+					? failed
+						? "disconnected"
+						: "loading"
+					: status.state === "connected"
+						? "connected"
+						: "disconnected"
+			}
+			testId="linear-settings"
+			action={
+				status?.state === "disconnected" ? (
+					<button
+						type="button"
+						className="button button-outline button-small"
+						onClick={() => void connect()}
+						disabled={busy}
+					>
 						{busy ? "Connecting…" : "Connect Linear…"}
 					</button>
-				) : status?.state === "connected" ? (
-					<button type="button" className="link secret-add" onClick={disconnect} disabled={busy}>
-						Disconnect…
-					</button>
-				) : null}
-			</h3>
-			<p className="usage-lede">
-				File work items from Linear issues labelled <code>windlass</code>.
-			</p>
+				) : null
+			}
+			more={
+				status?.state === "connected"
+					? [{ id: "disconnect", label: "Disconnect…", tone: "warn", disabled: busy, onSelect: disconnect }]
+					: []
+			}
+		>
 			{connected && status?.state === "connected" ? (
 				<p className="callout" role="status">
 					Linear is connected. Choose a repository for a team below.
@@ -156,92 +193,103 @@ export function LinearSettings() {
 				</div>
 			) : status.state === "connected" ? (
 				<>
-					<details className="field-note">
-						<summary>Details</summary>
-						Label an issue <code>windlass</code> or assign it to Windlass. Use <code>windlass-quick</code> or{" "}
-						<code>windlass:quick</code> for Quick mode.
+					<IntegrationFacts
+						testId="linear-workspace"
+						facts={[
+							["Workspace", status.connection.workspace.name],
+							["Connected as", status.connection.user.name],
+						]}
+					/>
+					<details className="integration-details">
+						<summary>How filing works</summary>
+						Label an issue <code>windlass</code> or assign it to Windlass, then review and start the draft here. Use{" "}
+						<code>windlass-quick</code> or <code>windlass:quick</code> for Quick mode.
 					</details>
-					<p className="field-note" data-testid="linear-workspace">
-						Connected to {status.connection.workspace.name} as {status.connection.user.name}. Review and start filed
-						drafts in Windlass.
-					</p>
 					{teams === null ? (
 						<div className="usage-loading" aria-busy="true" aria-label="Loading teams">
 							<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
 						</div>
 					) : (
-						<ul className="settings-list" aria-label="Teams">
+						<MappingList label="Teams">
 							{teams.map(team => (
-								<li key={team.id} className="usage-kept-row" data-testid={`linear-team-${team.key}`}>
-									<div className="usage-kept-main">
-										<span className="usage-kept-title">{team.name}</span>
-										<p className="agent-meta">
-											{team.key}{" "}
-											{team.mapping ? (
-												<>
-													→ {team.mapping.repository.owner}/{team.mapping.repository.name}
-												</>
-											) : (
-												"· not mapped, its issues are ignored"
-											)}
-										</p>
-									</div>
-									<span />
-									{team.mapping ? (
-										<button
-											type="button"
-											className="button button-outline button-small"
-											onClick={() => void remove(team)}
-											disabled={busy}
-										>
-											Remove<span className="visually-hidden"> the mapping of {team.name}</span>
-										</button>
-									) : (
-										<span />
-									)}
-								</li>
+								<MappingRow
+									key={team.id}
+									testId={`linear-team-${team.key}`}
+									from={team.name}
+									fromNote={team.key}
+									to={
+										team.mapping ? (
+											<MappedRepository owner={team.mapping.repository.owner} name={team.mapping.repository.name} />
+										) : null
+									}
+									unmapped="Not mapped · its issues are ignored"
+									busy={busy}
+									onRemove={team.mapping ? () => void remove(team) : undefined}
+									removeLabel={`Remove the mapping of ${team.name}`}
+									onChange={
+										!team.mapping && canMap
+											? () => {
+													setTeamId(team.id);
+													repositorySelect.current?.focus();
+												}
+											: undefined
+									}
+									changeLabel={`Map ${team.name} to a repository`}
+								/>
 							))}
-						</ul>
+						</MappingList>
 					)}
 					{repositoryProblem ? (
-						<p className="usage-note tone-warn">{repositoryProblem} Connect GitHub to map a team to a repository.</p>
-					) : teams !== null && repositories !== null && unmapped.length > 0 ? (
-						<>
-							<div className="linear-map">
-								<label className="visually-hidden" htmlFor={ids.team}>
-									Team
-								</label>
-								<select
-									id={ids.team}
-									className="select"
-									value={teamId}
-									onChange={event => setTeamId(event.target.value)}
-									disabled={busy}
-								>
-									<option value="">Choose a team</option>
-									{unmapped.map(team => (
-										<option key={team.id} value={team.id}>
-											{team.name} ({team.key})
-										</option>
-									))}
-								</select>
-								<label className="visually-hidden" htmlFor={ids.repository}>
-									Repository
-								</label>
-								<select
-									id={ids.repository}
-									className="select"
-									value={repositoryId}
-									onChange={event => setRepositoryId(event.target.value)}
-									disabled={busy}
-								>
-									<option value="">Choose a repository</option>
-									{repositories.map(repository => (
-										<option key={repository.id} value={String(repository.id)}>
-											{repository.owner}/{repository.name}
-										</option>
-									))}
-								</select>
+						<p className="usage-note tone-warn">
+							{repositoryProblem} A team can be mapped once your repositories load.
+						</p>
+					) : canMap ? (
+						<MappingForm
+							title="Map a team"
+							from={
+								<>
+									<label className="visually-hidden" htmlFor={ids.team}>
+										Team
+									</label>
+									<select
+										id={ids.team}
+										className="select"
+										value={teamId}
+										onChange={event => setTeamId(event.target.value)}
+										disabled={busy}
+									>
+										<option value="">Choose a team</option>
+										{unmapped.map(team => (
+											<option key={team.id} value={team.id}>
+												{team.name} ({team.key})
+											</option>
+										))}
+									</select>
+								</>
+							}
+							to={
+								<>
+									<label className="visually-hidden" htmlFor={ids.repository}>
+										Repository
+									</label>
+									<select
+										ref={repositorySelect}
+										id={ids.repository}
+										className="select"
+										value={repositoryId}
+										onChange={event => setRepositoryId(event.target.value)}
+										disabled={busy}
+									>
+										<option value="">Choose a repository</option>
+										{repositories!.map(repository => (
+											<option key={repository.id} value={String(repository.id)}>
+												{repository.owner}/{repository.name}
+											</option>
+										))}
+									</select>
+								</>
+							}
+							submit={
 								<button
 									type="button"
 									className="button button-outline"
@@ -250,21 +298,33 @@ export function LinearSettings() {
 								>
 									Map team
 								</button>
-							</div>
-							<p className="field-note">
-								A team files to one repository of your GitHub connection. Removing a mapping, or unlabelling or
-								unassigning an issue, does not change items already filed.
-							</p>
-						</>
+							}
+							note={
+								<p className="field-note">
+									A team files to one repository you can push to. Removing a mapping, or unlabelling or unassigning an
+									issue, does not change items already filed.
+								</p>
+							}
+						/>
 					) : null}
 				</>
-			) : null}
+			) : (
+				<IntegrationSteps
+					steps={[
+						"Connect your Linear workspace.",
+						"Map a team to a repository.",
+						<>
+							Label an issue <code>windlass</code>: it is filed here as a draft.
+						</>,
+					]}
+				/>
+			)}
 			{error ? (
 				<p className="callout callout-bad" role="alert">
 					<WarnIcon />
 					<span>{error}</span>
 				</p>
 			) : null}
-		</section>
+		</IntegrationCard>
 	);
 }

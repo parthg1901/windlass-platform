@@ -282,6 +282,15 @@ describe("Integrations in Settings", () => {
 		expect(button, label).toBeDefined();
 		await act(async () => button!.click());
 	};
+	// A card's secondary actions (Disconnect…) are in its ⋯ menu.
+	const pressMore = async (scope: ParentNode, name: string, label: string) => {
+		await press(scope, `More ${name} actions`);
+		const row = Array.from(document.querySelectorAll<HTMLElement>('.ui-pop [role="menuitem"]')).find(
+			one => one.querySelector(".ui-item-label")?.textContent === label,
+		);
+		expect(row, label).toBeDefined();
+		await act(async () => row!.click());
+	};
 
 	afterEach(() => {
 		localStorage.clear();
@@ -326,10 +335,19 @@ describe("Integrations in Settings", () => {
 		const third = await open(mock(), "", "google");
 		try {
 			expect(card(third.host).querySelector('[role="status"]')?.textContent).toContain("acme/tools/harbor");
+			// A chosen project folds the picker away behind its row's Change; Cancel folds it again.
+			expect(card(third.host).querySelector("#gitlab-project")).toBeNull();
+			await press(card(third.host), "Change the project");
+			await third.settle();
+			expect(card(third.host).querySelector("#gitlab-project")).not.toBeNull();
+			expect(card(third.host).textContent).toMatch(/webhook.*Maintainer/);
+			expect(document.activeElement?.id).toBe("gitlab-query");
+			await press(card(third.host), "Cancel");
+			expect(card(third.host).querySelector("#gitlab-project")).toBeNull();
 			vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
-			await press(card(third.host), "Disconnect…");
+			await pressMore(card(third.host), "GitLab", "Disconnect…");
 			expect(card(third.host).textContent).toContain("Selected project");
-			await press(card(third.host), "Disconnect…");
+			await pressMore(card(third.host), "GitLab", "Disconnect…");
 			expect(card(third.host).textContent).toContain("Connect GitLab…");
 		} finally {
 			vi.restoreAllMocks();
@@ -356,6 +374,28 @@ describe("Integrations in Settings", () => {
 		} finally {
 			off.close();
 		}
+	});
+
+	it("takes a GitLab or Slack return that arrives in the page already open", async () => {
+		const client = createMockClient({ pace: 0 });
+		const view = await open(client, "", "google");
+		const api = client.user(view.auth);
+		const state = (id: string) => view.host.querySelector(`#${id} .integration-state`)?.textContent;
+		expect(state("settings-gitlab")).toContain("Not connected");
+		expect(state("settings-slack")).toContain("Not connected");
+		// Only the fragment changes: no new page load, so the cards must notice it themselves.
+		const gitlab = new URL((await api.gitlabConnect({ origin: "http://localhost" })).url);
+		await act(async () => void (location.hash = gitlab.hash));
+		await view.settle();
+		expect(location.hash).toBe("");
+		expect(state("settings-gitlab")).toContain("Connected");
+		expect(state("settings-gitlab")).not.toContain("Not connected");
+		const slack = new URL((await api.slackConnect({ origin: "http://localhost" })).url);
+		await act(async () => void (location.hash = slack.hash));
+		await view.settle();
+		expect(location.hash).toBe("");
+		expect(state("settings-slack")).not.toContain("Not connected");
+		view.close();
 	});
 
 	it("offers Connect, then shows unmapped teams, a saved mapping, and keeps it on reload", async () => {
@@ -386,10 +426,10 @@ describe("Integrations in Settings", () => {
 		expect(location.hash).toBe("");
 		expect(section(second.host).textContent).toContain("Linear is connected.");
 		expect(section(second.host).querySelector("details:not([open])")?.textContent).toContain("windlass-quick");
-		expect(section(second.host).querySelector("[data-testid='linear-workspace']")?.textContent).toContain(
-			"Connected to Acme as Ada Lovelace",
+		expect(section(second.host).querySelector("[data-testid='linear-workspace']")?.textContent).toBe(
+			"WorkspaceAcmeConnected asAda Lovelace",
 		);
-		expect(section(second.host).querySelector("[data-testid='linear-team-ENG']")?.textContent).toContain("not mapped");
+		expect(section(second.host).querySelector("[data-testid='linear-team-ENG']")?.textContent).toContain("Not mapped");
 		const [team, repository] = Array.from(section(second.host).querySelectorAll("select"));
 		const save = Array.from(section(second.host).querySelectorAll("button")).find(
 			one => one.textContent === "Map team",
@@ -400,22 +440,20 @@ describe("Integrations in Settings", () => {
 		await press(section(second.host), "Map team");
 		await second.settle();
 		expect(section(second.host).querySelector("[data-testid='linear-team-ENG']")?.textContent).toContain(
-			"→ acme/harbor",
+			"→acme/harbor",
 		);
-		expect(section(second.host).querySelector("[data-testid='linear-team-DES']")?.textContent).toContain("not mapped");
+		expect(section(second.host).querySelector("[data-testid='linear-team-DES']")?.textContent).toContain("Not mapped");
 		second.close();
 
 		// A reload: a new client, the same account.
 		const third = await open(createMockClient({ pace: 0 }));
-		expect(section(third.host).querySelector("[data-testid='linear-team-ENG']")?.textContent).toContain(
-			"→ acme/harbor",
-		);
+		expect(section(third.host).querySelector("[data-testid='linear-team-ENG']")?.textContent).toContain("→acme/harbor");
 		await press(section(third.host), "Remove the mapping of Engineering");
 		await third.settle();
-		expect(section(third.host).querySelector("[data-testid='linear-team-ENG']")?.textContent).toContain("not mapped");
+		expect(section(third.host).querySelector("[data-testid='linear-team-ENG']")?.textContent).toContain("Not mapped");
 		const confirmed = window.confirm;
 		window.confirm = () => true;
-		await press(section(third.host), "Disconnect…");
+		await pressMore(section(third.host), "Linear", "Disconnect…");
 		window.confirm = confirmed;
 		await third.settle();
 		expect(section(third.host).textContent).toContain("Connect Linear…");
@@ -440,7 +478,7 @@ describe("Integrations in Settings", () => {
 	it("redeems the Jira ticket once, searches writable repositories, and manages the named mapping", async () => {
 		const client = createMockClient({ pace: 0 }),
 			first = await open(client);
-		const section = (host: HTMLElement) => host.querySelector<HTMLElement>("section[aria-labelledby='settings-jira']")!;
+		const section = (host: HTMLElement) => host.querySelector<HTMLElement>("#settings-jira")!;
 		const assign = vi.fn();
 		try {
 			vi.stubGlobal("location", {
@@ -484,7 +522,7 @@ describe("Integrations in Settings", () => {
 			await choose(scope.querySelector("select")!, "site-acme");
 			await press(scope, "Connect site");
 			await screen.settle();
-			expect(scope.textContent).toContain("Connected to Acme");
+			expect(scope.querySelector("dl")?.textContent).toBe("SiteAcme acme.atlassian.netConnected asAda Lovelace");
 			const [project, repo] = scope.querySelectorAll("select");
 			await choose(project!, "10001");
 			expect(repo!.querySelector('option[value="7101"]')).toBeNull();
@@ -499,11 +537,11 @@ describe("Integrations in Settings", () => {
 			});
 			await choose(repo!, "7101");
 			await press(scope, "Map project");
-			expect(scope.querySelector("li")?.textContent).toContain("Engineering (ENG)acme/harbor");
+			expect(scope.querySelector("li")?.textContent).toContain("EngineeringENG→acme/harbor");
 			await press(scope, "Remove the mapping of Engineering");
 			expect(scope.querySelector("li")?.textContent).toContain("Not mapped");
 			vi.spyOn(window, "confirm").mockReturnValue(true);
-			await press(scope.querySelector("h3")!, "Disconnect Jira…");
+			await pressMore(scope, "Jira Cloud", "Disconnect Jira…");
 			expect(scope.textContent).toContain("Connect Jira…");
 		} finally {
 			screen.close();
@@ -561,12 +599,12 @@ describe("Integrations in Settings", () => {
 			expect(card.querySelector('[aria-label="Mapped channels"] li')).toBeNull();
 			const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 			try {
-				await press(card, "Disconnect…");
+				await pressMore(card, "Slack", "Disconnect…");
 			} finally {
 				confirm.mockRestore();
 			}
 			await screen.settle();
-			expect(card.textContent).toContain("No workspace connected");
+			expect(card.textContent).toContain("Not connected");
 		} finally {
 			screen.close();
 			client.dispose();
@@ -577,7 +615,7 @@ describe("Integrations in Settings", () => {
 
 	it("scrubs a private link and lets a member confirm and unlink it without installing a workspace", async () => {
 		const client = createMockClient({ pace: 0 });
-		const fragment = "#link=slack.T123." + crypto.randomUUID();
+		const fragment = "#link=slack.T08ACME01." + crypto.randomUUID();
 		history.replaceState(null, "", "/settings?mock=1" + fragment);
 		rememberAppPage();
 		expect(lastAppHref()).toBe("/settings?mock=1");
@@ -596,9 +634,9 @@ describe("Integrations in Settings", () => {
 			await screen.settle();
 			expect(card.querySelector('[aria-label="Linked accounts"]')?.textContent).toContain("Slack");
 			expect(card.textContent).toContain("Acme Engineering");
-			expect(card.textContent).not.toContain("T123");
+			expect(card.textContent).not.toContain("T08ACME01");
 			expect(card.textContent).not.toContain("Link this account");
-			expect(slack(screen.host).textContent).toContain("No workspace connected");
+			expect(slack(screen.host).textContent).toContain("Not connected");
 			await press(card, "Unlink Slack account in Acme Engineering");
 			await screen.settle();
 			expect(card.textContent).toContain("No linked accounts.");

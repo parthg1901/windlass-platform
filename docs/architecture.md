@@ -471,7 +471,8 @@ when an idle sandbox is removed after seven days, or when E2B loses one. With a 
 that data is kept outside the sandbox and put back into the one that replaces it, so the agent continues the
 same session there (`session/resume`). Without a bucket nothing changes: the agent then starts without its
 memory, and the timeline says so. On Docker, Windlass's data directory is a volume that outlives every
-sandbox, so only the other agents' sessions are copied there. A machine's sessions are never copied.
+sandbox, so only the other agents' sessions are copied there. On a machine of the user's, the copy is kept
+on that machine and nowhere else ([On a machine, the copy stays on the machine](#on-a-machine-the-copy-stays-on-the-machine)).
 
 - **What is copied.** Windlass keeps one SQLite database per session, in WAL mode
   (`sessions/<id>.db`), and that file is all a `session/resume` needs, with its write-ahead log
@@ -523,6 +524,57 @@ sandbox, so only the other agents' sessions are copied there. A machine's sessio
 
 The bucket is configured on the servers: see [operating.md, "The bucket for agent memory"](operating.md#the-bucket-for-agent-memory),
 which also has its checks and measured timings.
+
+### On a machine, the copy stays on the machine
+
+On a machine, Claude Code, Codex and OpenCode keep their conversation in the container's own disk, so it
+goes when the container does: an idle reclaim, a runner restart or upgrade, a reboot, slot pressure. A
+hardened Windlass session with a data volume of its own (`wlp-machine-<id>-<raw id>`) loses it when its
+sandbox is removed. A runner whose server names the `session-backups` capability keeps a copy of each such
+session in a volume of the pairing's own on the machine, `wlp-machine-<machine id>-backups`, and puts it
+back into the sandbox that replaces a lost one (`server/src/sandbox/machine-backups.ts`,
+`runner/src/session-backups.ts`). The copy never goes to the platform's bucket and never passes through a
+server, and no bucket needs to be configured for it.
+
+| Agent and placement on a machine | Copied |
+| --- | --- |
+| Claude Code, Codex, OpenCode (any profile) | yes: their data is on the sandbox's own disk |
+| Windlass, hardened, with a data volume of its own | yes |
+| Windlass on the machine's shared volume `wlp-machine-<id>` | no: the data outlives the sandbox, and restoring into a shared volume is unsafe |
+| A Windlass reviewer | yes: its data is always its own |
+
+`privateSessionData` (`server/src/sandbox/session-data.ts`) decides, from what the sandbox had when it was
+made (`ownData`), as for the restore into a replacement.
+
+- **What a copy holds, and how it is checked** is the bucket's (`server/src/sandbox/backup-scripts.ts`):
+  the same pack script in the sandbox, the same restore script with its size and hash check, its list of
+  the names a copy may hold, no owners or modes on unpacking, and the agent's proof that the session came
+  back.
+- **Save.** After the pack script, the server asks the runner (`backupSave`, over the session's own
+  socket) to take the archive. The runner reads it out of that session's own sandbox with `docker exec
+  cat`, at most the limit, removes it there, measures its size and SHA-256 itself, and keeps it only when
+  they are what the sandbox printed. It writes it into the volume with a helper container of the base image
+  (no network, no capabilities, read-only root). What the session records is the runner's measurement.
+- **Restore.** The runner (`backupRestore`) reads the session's copy, and only when its size and hash are
+  the ones the session recorded does it put it at a path of the platform's under the new sandbox's `/tmp`.
+  The restore script then checks it again, checks its names and unpacks it. The runner never unpacks a copy.
+- **Only the asking session's own.** The runner refuses a copy whose user is not its pairing's or whose
+  session is not the one whose socket asks, a sandbox of another session, and a path that is not the
+  platform's.
+- **Limits.** Each copy is at most `WLP_BACKUP_MAX_BYTES` (64 MiB by default, the bucket's setting, which
+  needs no bucket here); the runner never reads more than 512 MiB into memory whatever the server says. The
+  volume holds at most 2 GiB in all: a copy that would go past it is refused, logged as
+  `[wlp] backup.save_failed ... no room`, and the session's earlier copy stays.
+- **Deleting a session** records the removal with the machine's actor, which tells the runner on its
+  control socket (`forget-backup`, answered with `backup-forgotten`) at once, or when the runner next
+  reports that it keeps copies, however long the machine is away. When the actor cannot be asked, the
+  user's actor tries again on its schedule, as for the bucket.
+- **Removing the machine** with "remove sandboxes", and `windlass-runner prune`, drop the volume with the
+  pairing's other volumes. Removing it without that leaves the copies on the machine, with its sandboxes.
+- **An older runner** (no `session-backups`) keeps no copies; nothing is saved or restored and nothing is
+  said, as before. A newer runner on an older server reports nothing of it and is asked nothing.
+- **Continuing in a new session** (`SessionBackups.copy`) is `backupCopy` over the new session's socket: the
+  runner copies the earlier session's archive to the new session's name in the same volume.
 
 ## Usage and limits
 

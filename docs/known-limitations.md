@@ -71,6 +71,11 @@ details.
 - **A lost sandbox's files stay lost.** What comes back is the agent's memory of the conversation, not the
   workspace: the agent remembers files that are no longer there, and finds that out when it looks. A
   repository the session was launched with is cloned again.
+- **A machine's copies of its agents' conversations are as private as the machine.** They are in a Docker
+  volume of the runner's (`wlp-machine-<id>-backups`), not encrypted by the platform; whoever can read the
+  machine's Docker volumes can read them. A deleted session's copy stays until the runner is next connected
+  with a release that keeps copies, and removing a machine without "remove sandboxes" leaves them. The
+  volume holds at most 2 GiB, after which new copies are refused, not older ones dropped.
 - **A copy of an agent's memory is as private as its bucket.** It is not encrypted by the platform, and a
   server that dies in the moment between an upload and the write of its record leaves a copy the session
   does not recognise: a sandbox lost before the next turn's save then starts without its memory.

@@ -21,8 +21,10 @@ import { judgeChecks } from "../../environments.js";
 import { outputExcerpt } from "../../factory/check-environment.js";
 import { PlatformChecks } from "../../sandbox/platform-checks.js";
 import { cloneGitlab } from "../../gitlab/workspace.js";
+import { GitCredentialRefused } from "../../codehost/credential.js";
+import { hostFor } from "../../codehost/item.js";
+import { gitlabOf } from "../gitlab-item.js";
 import {
-	gitlabAccess,
 	sessionSandboxInput,
 	itemActor,
 	userActor,
@@ -32,7 +34,7 @@ import {
 import { note, persist, keepDelta, append } from "./timeline.js";
 import { str, orNull, RECALL_WAIT_MS } from "./questions.js";
 import type { SessionMeta, Ctx, HeldSecrets } from "./state.js";
-import { ReviewRefused, githubConnection, TurnProblem } from "./common.js";
+import { GitAccessRefused, ReviewRefused, githubConnection, TurnProblem } from "./common.js";
 
 /** How long a setup run's output gathers before it is sent on, and how much of it makes it go at once. */
 const SETUP_FLUSH_MS = 120;
@@ -103,7 +105,14 @@ export async function cloneConnected(
 	try {
 		const cloned =
 			repo.provider === "gitlab"
-				? await cloneGitlab(await gitlabAccess(c, meta.uid, String(repo.id)), repo, sandbox, signal, work, pinnedBase)
+				? await cloneGitlab(
+						gitlabOf(await hostFor(c, { uid: meta.uid, repository: repo })),
+						repo,
+						sandbox,
+						signal,
+						work,
+						pinnedBase,
+					)
 				: await cloneRepository(
 						app!,
 						await githubConnection(c, meta),
@@ -140,7 +149,9 @@ export async function cloneConnected(
 	} catch (error) {
 		if (error instanceof GithubProblem) {
 			if (meta.origin?.role === "reviewer") throw error;
-			throw new TurnProblem(error.message);
+			throw error instanceof GitCredentialRefused
+				? new GitAccessRefused(error.message)
+				: new TurnProblem(error.message);
 		}
 		throw error;
 	}

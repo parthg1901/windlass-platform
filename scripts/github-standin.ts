@@ -315,6 +315,8 @@ export class GithubStandin {
 	appPermissions: Permissions = { metadata: "read", contents: "write", pull_requests: "write" };
 	/** Set to make every API call fail as an unreachable GitHub would. */
 	down = false;
+	/** Refuse every ready-for-review mutation, as GitHub does to a token it will not let mark a PR ready. */
+	refuseReady = false;
 	/** Simulate a refused comment, or GitHub storing one whose reply never reaches the caller. */
 	commentFault: "refuse" | "lose_reply" | null = null;
 	ciRateLimit: { status: 403 | 429; headers: Record<string, string>; message: string } | null = null;
@@ -992,6 +994,18 @@ export class GithubStandin {
 				!args.query?.includes("markPullRequestReadyForReview")
 			)
 				return answer(403, {});
+			// As GitHub: a token with Pull requests write alone is refused, with 200 and the reason in `errors`.
+			if (this.refuseReady || !this.allows(token, this.repositories.get(pull.repository)!, "contents", "write"))
+				return answer(200, {
+					data: { markPullRequestReadyForReview: null },
+					errors: [
+						{
+							type: "FORBIDDEN",
+							path: ["markPullRequestReadyForReview"],
+							message: "Resource not accessible by integration",
+						},
+					],
+				});
 			pull.draft = false;
 			return answer(200, { data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } } });
 		}

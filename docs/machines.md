@@ -136,6 +136,20 @@ label (and, on a runner, the pairing's labels) and are older than 10 minutes are
 one may be a create that has not reached `docker run` yet. Docker refuses to remove a volume a container
 still mounts.
 
+### Copies of the agents' conversations
+
+Claude Code, Codex and OpenCode keep their conversation on the container's own disk, and a hardened
+Windlass session with a data volume of its own keeps it there. When the platform's server names the
+`session-backups` capability, the runner keeps a copy of each such session in one volume of the pairing's,
+`wlp-machine-<machine id>-backups`, with the machine and pairing labels, and checks it like its other
+volumes before it uses it. After each turn the session's archive is moved from its sandbox into that
+volume, and before the first turn in a sandbox that replaces a lost one it is put back. The copies never
+leave the machine. Windlass on the machine's shared volume needs none. Each copy is at most the platform's
+`WLP_BACKUP_MAX_BYTES` (64 MiB by default) and the volume at most 2 GiB in all. A deleted session's copy is
+removed when the runner is next connected; removing the machine with "remove sandboxes", or `prune`,
+removes the volume. The design and its checks are in
+[architecture.md](architecture.md#on-a-machine-the-copy-stays-on-the-machine).
+
 ### Profiles allowed on this machine
 
 The `--allow-profile` rules are in the [runner reference](../web/src/docs/content/runner.md#allowed-profiles).
@@ -210,8 +224,9 @@ MCP, and a publish is put to the person every time; a work item's builder gets `
 `push` and `fetch_base` ([The platform's tools for every agent](work-items.md#the-platforms-tools-for-every-agent)).
 Neither gets saved secrets or user MCP servers. The tools need the harness images of this version (Claude Code's managed policy allows the platform's endpoint,
 and OpenCode's image runs `wlp-acp-mcp`). The platform's notes about the workspace (a prepared image, a
-new sandbox, a setup that did not finish) go before the next prompt in either. Individual tool-call cancellation and conversation
-backups are unavailable for Claude Code. The repository's saved checks and the step limit are the platform's
+new sandbox, a setup that did not finish) go before the next prompt in either. Individual tool-call cancellation is unavailable for Claude Code. A runner
+whose server names `session-backups` keeps a copy of the conversation on the machine
+([Copies of the agents' conversations](#copies-of-the-agents-conversations)). The repository's saved checks and the step limit are the platform's
 for these agents ([Work items](work-items.md#checks-and-steps-for-claude-code-opencode-and-codex)):
 `sandbox/platform-checks.ts` runs the checks in the sandbox between the agent's prompts of a turn, and
 `sandbox/platform-steps.ts` counts tool calls. A personal session's reported tokens are recorded, not

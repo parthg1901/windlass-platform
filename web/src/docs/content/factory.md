@@ -560,7 +560,7 @@ After approval, a subtask that has not started yet can still change its agent, m
 
 ### The pull request
 
-When you approve a split plan, the platform opens a draft pull request from `windlass/feature-<id>` into the base branch. Each subtask's work lands on that branch. When the feature is handed over, the pull request is marked ready for review. Merging a feature stays yours.
+When you approve a split plan, the platform opens a draft pull request from `windlass/feature-<id>` into the base branch. Each subtask's work lands on that branch. When the feature is handed over, the pull request is marked ready for review. If GitHub refuses that step, the platform tries again after 5 minutes, 15 minutes and an hour, and logs GitHub's reason each time. If GitHub still refuses, the rest of the handover goes ahead and the item asks you to mark the pull request ready on GitHub yourself, or to try again. Once the pull request is no longer a draft, the question closes by itself. Merging a feature stays yours.
 
 By default, the factory watches CI on the current feature head as parts join. After the rerun and base check, a failure specific to the feature queues one fix part with the failing checks, their logs and the feature diff. The fix passes the local gate and joins through the same integration queue. Each new head supersedes the previous CI result. Handover waits until all parts have finished and CI passes on the current head. If the same failure comes back after a fix, the feature stops and asks you.
 

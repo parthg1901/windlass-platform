@@ -1,6 +1,21 @@
 import type { GithubRepository, SlackChannel, SlackStatus } from "@contract";
 import { useEffect, useRef, useState } from "react";
 import { useApp, useAuth } from "../state/app";
+import { WarnIcon } from "./Icons";
+import {
+	IntegrationCard,
+	IntegrationFacts,
+	IntegrationSteps,
+	MappedRepository,
+	MappingForm,
+	MappingList,
+	MappingRow,
+	useReturnRound,
+} from "./IntegrationCard";
+import { ProviderIcon } from "./ProviderIcon";
+import { Check } from "./ui";
+
+const RETURN = /^#slack(?:-error)?=/;
 
 const callbackErrors = new Map([
 	["denied", "Slack was not given access. Connect again when you’re ready."],
@@ -22,12 +37,16 @@ export function SlackSettings() {
 	const repoSelect = useRef<HTMLSelectElement>(null);
 	const showReturn = useRef(false);
 	const initial = useRef<Promise<SlackStatus> | null>(null);
+	// A return to the page already open (only its fragment changes) is read again.
+	const returned = useReturnRound(RETURN);
+	const initialRound = useRef(returned);
 
 	useEffect(() => {
 		let live = true;
 		const api = client.user(auth);
 		// StrictMode may replay this effect, but a callback ticket can only be redeemed once.
-		if (!initial.current) {
+		if (!initial.current || initialRound.current !== returned) {
+			initialRound.current = returned;
 			const back = /^#(slack|slack-error)=(.*)$/.exec(location.hash);
 			if (back) {
 				showReturn.current = true;
@@ -57,7 +76,7 @@ export function SlackSettings() {
 		return () => {
 			live = false;
 		};
-	}, [client, auth, explain]);
+	}, [client, auth, explain, returned]);
 
 	useEffect(() => {
 		if (status?.state !== "connected") return;
@@ -121,19 +140,25 @@ export function SlackSettings() {
 	const api = client.user(auth);
 	const selectedChannel = channels?.find(ch => ch.id === channel);
 	const repository = repositories?.find(repo => String(repo.id) === repositoryId);
+	const connected = status?.state === "connected";
 	return (
-		<section
-			ref={card}
-			className="usage-section repo-saved"
-			aria-labelledby="settings-slack"
-			data-testid="slack-settings"
-		>
-			<h3 className="usage-title" id="settings-slack">
-				Slack
-				{status?.state === "disconnected" && (
+		<IntegrationCard
+			id="settings-slack"
+			provider="slack"
+			name="Slack"
+			what={
+				<>
+					File work items with <code>/windlass</code> or by mentioning Windlass in a mapped channel.
+				</>
+			}
+			state={!status ? (error ? "disconnected" : "loading") : connected ? "connected" : "disconnected"}
+			sectionRef={card}
+			testId="slack-settings"
+			action={
+				status?.state === "disconnected" ? (
 					<button
 						type="button"
-						className="link secret-add"
+						className="button button-outline button-small"
 						disabled={busy}
 						onClick={() =>
 							void run(async () => {
@@ -143,86 +168,89 @@ export function SlackSettings() {
 					>
 						Connect Slack…
 					</button>
-				)}
-				{status?.state === "connected" && (
-					<button
-						type="button"
-						className="link secret-add"
-						disabled={busy}
-						onClick={() => {
-							if (confirm("Disconnect Slack and remove all its channel mappings? Items already filed stay."))
-								void run(async () => setStatus(await api.disconnectSlack()));
-						}}
-					>
-						Disconnect…
-					</button>
-				)}
-			</h3>
-			<p className="usage-lede">
-				File work items with <code>/windlass</code> or by mentioning Windlass in a mapped channel.
-			</p>
-			{!status && !error && <p aria-busy="true">Loading Slack…</p>}
-			{status && <h4 className="usage-title">Workspace</h4>}
-			{status?.state === "disconnected" && <p className="field-note">No workspace connected.</p>}
+				) : null
+			}
+			more={
+				connected
+					? [
+							{
+								id: "disconnect",
+								label: "Disconnect…",
+								tone: "warn",
+								disabled: busy,
+								onSelect: () => {
+									if (confirm("Disconnect Slack and remove all its channel mappings? Items already filed stay."))
+										void run(async () => setStatus(await api.disconnectSlack()));
+								},
+							},
+						]
+					: []
+			}
+		>
+			{!status && !error && (
+				<div className="usage-loading" aria-busy="true" aria-label="Loading Slack">
+					<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
+				</div>
+			)}
+			{status?.state === "disconnected" && (
+				<>
+					<IntegrationSteps
+						steps={[
+							"Connect your Slack workspace and invite Windlass to a channel.",
+							"Map the channel to a repository.",
+							<>
+								Type <code>/windlass</code> and the task there: plans and questions come back in its thread.
+							</>,
+						]}
+					/>
+				</>
+			)}
 			{status?.state === "connected" && (
 				<>
-					<p className="field-note">
-						Connected to {status.workspaceName}. Invite Windlass to a channel, then choose its repository. Every channel
-						member can read posted plan and question details. Without them, Windlass posts links and choice buttons
-						only.
-					</p>
-					<ul className="settings-list" aria-label="Mapped channels">
-						{status.mappings.map(mapping => {
-							const name = channels?.find(ch => ch.id === mapping.channel.id)?.name ?? mapping.channel.name;
-							return (
-								<li key={mapping.channel.id} className="usage-kept-row">
-									<div className="usage-kept-main">
-										<span className="usage-kept-title">#{name}</span>
-										<p className="agent-meta">
-											{mapping.repository.owner}/{mapping.repository.name}
-										</p>
-										<label className="check">
-											<input
-												type="checkbox"
-												role="switch"
-												checked={mapping.details}
-												disabled={busy}
-												onChange={event => {
-													const details = event.target.checked;
-													void run(async () =>
-														setStatus(await api.setSlackDetails({ channelId: mapping.channel.id, details })),
-													);
-												}}
-											/>
-											Post plan and question details
-										</label>
-									</div>
-									<button
-										type="button"
-										className="button button-outline button-small"
-										disabled={busy}
-										aria-label={`Change mapping for ${name}`}
-										onClick={() => {
+					<IntegrationFacts facts={[["Workspace", status.workspaceName]]} />
+					{status.mappings.length > 0 ? (
+						<MappingList label="Mapped channels">
+							{status.mappings.map(mapping => {
+								const name = channels?.find(ch => ch.id === mapping.channel.id)?.name ?? mapping.channel.name;
+								return (
+									<MappingRow
+										key={mapping.channel.id}
+										from={
+											<>
+												<ProviderIcon id="slack" size={12} />#{name}
+											</>
+										}
+										to={<MappedRepository owner={mapping.repository.owner} name={mapping.repository.name} />}
+										busy={busy}
+										onChange={() => {
 											setChannel(mapping.channel.id);
 											setRepositoryId(String(mapping.repository.id));
 											repoSelect.current?.focus();
 										}}
-									>
-										Change…
-									</button>
-									<button
-										type="button"
-										className="button button-outline button-small"
-										disabled={busy}
-										aria-label={`Remove mapping for ${name}`}
-										onClick={() => void run(async () => setStatus(await api.removeSlackMapping(mapping.channel.id)))}
-									>
-										Remove
-									</button>
-								</li>
-							);
-						})}
-					</ul>
+										changeLabel={`Change mapping for ${name}`}
+										onRemove={() => void run(async () => setStatus(await api.removeSlackMapping(mapping.channel.id)))}
+										removeLabel={`Remove mapping for ${name}`}
+										options={
+											<Check
+												checked={mapping.details}
+												disabled={busy}
+												onChange={details =>
+													void run(async () =>
+														setStatus(await api.setSlackDetails({ channelId: mapping.channel.id, details })),
+													)
+												}
+												label="Post plan and question details"
+											/>
+										}
+									/>
+								);
+							})}
+						</MappingList>
+					) : null}
+					<p className="field-note">
+						Invite Windlass to a channel, then choose its repository. With details on, every channel member can read
+						posted plans and questions; with them off, Windlass posts links and choice buttons only.
+					</p>
 					{channels?.length === 0 && (
 						<p className="field-note">
 							No channels available. Invite Windlass to a channel, then{" "}
@@ -237,12 +265,17 @@ export function SlackSettings() {
 							.
 						</p>
 					)}
-					{repoProblem && <p role="alert">{repoProblem}</p>}
-					{(!platform.info?.github || repositories?.length === 0) && (
-						<p className="field-note">A GitHub repository you can push to is needed to map a channel.</p>
+					{repoProblem && (
+						<p className="callout callout-warn" role="alert">
+							<WarnIcon />
+							<span>{repoProblem}</span>
+						</p>
 					)}
-					<form
-						className="linear-map"
+					{(!platform.info?.github || repositories?.length === 0) && (
+						<p className="field-note">A repository you can push to is needed to map a channel.</p>
+					)}
+					<MappingForm
+						title="Map a channel"
 						onSubmit={event => {
 							event.preventDefault();
 							if (repository && selectedChannel)
@@ -252,47 +285,53 @@ export function SlackSettings() {
 									setRepositoryId("");
 								});
 						}}
-					>
-						<select
-							aria-label="Slack channel"
-							className="select"
-							value={channel}
-							onChange={event => setChannel(event.target.value)}
-							disabled={busy}
-						>
-							<option value="">Choose a channel</option>
-							{channels?.map(ch => (
-								<option key={ch.id} value={ch.id}>
-									#{ch.name}
-								</option>
-							))}
-						</select>
-						<select
-							ref={repoSelect}
-							aria-label="Repository"
-							className="select"
-							value={repositoryId}
-							onChange={event => setRepositoryId(event.target.value)}
-							disabled={busy}
-						>
-							<option value="">Choose a repository</option>
-							{repositories?.map(repo => (
-								<option value={repo.id} key={repo.id}>
-									{repo.owner}/{repo.name}
-								</option>
-							))}
-						</select>
-						<button className="button button-outline" disabled={!repository || !selectedChannel || busy}>
-							Map channel
-						</button>
-					</form>
+						from={
+							<select
+								aria-label="Slack channel"
+								className="select"
+								value={channel}
+								onChange={event => setChannel(event.target.value)}
+								disabled={busy}
+							>
+								<option value="">Choose a channel</option>
+								{channels?.map(ch => (
+									<option key={ch.id} value={ch.id}>
+										#{ch.name}
+									</option>
+								))}
+							</select>
+						}
+						to={
+							<select
+								ref={repoSelect}
+								aria-label="Repository"
+								className="select"
+								value={repositoryId}
+								onChange={event => setRepositoryId(event.target.value)}
+								disabled={busy}
+							>
+								<option value="">Choose a repository</option>
+								{repositories?.map(repo => (
+									<option value={repo.id} key={repo.id}>
+										{repo.owner}/{repo.name}
+									</option>
+								))}
+							</select>
+						}
+						submit={
+							<button className="button button-outline" disabled={!repository || !selectedChannel || busy}>
+								Map channel
+							</button>
+						}
+					/>
 				</>
 			)}
 			{error && (
 				<p className="callout callout-warn" role="alert">
-					{error}
+					<WarnIcon />
+					<span>{error}</span>
 				</p>
 			)}
-		</section>
+		</IntegrationCard>
 	);
 }

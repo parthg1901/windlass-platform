@@ -122,7 +122,11 @@ export function Settings() {
 					<SettingsGroup
 						id="settings-integrations"
 						title="Integrations"
-						lede={info?.items ? "Your repositories, and work items filed from other places." : "Your repositories."}
+						lede={
+							info?.items
+								? "Where agents find your code, and the places work items can be filed from."
+								: "Where agents find your code."
+						}
 					>
 						<GithubSettings />
 						<GitlabSettings connection={gitlab} />

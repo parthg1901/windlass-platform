@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,16 +11,22 @@ import { createClient, type Registry } from "../server/src/client.js";
 import type { AuthResult, GitlabActions } from "../server/src/contract.js";
 import { matchesSection } from "./check-sections.js";
 import { localListeners } from "./check-listeners.js";
-import { GitlabStandin } from "./gitlab-standin.js";
+import { GitlabStandin, type StandinProject } from "./gitlab-standin.js";
+import type { SandboxCommand } from "./gitlab-workspace-fixture.js";
 import { pollUntil, readProvenance } from "./issue-intake-fixture.js";
 import { loginHttp } from "./login-http.js";
 
+/** Every sandbox command the platform ran, with environment and standard input, one JSON line each (test storage only). */
+const SANDBOX_LOG = "sandbox-commands.jsonl";
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Test-only inspection: open the persisted grant with the user/instance binding; return no credentials. */
 async function startCheckNode() {
 	const { installGitlabWorkspaceFixture } = await import("./gitlab-workspace-fixture.js");
-	installGitlabWorkspaceFixture(process.env.RIVETKIT_STORAGE_PATH!);
+	const storage = process.env.RIVETKIT_STORAGE_PATH!;
+	installGitlabWorkspaceFixture(storage, entry =>
+		appendFileSync(join(storage, SANDBOX_LOG), JSON.stringify(entry) + "\n", { mode: 0o600 }),
+	);
 	const { userGitlab } = await import("../server/src/actors/user-gitlab.js");
 	const { openSecret, sealSecret } = await import("../server/src/repo-secrets.js");
 	const { serverSealer } = await import("../server/src/signin/seal.js");
@@ -61,6 +68,83 @@ async function startCheckNode() {
 	await import("../server/src/index.js");
 }
 
+/** The builder's clone, fetch and push took project tokens (read, or write to push), each revoked; never the OAuth grant. */
+async function sandboxCredentials(fixture: GitlabStandin, p: StandinProject, storage: string) {
+	const made = fixture.projectTokens.filter(t => String(t.projectId) === String(p.id));
+	assert.ok(
+		made.some(t => t.scopes.join() === "read_repository" && t.accessLevel === 20),
+		"a read token cloned",
+	);
+	assert.ok(
+		made.some(t => t.scopes.join() === "write_repository" && t.accessLevel === 30),
+		"a write token pushed",
+	);
+	assert.ok(
+		made.every(t => t.revoked),
+		"every project token was revoked when its operation ended",
+	);
+	const auth = fixture.gitAuth.filter(a => a.kind !== "none");
+	assert.ok(auth.length && auth.every(a => a.kind === "project" && a.status === 200), JSON.stringify(auth));
+	const scopeOf = (id: number | null) => made.find(t => t.id === id)?.scopes.join();
+	assert.ok(auth.filter(a => a.service === "git-receive-pack").every(a => scopeOf(a.tokenId) === "write_repository"));
+	assert.ok(auth.filter(a => scopeOf(a.tokenId) === "read_repository").every(a => a.service === "git-upload-pack"));
+	const entries = (await readFile(join(storage, SANDBOX_LOG), "utf8"))
+		.split("\n")
+		.filter(Boolean)
+		.map(line => JSON.parse(line) as SandboxCommand);
+	const grants = [...fixture.issued, fixture.token, fixture.clientSecret];
+	assert.ok(entries.length && fixture.issued.size);
+	for (const entry of entries) {
+		const seen = JSON.stringify(entry);
+		assert.ok(!grants.some(g => seen.includes(g)), "the owner's OAuth grant entered the sandbox");
+		assert.ok(!made.some(t => entry.command.includes(t.token) || JSON.stringify(entry.env).includes(t.token)));
+	}
+	assert.ok(
+		made.every(t => entries.some(e => e.stdin.includes(t.token))),
+		"each token reached Git on stdin only",
+	);
+	console.log(
+		`PASS intake: ${made.length} project tokens (${made.map(t => t.scopes.join()).join(", ")}), all revoked; no OAuth grant in ${entries.length} sandbox commands`,
+	);
+}
+
+/** Without Maintainer the platform cannot make a project token: the item stops and says so, and no Git runs. */
+async function refusedToken(
+	fixture: GitlabStandin,
+	p: StandinProject,
+	user: ReturnType<ReturnType<typeof createClient<Registry>>["user"]["get"]>,
+	issue: (title: string) => ReturnType<GitlabStandin["addIssue"]>,
+) {
+	const before = { tokens: fixture.projectTokens.length, auth: fixture.gitAuth.length };
+	p.level = 30;
+	try {
+		const target = issue("Needs a project token");
+		const response = await fixture.deliverHook(fixture.hooks[0]!.id, "Issue Hook", fixture.issueEvent(target));
+		assert.equal(response.status, 202);
+		const row = await pollUntil(20_000)("the item for the refused-token issue", async () =>
+			(await user.listItems()).find(i => i.title === target.title),
+		);
+		// The owner's own label starts the item; an outsider's would wait as a draft.
+		if (row.state === "draft") await user.actOnItem({ id: row.id, action: { kind: "start" } });
+		const said = `Windlass needs Maintainer access on ${p.owner}/${p.name} to create a short-lived project token for Git`;
+		const stopped = await pollUntil(60_000)("the item to stop on the refused project token", async () => {
+			const item = await user.item(row.id);
+			assert.ok(item.question?.kind !== "rounds", `counted as cut off: ${item.question?.text}`);
+			return item.question?.text.includes(said) && item;
+		});
+		assert.equal(stopped.question?.kind, "turn_refused");
+		assert.ok(stopped.question?.text.startsWith(`The agent's turn could not start. ${said}`), stopped.question?.text);
+		assert.ok(stopped.state === "waiting" && !stopped.pullRequest);
+		assert.equal(fixture.projectTokens.length, before.tokens, "GitLab made no token");
+		assert.equal(fixture.gitAuth.length, before.auth, "no Git request ran without a scoped token");
+		console.log(
+			`PASS intake: without Maintainer the item stops (${stopped.state}) and says what is needed; no Git ran`,
+		);
+	} finally {
+		p.level = 40;
+	}
+}
+
 /** Exercise public delivery after a real OAuth connect and project selection. The inbox probe only waits for dispatch. */
 async function intakeChecks(
 	sections: string[],
@@ -68,6 +152,7 @@ async function intakeChecks(
 	client: ReturnType<typeof createClient<Registry>>,
 	ownerAuth: AuthResult,
 	owner: Pick<GitlabActions, "gitlabPickProject" | "gitlabDisconnect">,
+	storage: string,
 ) {
 	const p = fixture.addProject({ id: 9007199254740993n, owner: "group/sub", name: "intake" });
 	await owner.gitlabPickProject(String(p.id));
@@ -82,15 +167,17 @@ async function intakeChecks(
 		fixture.deliverHook(hook.id, event, body, options);
 	const { serviceParams } = await import("../server/src/auth.js");
 	const tenant = createHash("sha256").update(fixture.url).digest("hex").slice(0, 32);
-	const directory = client.surfaceAccounts.get(["gitlab", tenant], { params: serviceParams() });
-	const inbox = client.gitlabInbox.get([uid, String(p.id)], { params: serviceParams() }) as unknown as {
-		checkSettled(guid: string): Promise<boolean>;
-	};
+	// A service token is short-lived: each probe takes a new one, however long the section has run.
+	const directory = () => client.surfaceAccounts.get(["gitlab", tenant], { params: serviceParams() });
+	const inbox = () =>
+		client.gitlabInbox.get([uid, String(p.id)], { params: serviceParams() }) as unknown as {
+			checkSettled(guid: string): Promise<boolean>;
+		};
 	const dispatch = async (event: string, payload: unknown, guid = randomUUID()) => {
 		const response = await send(event, payload, { guid });
 		assert.equal(response.status, 202);
 		assert.deepEqual(await response.json(), { taken: true });
-		await pollUntil(30_000)("completed dispatch", () => inbox.checkSettled(guid));
+		await pollUntil(30_000)("completed dispatch", () => inbox().checkSettled(guid));
 	};
 	if (sections.includes("refuse")) {
 		const target = issue("Must not file"),
@@ -118,8 +205,8 @@ async function intakeChecks(
 		await dispatch("Issue Hook", label);
 		assert.equal((await user.listItems()).length, 0);
 		// As on GitHub, the sender's linked account files: connecting GitLab linked the owner's GitLab user, nobody else.
-		assert.equal(await directory.internalWho(String(fixture.user.id)), uid);
-		assert.equal(await directory.internalWho(String(outsider.id)), null);
+		assert.equal(await directory().internalWho(String(fixture.user.id)), uid);
+		assert.equal(await directory().internalWho(String(outsider.id)), null);
 		console.log("PASS refuse: wrong credentials, project, sender, stale label and forged note author file nothing");
 	}
 	if (sections.includes("intake") || sections.includes("untrusted")) {
@@ -226,6 +313,8 @@ async function intakeChecks(
 				});
 				await until("merged item", async () => (await user.item(row.id)).state === "done");
 				console.log("PASS intake: pushed branch, merge request, green CI and owner-authorized merge");
+				await sandboxCredentials(fixture, p, storage);
+				await refusedToken(fixture, p, user, issue);
 				await dispatch(event, label);
 				const relabelled = await until("a new item for the issue after its item was done", async () =>
 					(await user.listItems()).find(i => i.title === target.title && i.id !== row.id),
@@ -261,7 +350,7 @@ async function intakeChecks(
 		const stale = fixture.issueEvent(issue("Delivery after disconnect"));
 		assert.equal((await fixture.deliver(hook.url, "Issue Hook", stale, { secret: hook.token })).status, 401);
 		assert.deepEqual((await user.listItems()).map(i => i.id).sort(), prior.map(i => i.id).sort());
-		assert.equal(await directory.internalWho(String(fixture.user.id)), null, "disconnecting GitLab unlinks its user");
+		assert.equal(await directory().internalWho(String(fixture.user.id)), null, "disconnecting GitLab unlinks its user");
 	}
 }
 
@@ -328,7 +417,7 @@ async function checkGitlab(sections: string[]) {
 		if (sections.some(s => s !== "connect")) {
 			const response = await callback(consent);
 			await owner.gitlabComplete(new URL(response.headers.get("location")!).hash.slice("#gitlab=".length));
-			await intakeChecks(sections, fixture, client, ownerAuth, owner);
+			await intakeChecks(sections, fixture, client, ownerAuth, owner, storage);
 			return;
 		}
 		const invalid = new URL(consent);

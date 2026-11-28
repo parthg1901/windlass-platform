@@ -4,6 +4,7 @@
  * owner's avatar: their GitHub picture, with the same monogram where it cannot be loaded.
  */
 import { useState, type CSSProperties } from "react";
+import { ProviderIcon } from "./ProviderIcon";
 
 /** A hue from 0 to 359, the same for the same name. */
 export function nameHue(name: string): number {
@@ -20,7 +21,16 @@ export function monogram(name: string): string {
 	return one.slice(0, 1).toUpperCase() + one.slice(1, 2);
 }
 
-export function RepoTile({ name, size = "md" }: { name: string; size?: "md" | "sm" | "xs" }) {
+export function RepoTile({
+	name,
+	size = "md",
+	host = "github",
+}: {
+	name: string;
+	size?: "md" | "sm" | "xs";
+	/** A repository on another host than GitHub wears that host's mark in its corner. */
+	host?: "github" | "gitlab";
+}) {
 	return (
 		<span
 			className={`repo-tile repo-tile-${size}`}
@@ -28,9 +38,18 @@ export function RepoTile({ name, size = "md" }: { name: string; size?: "md" | "s
 			aria-hidden="true"
 		>
 			{monogram(name)}
+			{host === "gitlab" ? (
+				<span className="repo-tile-host">
+					<ProviderIcon id="gitlab" tone="brand" size={9} />
+				</span>
+			) : null}
 		</span>
 	);
 }
+
+/** The host a repository address names: `gitlab:<id>` is GitLab's, a bare id GitHub's. */
+export const hostOfAddress = (id: unknown): "github" | "gitlab" =>
+	String(id).startsWith("gitlab:") ? "gitlab" : "github";
 
 /** An owner's GitHub picture, round; their monogram where it does not load. */
 export function OwnerAvatar({ owner }: { owner: string }) {

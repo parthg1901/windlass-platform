@@ -33,26 +33,39 @@ interface PublishEvidence {
 	redact: (text: string) => string;
 }
 
-export type Access =
-	| "clone"
-	| "push"
-	| "pull:read"
-	| "pull:write"
-	| "merge"
-	| "comment:read"
-	| "comment:write"
-	| "log:read";
+/** API access for a token the platform keeps in this process. Git in a sandbox takes a `GitCredential` instead. */
+export type Access = "pull:read" | "pull:write" | "merge" | "comment:read" | "comment:write" | "log:read";
+
+/** What a sandbox's Git may do with a credential: clone and fetch, or push too. */
+export type GitAccess = "read" | "write";
+
+/**
+ * A credential for Git over HTTPS that a sandbox may hold for one operation: limited to one repository and to
+ * `access`, short-lived, and revoked when the operation ends (`withGitCredential`). Never the owner's own grant.
+ */
+export interface GitCredential {
+	token: string;
+	/** The HTTPS user name the host expects with the token. */
+	username: "oauth2" | "x-access-token";
+	/** Revokes the credential. Never throws: one that could not be revoked runs out at its expiry. */
+	revoke(): Promise<void>;
+}
 
 /** Connection, stored repository and trimmed delivery are the provider's actor-boundary types. */
 export interface CodeHost<Connection, StoredRepo, Delivery> {
 	cloneUrl(owner: string, name: string): string;
 	pushUrl(owner: string, name: string): string;
-	/** The token is scoped to one repository. Sandbox credentials are revoked after the step. */
+	/** A token for API calls the platform makes itself. It never enters a sandbox: Git there takes `gitCredential`. */
 	withToken<T>(
 		target: Pick<CiTarget, "installationId" | "repositoryId">,
 		access: Access,
 		step: (token: string) => Promise<T>,
 	): Promise<T>;
+	/**
+	 * A Git credential for one repository, limited to `access`, for a sandbox's clone, fetch or push. Throws
+	 * `GitCredentialRefused` when the host will not make one; the caller never falls back to a broader grant.
+	 */
+	gitCredential(target: Pick<CiTarget, "installationId" | "repositoryId">, access: GitAccess): Promise<GitCredential>;
 
 	openPull(
 		token: string,

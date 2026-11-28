@@ -22,6 +22,7 @@ import { privateSessionData } from "../../sandbox/session-data.js";
 import { queueMessage, flushOutbox } from "../session-inbox.js";
 import { note, persist, append, serial, writeItems, insertItems } from "./timeline.js";
 import type { Ctx, SessionMeta, HeldSecrets, WorkspaceCopy } from "./state.js";
+import type { MachineCopy } from "../internal.js";
 import { layerOf, runnerLink } from "./runner.js";
 import { publish } from "./summary.js";
 import { restoreBackup, dropWorkspace, savedWorkspace } from "./workspace.js";
@@ -619,6 +620,16 @@ export async function openSandbox(
 		}
 		// Recorded for this sandbox from what it has, not from what the provider would make now.
 		meta.ownDataSandbox = handle.ownData ? id : null;
+		// Continued on a machine: the earlier session's copy becomes this session's here, where the runner hears it from this session.
+		if (meta.pendingCopy) {
+			const pending = meta.pendingCopy;
+			meta.pendingCopy = undefined;
+			if (await copyOnMachine(meta, pending, layer, id)) {
+				meta.windlassSessionId = pending.windlassSessionId;
+				// The copy's turn counts no turn of this session.
+				meta.backup = { windlassSessionId: pending.windlassSessionId, ...pending.backup, turn: 0 };
+			}
+		}
 		// The earlier session's copied agent session is only this one's once restored here: on shared agent data it is still the earlier session's own.
 		if (meta.copiedSession && !(await privateSessionData(meta, layer.sandboxes, id))) {
 			meta.windlassSessionId = null;
@@ -863,4 +874,33 @@ export async function refreshSandbox(c: Ctx, meta: SessionMeta, required = false
 		c.log.warn({ msg: "could not read the sandbox's state", error: describeError(error) });
 		if (required) throw error;
 	}
+}
+
+/**
+ * Copies the earlier session's agent session to this session's name in the machine's volume of copies,
+ * for the restore that follows. Only where the runner keeps copies, for an agent whose sessions are
+ * copied, and where this sandbox's agent data is its own: on shared agent data the new session would
+ * resume the very session the earlier one goes on writing. False when no copy was made: the agent then
+ * starts with the account of the earlier session.
+ */
+export async function copyOnMachine(
+	meta: SessionMeta,
+	pending: MachineCopy,
+	layer: SandboxLayer,
+	sandbox: string,
+): Promise<boolean> {
+	const backups = layer.backups;
+	if (meta.place.kind !== "machine" || !backups || !capabilitiesOf(meta.harness).backups) return false;
+	try {
+		if (!((await backups.available?.()) ?? true)) return false;
+		if (!(await privateSessionData(meta, layer.sandboxes, sandbox))) return false;
+		if (await backups.copy({ uid: meta.uid, sessionId: pending.from }, { uid: meta.uid, sessionId: meta.sessionId })) {
+			console.log(`[wlp] backup.copied session=${pending.from} to=${meta.sessionId} machine`);
+			return true;
+		}
+		console.warn(`[wlp] backup.copy_missing session=${pending.from} to=${meta.sessionId}: the machine has no copy`);
+	} catch (error) {
+		console.warn(`[wlp] backup.copy_failed session=${pending.from} to=${meta.sessionId}: ${describeError(error)}`);
+	}
+	return false;
 }

@@ -32,7 +32,8 @@ import {
 import { probeHarnessOptions } from "./harness-options.js";
 import claudePackage from "../../sandbox/harness/claude/package.json";
 import { MAX_REPORTED_SANDBOXES, type Report } from "../../server/src/runner/control.js";
-import { PROFILE_DENIED, type Operation } from "../../server/src/runner/protocol.js";
+import { PROFILE_DENIED, type Args, type Operation, type Value } from "../../server/src/runner/protocol.js";
+import { BackupStore, dockerBackupIO } from "./session-backups.js";
 import { ENVIRONMENT_SLOT_WAIT, SandboxUserError } from "../../server/src/sandbox/api.js";
 import { LABEL, LABEL_ARG, docker } from "../../server/src/sandbox/docker.js";
 import { DOCKER_BWRAP_PROBE } from "../../server/src/sandbox/docker-flags.js";
@@ -522,6 +523,9 @@ export class Executor extends MachineDocker {
 	blockedNetwork = false;
 	memoryEvents = false;
 	environmentImage = false;
+	/** The server named `session-backups`: the runner keeps its sessions' copies (session-backups.ts). */
+	sessionBackups = false;
+	readonly backups: BackupStore;
 	readonly modelRelay: DockerModelRelay;
 	// Read from the pinned image at welcome. Windlass 0.7.1 supports all relay wires.
 	private sandboxWindlass: string | null = null;
@@ -557,6 +561,15 @@ export class Executor extends MachineDocker {
 		this.slots =
 			limits.slots === null ? undefined : (limits.slots ?? localSizing({ slots: limits.maxTurns?.toString() }));
 		this.network = new EgressNetwork(this, policy);
+		this.backups = new BackupStore(
+			identity.uid,
+			dockerBackupIO({
+				volume: this.backupVolume,
+				labels: this.labels,
+				image,
+				ownedVolume: create => this.ownedVolume(create, this.backupVolume),
+			}),
+		);
 		this.modelRelay = new DockerModelRelay({
 			machine: identity.machineId,
 			image,
@@ -1117,6 +1130,7 @@ export class Executor extends MachineDocker {
 			blockedNetwork: this.network.policy.mode === "restricted",
 			gitMirrors: true,
 			sessionVolumes: true,
+			...(this.sessionBackups && { sessionBackups: true }),
 			modelRelay: this.modelRelayReady,
 			egress: this.network.policy.mode,
 			allowedProfiles: this.allowedProfiles,
@@ -1335,6 +1349,30 @@ export class Executor extends MachineDocker {
 		const box = this.running(id, session);
 		// The base pin, never the session's image: a harness image, or a snapshot committed after setup.
 		return saveSessionMirror(containerName(box.raw), stage, partial, { image, floor: this.storeLimits().free });
+	}
+	/**
+	 * `backupSave` and `backupRestore`: in the session's own running sandbox, which stays in use (not
+	 * stopped as idle) while its copy moves. Not serial: the store orders its own changes.
+	 */
+	async backup<N extends "backupSave" | "backupRestore">(session: string, name: N, args: Args<N>): Promise<Value<N>> {
+		if (!this.sessionBackups) throw new Refusal("This runner keeps no copies for this platform.");
+		const box = this.running(args.id, session);
+		box.busy++;
+		try {
+			const container = containerName(box.raw);
+			return (
+				name === "backupSave"
+					? await this.backups.save(session, container, args as Args<"backupSave">)
+					: await this.backups.restore(session, container, args as Args<"backupRestore">)
+			) as Value<N>;
+		} finally {
+			box.busy--;
+			box.usedAt = Date.now();
+		}
+	}
+	async backupCopy(session: string, args: Args<"backupCopy">) {
+		if (!this.sessionBackups) throw new Refusal("This runner keeps no copies for this platform.");
+		return this.backups.copy(session, args);
 	}
 	async saveSnapshot(session: string, id: string, source: SnapshotSource) {
 		const box = this.running(id, session);

@@ -1,5 +1,6 @@
 import type { ChoiceId, FeaturePlan, ItemQuestion } from "../contract.js";
-import { unattendedKeys } from "../factory/feature-plan.js";
+import { shortLabel } from "../factory/answered.js";
+import { APPROVALS, approvalHeld, openPlanQuestions, unattendedKeys } from "../factory/feature-plan.js";
 
 export type Block = Record<string, unknown>;
 export interface SlackMessage {
@@ -49,11 +50,17 @@ function list(lines: string[], most: number) {
 export function slackMayAnswer(question: ItemQuestion, choice: ChoiceId): boolean {
 	return !question.secret && question.kind !== "secret_needed" && !question.asked && !NEEDS_INPUT.has(choice);
 }
-/** What Slack offers of the choices the web shows. Unattended parts are confirmed on the web. */
+/**
+ * What Slack offers of the choices the web shows. Unattended parts are confirmed on the web, and an approval the
+ * web holds back (open plan questions, an approval block) is not offered at all.
+ */
 export function slackChoices(question: ItemQuestion, plan?: FeaturePlan | null): ItemQuestion["choices"] {
 	const confirmUnattended = !!plan && unattendedKeys(plan).length > 0;
 	return question.choices.filter(
-		choice => slackMayAnswer(question, choice.id) && !(choice.id === "approve" && confirmUnattended),
+		choice =>
+			slackMayAnswer(question, choice.id) &&
+			!(choice.id === "approve" && confirmUnattended) &&
+			!(plan && approvalHeld(plan, question, choice.id)),
 	);
 }
 
@@ -74,47 +81,51 @@ const openButton = (url: string, label = "Open in Windlass"): Block => ({
 });
 const actions = (elements: Block[]): Block => ({ type: "actions", elements: elements.slice(0, LIMITS.actions) });
 
+// A plan's buttons, in the item page's order: its approval first. Giving up stays on the web.
+const PLAN_CHOICES: readonly ChoiceId[] = ["approve", "run_single", "orchestrate_anyway", "revise"];
+const PLAN_ACTION_IDS: Partial<Record<ChoiceId, string>> = { approve: "approve", revise: "revise" };
+
 function planButtons(itemId: string, question: ItemQuestion, plan: FeaturePlan, url: string): Block {
-	const offered = new Set(slackChoices(question, plan).map(choice => choice.id));
-	const elements: Block[] = [];
-	if (offered.has("approve"))
-		elements.push(button("Approve", { i: itemId, q: question.id, v: plan.version, c: "approve" }, true, "approve"));
-	if (offered.has("revise"))
-		elements.push(
-			button("Request changes", { i: itemId, q: question.id, v: plan.version, c: "revise" }, false, "revise"),
-		);
+	const offered = slackChoices(question, plan);
+	const elements = PLAN_CHOICES.flatMap(id => {
+		const choice = offered.find(c => c.id === id);
+		if (!choice) return [];
+		const value = { i: itemId, q: question.id, v: plan.version, c: id };
+		return [button(shortLabel(choice), value, APPROVALS.has(id), PLAN_ACTION_IDS[id])];
+	});
 	elements.push(openButton(url));
 	return actions(elements);
 }
+const note = (text: string): Block => ({ type: "context", elements: [plain(text)] });
 
+/** A proposed plan: as parts, or (`single_suggested`) as the planner's case for one implementer, as the web shows it. */
 export function planPost(itemId: string, question: ItemQuestion, plan: FeaturePlan, url: string): SlackPost {
 	const line = `Plan ready for approval: ${url}`;
+	const single = question.kind === "single_suggested";
 	const buttons = planButtons(itemId, question, plan, url);
 	const brief = { text: line, blocks: [mrkdwn(escapeText(line)), buttons] };
-	const blocks: Block[] = [
-		{ type: "header", text: plain(`Plan ready for approval (version ${plan.version})`, LIMITS.header) },
-	];
+	const title = single ? "One implementer suggested" : "Plan ready for approval";
+	const blocks: Block[] = [{ type: "header", text: plain(`${title} (version ${plan.version})`, LIMITS.header) }];
 	blocks.push(section("Goal: " + plan.spec.goal));
-	blocks.push(
-		section(
-			"Parts\n" +
-				list(
-					plan.subtasks.map(s => `${s.title} (${s.budget.tokens.toLocaleString("en-US")} tokens)`),
-					PARTS,
-				),
-		),
-	);
+	if (single) blocks.push(section(question.text));
+	if (plan.subtasks.length)
+		blocks.push(
+			section(
+				"Parts\n" +
+					list(
+						plan.subtasks.map(s => `${s.title} (${s.budget.tokens.toLocaleString("en-US")} tokens)`),
+						PARTS,
+					),
+			),
+		);
 	if (plan.spec.acceptance.length) blocks.push(section("Checks\n" + list(plan.spec.acceptance, CHECKS)));
 	blocks.push(section(`Budget: ${plan.budget.tokens.toLocaleString("en-US")} tokens`));
-	const open = plan.questions.filter(q => !q.answer);
+	const open = openPlanQuestions(plan);
 	if (open.length) {
 		const lines = open.map(q => q.text + (q.recommended ? ` (recommended: ${q.recommended})` : ""));
 		blocks.push(section("Open questions\n" + list(lines, QUESTIONS)));
-		blocks.push({
-			type: "context",
-			elements: [{ type: "mrkdwn", text: "Answer the open questions in Windlass before approving." }],
-		});
-	}
+		blocks.push(note("Answer the open questions in Windlass before approving."));
+	} else if (question.approvalBlock) blocks.push(note(question.approvalBlock));
 	if (unattendedKeys(plan).length)
 		blocks.push({
 			type: "context",
@@ -130,15 +141,21 @@ export function planPost(itemId: string, question: ItemQuestion, plan: FeaturePl
 	return { brief, full: { text: line, blocks } };
 }
 
-export function questionPost(itemId: string, question: ItemQuestion, url: string): SlackPost {
+/** `plan`: the item's plan, which holds back approving it from a question that is not posted as a plan. */
+export function questionPost(
+	itemId: string,
+	question: ItemQuestion,
+	url: string,
+	plan?: FeaturePlan | null,
+): SlackPost {
 	const line = `Question ready: ${url}`;
 	if (question.secret || question.kind === "secret_needed") return { brief: { text: line } };
-	const choices = slackChoices(question);
+	const choices = slackChoices(question, plan);
 	const buttons = choices.length
 		? [
 				actions([
 					...choices.map(choice =>
-						button(choice.label, { i: itemId, q: question.id, c: choice.id }, choice.id === question.recommended),
+						button(shortLabel(choice), { i: itemId, q: question.id, c: choice.id }, choice.id === question.recommended),
 					),
 					openButton(url),
 				]),

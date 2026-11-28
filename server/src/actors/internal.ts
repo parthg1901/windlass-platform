@@ -125,9 +125,21 @@ export interface Continuation {
 	from: ContinuedFrom;
 	/** The earlier agent session, copied to this session's name in the backup store: its first sandbox restores it. */
 	copy: { windlassSessionId: string; backup: SavedBackup } | null;
+	/**
+	 * On a machine: the earlier agent session's copy, for this session to copy to its own name on the machine
+	 * when its first sandbox is made. The runner takes a copy only over the new session's own connection.
+	 */
+	machineCopy?: MachineCopy | null;
 	handoff: Handoff | null;
 	tainted: boolean;
 	secretRequestBlocked: boolean;
+}
+
+/** The earlier session's copy on a machine, still to be copied to the continuing session's name (`Continuation.machineCopy`). */
+export interface MachineCopy {
+	from: string;
+	windlassSessionId: string;
+	backup: SavedBackup;
 }
 
 /** What the session being continued tells `user` (`internalForkSource`). */
@@ -294,8 +306,11 @@ export interface UserInternal {
 	): Promise<import("../factory/placement.js").PlacementInventory & { hostedCapacity: number }>;
 
 	internalSessionChanged(summary: SessionSummary): Promise<void>;
-	/** Takes over removing a deleted session's copy from the bucket, which the session could not do itself. */
-	internalRemoveBackupLater(sessionId: string): Promise<void>;
+	/**
+	 * Takes over removing a deleted session's copy, which the session could not do itself: from the
+	 * bucket, or, with `machineId`, by recording it with that machine's actor (machine-backups.ts).
+	 */
+	internalRemoveBackupLater(sessionId: string, machineId?: string): Promise<void>;
 	/** Counts the session as running if the user's hosted sessions at work are below their ceiling (`FactoryLimits.runningTurns`); one on a machine of theirs always is. */
 	internalAcquireRun(
 		sessionId: string,
@@ -621,7 +636,7 @@ export function gitlabAccess(
 	c: HasClient,
 	uid: string,
 	projectId: string,
-): Promise<import("../gitlab/workspace.js").GitlabAccess> {
+): Promise<{ project: import("../contract.js").SessionRepository; viewer: string; token: string }> {
 	return c.client().userGitlab.get([uid], { params: serviceParams() }).internalGitlabAccess(projectId);
 }
 

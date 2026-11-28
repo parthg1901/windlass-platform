@@ -112,7 +112,7 @@ import { runnerLink, layerOf, machineOf } from "./runner.js";
 import { publish } from "./summary.js";
 import { platformNotes, saveBackup, dropWorkspace } from "./workspace.js";
 import { shellQuote } from "../../util.js";
-import { tail, TurnProblem, githubConnection, ReviewRefused, itemPrompt, within } from "./common.js";
+import { tail, TurnProblem, githubConnection, ReviewRefused, GitAccessRefused, itemPrompt, within } from "./common.js";
 import { readSecrets } from "./secrets.js";
 import { usesScreenshotImage } from "./setup.js";
 import { metered, takeHold, removeSandbox, noteSandbox, closeMeter, useOf, meterAfterTurn, armIdle } from "./meter.js";
@@ -1803,6 +1803,9 @@ export async function recordFailure(c: Ctx, t: TurnScope, error: unknown): Promi
 		const reason = active.secrets?.redactor.text(failure.message) ?? failure.message;
 		active.item.refused = `The reviewer's checkout of ${checkout.head.slice(0, 7)} failed: ${reason}`;
 	}
+	// No scoped Git credential to clone with: retrying cannot help until the owner acts, so the item asks rather than counting it as cut off.
+	if (active.item && !signal.aborted && !active.item.refused && failure instanceof GitAccessRefused)
+		active.item.refused = active.secrets?.redactor.text(failure.message) ?? failure.message;
 	if (active.item && !active.item.started && error instanceof MachineUnreachable)
 		active.item.machineAway = error.reason;
 	if (active.item && error instanceof DeploymentFull) active.item.full = error.limit;

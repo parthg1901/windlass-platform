@@ -501,6 +501,12 @@ export interface MockClient extends PlatformClient {
 	/** Makes the next call about GitHub of that kind fail (`__wlpMock.mockNextGithub("protected")`, then push). */
 	mockNextGithub(kind: MockGithubFailure): void;
 	/**
+	 * Every integration in Settings connected and mapped, for looking at them together: GitLab on a project (or,
+	 * with "gitlab-reconnect", GitLab having refused the saved grant), Linear and Jira with a mapping each, and Slack
+	 * with two channels and the member's account linked. Reload Settings after.
+	 */
+	mockIntegrations(state?: "connected" | "gitlab-reconnect", uid?: string): void;
+	/**
 	 * Makes the next call about a project's MCP servers fail, for looking at the panel's errors by hand:
 	 * "list" the reading of the list, "approve" and "forget" the action (`__wlpMock.mockNextServers("forget")`,
 	 * then Forget). "slow" makes every one of these calls take ten seconds, for the next ten seconds.
@@ -1413,6 +1419,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 	function gitlabStatus(uid: string): GitlabStatus {
 		if (options.gitlab === false) return { state: "off" };
 		const stored = recall(`wlp.mock.gitlab.${uid}`);
+		if (stored === "reconnect") return { state: "disconnected", reconnect: true };
 		return stored
 			? { state: "connected", baseUrl: gitlabUrl, project: gitlabProjects.find(p => p.id === stored) ?? null }
 			: { state: "disconnected" };
@@ -1845,7 +1852,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 	 */
 	function seedItemSession(auth: AuthResult, item: ItemView): string {
 		const world = worldOf(auth);
-		const id = `item-${item.id.slice(3)}`;
+		const id = `item-${item.id.replace(/^it?_/, "")}`;
 		clock = item.createdAt;
 		const session = addSession(world, {
 			id,
@@ -3724,7 +3731,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				sandbox?: SessionSummary["sandbox"];
 				model?: string;
 				repository?: SessionRepository;
-				pull?: Pick<PullRequestInfo, "number" | "state"> & { hoursAgo: number; clean?: boolean };
+				pull?: Pick<PullRequestInfo, "number" | "state"> & { hoursAgo: number; clean?: boolean; branch?: string };
 				machine?: NonNullable<MockSession["machine"]> & { machineId: string };
 			} = {},
 		): MockSession => {
@@ -3756,7 +3763,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 			const repository = session.summary.repository;
 			if (repository && extra.pull) {
 				// Pushed earlier: the pull request is there, and what was pushed then no longer differs from the last commit.
-				const branch = branchFor(session);
+				const branch = extra.pull.branch ?? branchFor(session);
 				const pushedAt = start - extra.pull.hoursAgo * HOUR;
 				session.pushed = true;
 				session.pushedHead = hex(40);
@@ -3834,6 +3841,38 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 			{
 				repository: sessionRepository("acme", "harbor", "release/2.4"),
 				pull: { number: 38, state: "open", hoursAgo: 20 },
+			},
+		);
+		// A planned feature's pull request and one of its parts', on the branches the platform names by item id
+		// (server/src/github/feature.ts): the panel and the pull request list say them in words (lib/branch.ts).
+		const FEATURE_BRANCH = "windlass/feature-i_be50000068103000";
+		history(
+			"feature-pr",
+			"Dark mode for the settings pages",
+			"docker-windlass-sandbox",
+			13 * HOUR,
+			[{ text: "Hand the dark mode feature over.", script: "checks" }],
+			{
+				sandbox: "none",
+				repository: sessionRepository("acme", "harbor"),
+				pull: { number: 81, state: "draft", hoursAgo: 12, branch: FEATURE_BRANCH },
+			},
+		);
+		history(
+			"feature-part",
+			"Theme tokens for dark mode",
+			"docker-windlass-sandbox",
+			15 * HOUR,
+			[{ text: "Add the dark theme's tokens.", script: "checks" }],
+			{
+				sandbox: "none",
+				repository: sessionRepository("acme", "harbor", FEATURE_BRANCH),
+				pull: {
+					number: 79,
+					state: "open",
+					hoursAgo: 14,
+					branch: `${FEATURE_BRANCH}-theme-tokens-i_12ea000059a23040`,
+				},
 			},
 		);
 		// Recorded in Auto, where Windlass asks before a command runs outside its sandbox: on the profile that has Auto, so the panel says what the run did.
@@ -7408,6 +7447,44 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		},
 		mockNextAnswer(kind) {
 			nextAnswer = kind;
+		},
+		mockIntegrations(state = "connected", uid = "u_ada") {
+			const at = realNow();
+			keep(`wlp.mock.gitlab.${uid}`, state === "gitlab-reconnect" ? "reconnect" : String(gitlabProjects[0]!.id));
+			keepLinear(uid, { connectedAt: at, mappings: { "team-eng": { repositoryId: 7101, savedAt: at } } });
+			const site = jiraSites[0]!;
+			keep(
+				`wlp.mock.jira.${uid}`,
+				JSON.stringify({
+					connection: { user: { id: "jira-ada", name: "Ada Lovelace" }, sites: jiraSites, site, connectedAt: at },
+					mappings: {
+						"10001": {
+							siteId: site.id,
+							projectId: "10001",
+							repository: { id: 7101, owner: "acme", name: "harbor" },
+							savedAt: at,
+						},
+					},
+				}),
+			);
+			keep(slackKey("owner"), uid);
+			keep(
+				`wlp.mock.linked.${uid}`,
+				JSON.stringify([
+					{ surface: "slack", tenant: slackWorkspace.id, tenantName: slackWorkspace.name, name: "" },
+				] satisfies LinkedAccount[]),
+			);
+			keep(
+				slackKey("mappings"),
+				JSON.stringify([
+					{ channel: slackChannels[0], repository: { id: 7101, owner: "acme", name: "harbor" }, details: false },
+					{
+						channel: slackChannels[1],
+						repository: { id: 7103, owner: "acme", name: "lighthouse-docs" },
+						details: true,
+					},
+				]),
+			);
 		},
 		mockNextGithub(kind) {
 			nextGithub = kind;

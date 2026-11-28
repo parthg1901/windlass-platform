@@ -33,7 +33,13 @@ import type { FeedbackBatch, FeedbackEntry } from "../contract.js";
 import { GithubProblem } from "../github/repos.js";
 import { verdictWords } from "../factory/verdict.js";
 import { mergeCandidate, requiredCiBranches } from "../factory/autonomy.js";
-import { editablePartAgents, PlanError, unattendedKeys } from "../factory/feature-plan.js";
+import {
+	APPROVALS,
+	editablePartAgents,
+	openPlanQuestions,
+	PlanError,
+	unattendedKeys,
+} from "../factory/feature-plan.js";
 import { criticSessionId } from "../factory/feature-ids.js";
 import { contextAtPlace, partRun, resolveRun, runPlace, type RunSettings } from "../factory/resolve-run.js";
 import { limitApplies, type PlacementInventory } from "../factory/placement.js";
@@ -155,7 +161,8 @@ import type {
 	JoinResult,
 	VerifiedCheckEffect,
 } from "../factory/types.js";
-import { type GithubApp, githubApp, GithubError } from "../github/app.js";
+import { type GithubApp, githubApp, GithubError, GraphqlRefusal } from "../github/app.js";
+import { spellSeconds } from "../usage.js";
 import { checkBaseFailures } from "../github/ci-base.js";
 import { CI_POLLING, ciState, rerunnableJobs, workflowOverdue } from "../codehost/ci.js";
 import { resolveBoundRepository } from "../github/repos.js";
@@ -273,6 +280,13 @@ interface Ctx {
 /** How long an effect that could not be performed waits before it is tried again: 15 s, doubling, at most 5 min. */
 const EFFECT_RETRY_FIRST_MS = 15_000;
 const EFFECT_RETRY_MOST_MS = 5 * 60_000;
+/**
+ * GitHub refused to mark a draft feature PR ready for review: tried again after each of these waits, then the person is
+ * asked to mark it ready (`pr_ready_read`). The rest of the handover goes on without it.
+ */
+export const READY_RETRY_MS = [5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
+/** GitHub refuses the ready-for-review mutation to a token with Pull requests write alone; it needs Contents write too. */
+const READY_PERMISSIONS = { metadata: "read", contents: "write", pull_requests: "write" } as const;
 /** The action the item's schedule fires: its name is looked up when it fires, so it is one constant (factory-e2e.ts checks it is registered). */
 export const DUE_ACTION = "internalDue";
 /** The item's page shows at most this many entries of its log, the newest. */
@@ -2369,6 +2383,8 @@ export function live(item: FactoryItem, effect: Effect): boolean {
 				!item.question &&
 				item.integration?.attempt === effect.attempt
 			);
+		case "ready_pr":
+			return effect.run === run.n && run.step.kind === "merged" && item.pr?.number === effect.pr && !item.question;
 		case "poll_repo_pr":
 			return (
 				effect.key === `${key}/${effect.repo}` &&
@@ -4120,16 +4136,46 @@ async function perform(c: Ctx, row: EffectRow): Promise<boolean | "deferred"> {
 			const next = c.vars.handoff.then(async () => {
 				const latest = c.vars.stored?.item;
 				if (!latest?.pr || !live(latest, effect)) return false;
+				let current = effect;
 				if (latest.mode === "orchestrate") {
 					// Never for a cross-repo feature, whatever path led here: its PRs leave draft only after a review of the set.
 					const refused = readyRefusal(latest);
 					if (refused) throw new PlanError(refused);
-					const hub = await appHost(c, meta, "write");
-					await hub.app.withToken(
-						hub.installationId,
-						{ repositoryId: meta.repository.id, permissions: { metadata: "read", pull_requests: "write" } },
-						token => readyFeature(hub.app, token, hub.owner, hub.name, latest.pr!.number, latest.id),
-					);
+					const n = latest.pr.number;
+					const step = await readyStep(effect.readyRefusals ?? 0, () => markFeatureReady(c, meta, latest.id, n));
+					if (step.kind === "retry" || step.kind === "ask") {
+						const { said, refusals } = step;
+						const wait = step.kind === "retry" ? step.wait : undefined;
+						current = { ...effect, readyRefusals: refusals };
+						c.log.warn({
+							msg: "GitHub refused to mark the feature PR ready for review",
+							effect: row.id,
+							refusals,
+							...(wait !== undefined ? { inSeconds: wait / 1000 } : { handedToPerson: true }),
+							error: said,
+						});
+						// Asked before the count is stored: a server stopped in between asks again rather than never.
+						if (wait === undefined) await take(c, { kind: "pr_ready_read", at: Date.now(), pr: n, refused: said });
+						const data = JSON.stringify(current);
+						await queued(c, () =>
+							c.db.execute(
+								"UPDATE effects SET effect = ?, due_at = ? WHERE id = ? AND effect = ?",
+								data,
+								wait === undefined ? row.due_at : Date.now() + wait,
+								row.id,
+								row.effect,
+							),
+						);
+						row.effect = data;
+						if (wait !== undefined) {
+							await handoffProblem(
+								c,
+								effect,
+								`GitHub refused to mark pull request #${n} ready for review: ${sentence(said)} The platform will try again in ${spellSeconds(wait / 1000)}.`,
+							);
+							return "deferred" as const;
+						}
+					}
 				}
 				if (meta.repository.provider === "gitlab") {
 					const hub = await hostOf(c, meta);
@@ -4149,7 +4195,7 @@ async function perform(c: Ctx, row: EffectRow): Promise<boolean | "deferred"> {
 					);
 					return true;
 				}
-				await handoffOnGithub(c, meta, latest.pr.number, effect, row);
+				await handoffOnGithub(c, meta, latest.pr.number, current, row);
 				return true;
 			});
 			c.vars.handoff = next.then(
@@ -4158,9 +4204,62 @@ async function perform(c: Ctx, row: EffectRow): Promise<boolean | "deferred"> {
 			);
 			return next;
 		}
+		case "ready_pr": {
+			const refused = await markFeatureReady(c, meta, item.id, effect.pr);
+			await take(c, { kind: "pr_ready_read", at: Date.now(), pr: effect.pr, refused });
+			return true;
+		}
 		case "ask":
 			return true;
 	}
+}
+
+const sentence = (text: string) => text.replace(/\.?$/, ".");
+
+/**
+ * The hand-off's ready-for-review step after `refusals` earlier refusals: ready; refused again, tried after the next wait
+ * of `READY_RETRY_MS`; or refused once more than there are waits, so the person is asked. Once asked, the hand-off does
+ * not try again (`asked`): the person's "Try again" has its own effect.
+ */
+export async function readyStep(
+	refusals: number,
+	mark: () => Promise<string | null>,
+): Promise<{ kind: "ready" | "asked" } | { kind: "retry" | "ask"; said: string; refusals: number; wait?: number }> {
+	if (refusals > READY_RETRY_MS.length) return { kind: "asked" };
+	const said = await mark();
+	if (said === null) return { kind: "ready" };
+	const wait = READY_RETRY_MS[refusals];
+	return wait === undefined
+		? { kind: "ask", said, refusals: refusals + 1 }
+		: { kind: "retry", said, refusals: refusals + 1, wait };
+}
+
+/**
+ * Marks the draft feature PR ready for review: null once it is (also when the person marked it), GitHub's reason when it
+ * refused. An unreachable or rate-limited GitHub throws, for the effect's ordinary retry.
+ */
+async function markFeatureReady(c: Ctx, meta: ItemMeta, id: string, pr: number): Promise<string | null> {
+	const hub = await appHost(c, meta, "write");
+	try {
+		await hub.withToken(READY_PERMISSIONS, token => readyFeature(hub.app, token, hub.owner, hub.name, pr, id));
+		return null;
+	} catch (error) {
+		const said = readyRefused(error);
+		if (said === null) throw error;
+		return said;
+	}
+}
+
+/**
+ * GitHub's reason when marking the PR ready failed because GitHub refused it, counted toward the hand-over to the person;
+ * null for anything else (unreachable, rate-limited, a fault of the platform's own), left to the effect's ordinary retry.
+ */
+export function readyRefused(error: unknown): string | null {
+	// GitHub's GraphQL rate limit also answers 200 with `errors`.
+	if (error instanceof GraphqlRefusal) return error.type === "RATE_LIMITED" ? null : (error.said ?? error.message);
+	if (error instanceof GithubError && !error.rateLimited && !error.unreachable)
+		return `GitHub answered ${error.status}${error.said ? ` (${error.said})` : ""}`;
+	return null;
 }
 
 const MAX_RAISE = { tokens: 1_000_000_000, hostedSeconds: 7 * 86_400 } as const;
@@ -4270,6 +4369,9 @@ function slackRefusal(item: FactoryItem, fact: Fact, question: string) {
 	const choice = fact.kind === "approve_plan" ? "approve" : fact.kind === "answer" ? fact.choice : null;
 	if (!choice || !slackMayAnswer(open, choice))
 		throw new UserError("Answer this question in Windlass.", { code: "item_conflict" });
+	// A button posted before the plan changed: Slack offers no approval while its questions are open.
+	if (APPROVALS.has(choice) && item.featurePlan && openPlanQuestions(item.featurePlan).length)
+		throw new UserError("Answer the plan’s open questions in Windlass before approving.", { code: "item_conflict" });
 }
 
 const CONFLICT: Record<ItemAction["kind"], string> = {

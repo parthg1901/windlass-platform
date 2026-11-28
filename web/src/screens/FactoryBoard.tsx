@@ -9,6 +9,8 @@ import { linkProps, useHistoryState } from "../lib/router";
 import { itemDoing, subtaskState } from "../lib/subtasks";
 import { EndedFoot, useEndedPages } from "./Items";
 import { ItemStanding } from "../components/ItemRow";
+import { ItemSourceTag } from "../components/ItemSource";
+import { requestNumber } from "../lib/host";
 import { questionLine } from "../lib/items";
 import { useMachines } from "../state/machines";
 
@@ -105,8 +107,13 @@ function Card({
 			<p className="board-card-meta">
 				<span>
 					{item.repository.owner}/{item.repository.name}
-					{item.pullRequest ? `#${item.pullRequest.number}` : ""}
+					{item.pullRequest ? requestNumber(item.repository.provider, item.pullRequest.number) : ""}
 				</span>
+				{item.source !== "web" ? (
+					<span>
+						<ItemSourceTag source={item.source} origin={item.origin} />
+					</span>
+				) : null}
 				<span>{place ? `${agent} · ${place}` : agent}</span>
 			</p>
 			<div className="board-card-foot">

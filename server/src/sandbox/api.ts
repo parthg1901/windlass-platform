@@ -619,11 +619,21 @@ export type BackupRestoreResult =
 	/** The copy could not be fetched, is not the one that was saved, or does not hold the agent's session. `reason` is for a log. */
 	| { outcome: "failed"; reason: string };
 
-/** Only copy between turns, with session files closed. Signed URLs move archives directly between the sandbox and the bucket. */
+/**
+ * Only copy between turns, with session files closed. In the bucket (backup.ts), signed URLs move
+ * archives directly between the sandbox and the bucket; on a machine (machine-backups.ts), its runner
+ * moves them between the sandbox and a volume on that machine, and they never leave it.
+ */
 export interface SessionBackups {
 	/** The largest archive that is kept, in bytes. */
 	readonly maxBytes: number;
-	/** Packs the agent's session data in the sandbox and has the sandbox upload it, replacing the session's earlier copy. Never throws. */
+	/**
+	 * Whether copies can be saved and restored now; absent means always. A machine's are only while its
+	 * runner offers them (the `session-backups` capability), which an older runner does not: nothing is
+	 * then saved or restored, and nothing is said of it. Never throws.
+	 */
+	available?(): Promise<boolean>;
+	/** Packs the agent's session data in the sandbox and has it moved to where copies are kept, replacing the session's earlier copy. Never throws. */
 	save(sandbox: SandboxHandle, owner: BackupOwner, session: BackupAgentSession): Promise<BackupSaveResult>;
 	/** Verify size, hash, what the archive holds and the expected agent session before restoring. Returns failure as a result. */
 	restore(
@@ -632,15 +642,20 @@ export interface SessionBackups {
 		saved: SavedBackup,
 		session: BackupAgentSession,
 	): Promise<BackupRestoreResult>;
-	/** Removes the session's copy. A no-op when there is none. Throws when the store could not be told. */
+	/**
+	 * Removes the session's copy. A no-op when there is none. Throws when the store could not be told. A
+	 * machine's is recorded with the machine's actor, which has the runner remove it when it is next
+	 * connected.
+	 */
 	remove(owner: BackupOwner): Promise<void>;
 	/**
 	 * Copies one session's copy to another's name inside the store, replacing what was there; the archive
 	 * passes through neither the server nor a sandbox. False when `from` has no copy. Throws when the
-	 * store could not be told.
+	 * store could not be told. A machine's is asked over `to`'s own socket, so it is called from the
+	 * layer of the session `to` (its runner refuses any other).
 	 */
 	copy(from: BackupOwner, to: BackupOwner): Promise<boolean>;
-	/** The name of the session's object in the bucket, for a log. */
+	/** The name of the session's copy where it is kept, for a log. */
 	keyOf(owner: BackupOwner): string;
 }
 
@@ -651,6 +666,10 @@ export interface SandboxLayer {
 	windlass: Windlass;
 	logins: ChatgptLogins;
 	tokens: AccessTokens;
-	/** Absent without a configured copy source and destination. Losing session-local data then requires a fresh session. */
+	/**
+	 * Absent without a configured copy source and destination (hosted: no bucket). Losing session-local
+	 * data then requires a fresh session. A machine's layer has the machine's own (`available` says
+	 * whether its runner keeps them).
+	 */
 	backups?: SessionBackups | null;
 }

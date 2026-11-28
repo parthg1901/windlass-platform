@@ -186,7 +186,7 @@ The dialog asks where the new branch starts:
 - **Start from** the repository's default branch, with none of the first agent's unmerged work.
 - **Stack on #N**, offered once the first agent's work is on GitHub: the new branch starts from that pull request's branch, and the new pull request is based on it.
 
-On a hosted sandbox, the new agent starts with a copy of the first agent's memory of the conversation when the platform keeps one. Otherwise, as on your own machines, its first prompt includes an account of the first agent's turns, which the platform reconstructs from the timeline. Text from someone else that the first agent saw stays marked as untrusted in the new one. The side panel's **Agent** section links the two agents with **continued from** and **continued in**, and the agent list marks the new one **continued**.
+The new agent starts with a copy of the first agent's memory of the conversation when one is kept: in the platform's storage on a hosted sandbox, or on the same machine when its runner keeps copies. Otherwise its first prompt includes an account of the first agent's turns, which the platform reconstructs from the timeline. Text from someone else that the first agent saw stays marked as untrusted in the new one. The side panel's **Agent** section links the two agents with **continued from** and **continued in**, and the agent list marks the new one **continued**.
 
 ## The repository's setup command
 

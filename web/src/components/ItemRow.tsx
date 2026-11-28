@@ -7,7 +7,9 @@ import type { ReactNode } from "react";
 import { HARNESS_NAMES } from "../lib/acp";
 import { absoluteTime, relativeTime } from "../lib/format";
 import { CI_WORD, inSecondReview, questionLine, verdictWord } from "../lib/items";
-import { filingSource, originIssue } from "../lib/origin";
+import { originIssue } from "../lib/origin";
+import { ItemSourceTag } from "./ItemSource";
+import { requestNumber } from "../lib/host";
 import { linkProps } from "../lib/router";
 import { LongText } from "./Fold";
 import { AskIcon, CrossIcon, ExternalIcon, Mark, MergedIcon, PullRequestIcon, RingIcon, StopIcon } from "./Icons";
@@ -450,27 +452,17 @@ export function ItemRow({
 					{item.pullRequest ? (
 						<span>
 							<a className="item-pull" href={item.pullRequest.url} target="_blank" rel="noreferrer">
-								#{item.pullRequest.number}
+								{requestNumber(item.repository.provider, item.pullRequest.number)}
 								<ExternalIcon size={10} />
 							</a>
 						</span>
 					) : null}
-					{origin ? (
+					{item.source !== "web" ? (
 						<span>
-							<a
-								className="item-pull"
-								href={origin.url}
-								target="_blank"
-								rel="noreferrer"
-								aria-label={`Issue ${origin.label} on ${origin.tracker}`}
-							>
-								{origin.tracker === "GitHub" ? `issue ${origin.label}` : origin.label}
-								<ExternalIcon size={10} />
-							</a>
+							<ItemSourceTag source={item.source} origin={item.origin} />
 						</span>
 					) : null}
 					{origin && !origin.trusted ? <span>from an outside author</span> : null}
-					{item.source === "api" || item.source === "slack" ? <span>from {filingSource[item.source]}</span> : null}
 					{item.agent && item.agent.harness !== "windlass" ? (
 						<span>
 							<AgentGlyph harness={item.agent.harness} size={11} inline />
