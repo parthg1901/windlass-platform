@@ -2,6 +2,7 @@ import type { LoginProvider } from "@contract";
 import { useEffect, useRef, useState } from "react";
 import { GitHubLogo, GoogleLogo } from "../components/AgentLogos";
 import { WarnIcon } from "../components/Icons";
+import { Loading, Skeleton } from "../components/ui";
 import { linkProps, navigate, takeReturnAfterSignIn } from "../lib/router";
 import { Landing, SignInShell } from "../site/Landing";
 import type { Theme } from "../lib/theme";
@@ -103,7 +104,11 @@ function SignInPanel() {
 				<p className="lp-signin-note">Account sign-in is unavailable on this deployment.</p>
 			)}
 			{platform.loading ? (
-				<p className="lp-signin-note">Asking the server what it offers…</p>
+				// Until the server says which sign-ins it offers: the two buttons it usually draws, as placeholders.
+				<Loading label="Loading the ways to sign in" className="lp-signin-loading">
+					<Skeleton width="100%" height={42} radius={10} />
+					<Skeleton width="100%" height={42} radius={10} />
+				</Loading>
 			) : platform.error ? (
 				<p className="callout callout-bad" role="alert">
 					<WarnIcon />

@@ -4430,3 +4430,8 @@
 	margin-top: 14px;
 	color: var(--ink-faint);
 }
+/* The sign-in panel while the server is asked what it offers: its two buttons as placeholders, stacked as they will be. */
+.lp-signin-loading {
+	display: grid;
+	gap: 8px;
+}
