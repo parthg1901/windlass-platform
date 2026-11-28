@@ -472,6 +472,9 @@ export function listedHarness<T extends KeyHarness & ReportedSignIn>(
 
 export const machineHarnesses = { claude: CLAUDE, opencode: OPENCODE, codex: CODEX };
 
+/** The machine agents a Plan-first subtask may run (`subtasks`). */
+export const SUBTASK_HARNESSES: readonly AcpProfile[] = Object.values(machineHarnesses).filter(h => h.subtasks);
+
 export const hostedProfiles: SandboxProfileId[] = ["docker-hardened", "e2b-open", "daytona"];
 
 export function hostedHarness(id: AcpProfile["id"]): AcpProfile {

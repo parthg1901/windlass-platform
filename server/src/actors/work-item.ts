@@ -92,7 +92,7 @@ import { recentSubject, type IssueBinding, type JiraBinding, type LinearBinding 
 import { CHECK_DENIED, checkConclusion, checkSummary, checkTitle, evidenceLine } from "../factory/verified-check.js";
 import type { CheckRunUpdate } from "../github/checks.js";
 import type { GithubUser } from "../github/app.js";
-import { hostedCatalog, worksWithoutAsking } from "../sandbox/harnesses.js";
+import { SUBTASK_HARNESSES, hostedCatalog, worksWithoutAsking } from "../sandbox/harnesses.js";
 import {
 	hostedSizeFor,
 	type ItemReview,
@@ -3797,7 +3797,7 @@ async function perform(c: Ctx, row: EffectRow): Promise<boolean | "deferred"> {
 				const listed = (list?: ModelList | null) =>
 					list?.models.map(m => (m.efforts.length ? `${m.id} (${m.efforts.join("/")})` : m.id));
 				const hostedModels = Object.fromEntries(
-					(["claude", "opencode"] as const).map(id => [
+					SUBTASK_HARNESSES.map(({ id }) => [
 						id,
 						hostedCatalog(id, inventory.hostedCredentials ?? [])?.models.map(m => m.id),
 					]),

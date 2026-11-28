@@ -13,6 +13,7 @@
 import type { HarnessId, MachineSummary, ModelList, PlanSubtask, SubtaskAgent } from "@contract";
 import type { AgentModels } from "../../../server/src/factory/placement.js";
 import {
+	SUBTASK_HARNESSES,
 	hostedAgentProblem,
 	machineHarness,
 	usesAccountModels,
@@ -48,7 +49,7 @@ export function agentChoices(
 ): AgentChoice[] {
 	const choices: AgentChoice[] = [{ id: "windlass", name: HARNESS_NAMES.windlass, problem: null }];
 	if (!machine)
-		for (const id of ["claude", "opencode"] as const) {
+		for (const { id } of SUBTASK_HARNESSES) {
 			choices.push({ id, name: HARNESS_NAMES[id], problem: hostedAgentProblem(id, keys, keyProfile) });
 		}
 	for (const reported of machine?.harnesses ?? []) {

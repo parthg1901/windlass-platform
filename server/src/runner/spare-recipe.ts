@@ -1,11 +1,11 @@
 import type { HarnessId, SandboxProfileId } from "../contract.js";
+import { machineHarness } from "../sandbox/harnesses.js";
 import { count, is, object, optional, text, type Of } from "./check.js";
 
 export function spareProfile(profile: SandboxProfileId, harness?: HarnessId) {
-	return (
-		profile === "docker-hardened" ||
-		(profile === "docker-windlass-sandbox" && (!harness || harness === "windlass" || harness === "codex"))
-	);
+	if (profile !== "docker-hardened" && profile !== "docker-windlass-sandbox") return false;
+	// Windlass runs in either; another agent only in the profiles of its record.
+	return machineHarness(harness)?.profiles.includes(profile) ?? true;
 }
 
 // A spare recipe carries only the repository and its setup. Connected repositories also

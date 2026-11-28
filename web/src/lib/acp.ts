@@ -49,6 +49,11 @@ export const HARNESS_NAMES: Record<HarnessId, string> = Object.fromEntries(
 /** The order the screens list the harnesses in. */
 export const HARNESS_DISPLAY_ORDER: readonly HarnessId[] = ["windlass", "claude", "codex", "opencode"];
 
+/** The same order without Windlass: the agents a place has to offer before they can be chosen. */
+export const MACHINE_HARNESS_ORDER = HARNESS_DISPLAY_ORDER.filter(
+	(id): id is Exclude<HarnessId, "windlass"> => id !== "windlass",
+);
+
 /** The name of the harness a session runs when it is not Windlass, which it is when the summary names none; null for Windlass. */
 export function acpHarnessName(summary: Pick<SessionSummary, "harness">): string | null {
 	return summary.harness === undefined || summary.harness === "windlass" ? null : HARNESS_NAMES[summary.harness];
