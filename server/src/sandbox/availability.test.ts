@@ -38,6 +38,7 @@ import {
 import { reportedCodexModes } from "./codex-modes.js";
 import {
 	type HostedCredential,
+	harnessName,
 	hostedAgentProblem,
 	itemHarnessProblem,
 	itemProfileProblem,
@@ -200,7 +201,7 @@ const SECTIONS: [string, Place[], Credentials][] = [
 	["Hosted where no profile can use plans or keys, keys only", [hostedNoRelay], keysOnly],
 	["Machines: ready; owner has not allowed Strict", [machines.ready, machines.strictDenied].map(on), everything],
 	[
-		"Machines: Codex's sandbox not checked; no command sandbox; runner started without Claude Code",
+		`Machines: ${harnessName("codex")}'s sandbox not checked; no command sandbox; runner started without ${harnessName("claude")}`,
 		[machines.codexUnchecked, machines.noCommandSandbox, machines.noClaude].map(on),
 		everything,
 	],
@@ -210,7 +211,7 @@ const SECTIONS: [string, Place[], Credentials][] = [
 		everything,
 	],
 	[
-		"Machines: sign-in could not be checked; Codex signed in by a method the runner did not report",
+		`Machines: sign-in could not be checked; ${harnessName("codex")} signed in by a method the runner did not report`,
 		[machines.signInUnknown, machines.codexMethodUnknown].map(on),
 		everything,
 	],
@@ -475,7 +476,7 @@ test("a refusal is one sentence and what to do about it", () => {
 	assert.deepEqual(strict, {
 		ok: false,
 		code: "agent_needs_isolation",
-		message: "Claude Code runs only in Open isolation on “ready”.",
+		message: `${harnessName("claude")} runs only in Open isolation on “ready”.`,
 		fix: { text: "Choose Open isolation.", where: "here" },
 	});
 
@@ -488,7 +489,7 @@ test("a refusal is one sentence and what to do about it", () => {
 	assert.deepEqual(missing, {
 		ok: false,
 		code: "machine_lacks_agent",
-		message: "The runner on “no-claude” was not started with Claude Code.",
+		message: `The runner on “no-claude” was not started with ${harnessName("claude")}.`,
 		fix: { text: "Restart it with --harness claude added.", where: "machine-shell" },
 	});
 
