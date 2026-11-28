@@ -4425,3 +4425,8 @@
 		color: var(--accent-text);
 	}
 }
+.lp-lede-more {
+	display: block;
+	margin-top: 14px;
+	color: var(--ink-faint);
+}

@@ -86,7 +86,7 @@ function landingMarkdown(): string {
 		"",
 		"## Proof, not promises",
 		"",
-		"Windlass builds its verdict from your checks and your CI on the exact commit it pushed, plus an independent review. On GitHub the verdict is the `windlass/verified` check, which you can make required with branch protection.",
+		"Windlass builds its verdict from your checks and your CI on the exact commit it pushed, plus an independent review. On GitHub the verdict is the `windlass/verified` check, which you can make required with branch protection. Every item shows what it cost in dollars (model, sandbox and retries), and Usage tracks the median cost per finished item by size of work.",
 		"",
 		"## Safe by default",
 		"",

@@ -1156,3 +1156,12 @@
 	margin-right: -4px;
 	color: var(--ink-faint);
 }
+/* The "N quiet" row's chevron turns as its rows fold (the fold itself is `.ws-rail-fold` above). */
+.ws-rail-more .ws-rail-chevron {
+	transition: transform 180ms var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+	.ws-rail-more .ws-rail-chevron {
+		transition: none;
+	}
+}

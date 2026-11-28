@@ -83,15 +83,18 @@ const owners = () =>
 const sections = () =>
 	[...rail().querySelectorAll(".ws-rail-group")].map(group => ({
 		label: group.querySelector(".ws-rail-label")?.textContent ?? "",
-		names: [...group.querySelectorAll("a .ws-rail-name")].map(name => name.textContent),
+		names: [...group.querySelectorAll("a .ws-rail-name")]
+			.filter(name => !name.closest("[inert]"))
+			.map(name => name.textContent),
 	}));
 const quiet = (owner: string) =>
 	[...rail().querySelectorAll(".ws-rail-group")]
 		.find(group => group.querySelector(".ws-rail-owner-name")?.textContent === owner)
 		?.querySelector<HTMLButtonElement>(".ws-rail-more") as HTMLButtonElement;
 const row = (name: string) =>
+	// A folded row stays mounted (it folds away), inert: it is not there to see.
 	[...rail().querySelectorAll<HTMLAnchorElement>("a.ws-rail-row")].find(
-		link => link.querySelector(".ws-rail-name")?.textContent === name,
+		link => link.querySelector(".ws-rail-name")?.textContent === name && !link.closest("[inert]"),
 	) as HTMLAnchorElement;
 const current = () => rail().querySelector('a.ws-rail-row[aria-current="page"] .ws-rail-name')?.textContent;
 const press = (key: string, init: KeyboardEventInit = {}, target: EventTarget = document.body) =>

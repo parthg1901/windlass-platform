@@ -509,30 +509,39 @@ export function RepoRail({
 							const open = openQuiet.has(group.owner);
 							const label = group.owner || "Repositories";
 							return (
-								<section key={group.owner} className="ws-rail-group" aria-label={label}>
+								<section
+									key={group.owner}
+									className={`ws-rail-group${group.quiet.length > 0 && !open ? " ws-rail-group-shut" : ""}`}
+									aria-label={label}
+								>
 									<h3 className="ws-rail-label ws-rail-owner-name">{label}</h3>
-									<ul className="ws-rail-rows">
-										{group.shown.map(repository => row(repository))}
-										{open ? group.quiet.map(repository => row(repository)) : null}
-										{group.quiet.length > 0 ? (
-											<li className="ws-rail-item">
-												<button
-													type="button"
-													className="ws-rail-row ws-rail-more"
-													data-rail-row=""
-													aria-expanded={open}
-													onClick={() => toggleQuiet(group.owner)}
-												>
-													<span className="ws-rail-icon">
-														<ChevronDownIcon size={12} className="ws-rail-chevron" />
-													</span>
-													<span className="ws-rail-name">
-														{open ? "Fold the quiet ones" : `${group.quiet.length} quiet`}
-													</span>
-												</button>
-											</li>
-										) : null}
-									</ul>
+									<ul className="ws-rail-rows">{group.shown.map(repository => row(repository))}</ul>
+									{group.quiet.length > 0 ? (
+										<>
+											{/* The quiet ones stay mounted and fold away, inert while shut. */}
+											<div className="ws-rail-fold" inert={!open}>
+												<ul className="ws-rail-rows">{group.quiet.map(repository => row(repository))}</ul>
+											</div>
+											<ul className="ws-rail-rows">
+												<li className="ws-rail-item">
+													<button
+														type="button"
+														className="ws-rail-row ws-rail-more"
+														data-rail-row=""
+														aria-expanded={open}
+														onClick={() => toggleQuiet(group.owner)}
+													>
+														<span className="ws-rail-icon">
+															<ChevronDownIcon size={12} className="ws-rail-chevron" />
+														</span>
+														<span className="ws-rail-name">
+															{open ? "Fold the quiet ones" : `${group.quiet.length} quiet`}
+														</span>
+													</button>
+												</li>
+											</ul>
+										</>
+									) : null}
 								</section>
 							);
 						})}

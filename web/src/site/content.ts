@@ -183,7 +183,7 @@ export const FAQ: Faq[] = [
 	{
 		question: "What does it cost to run?",
 		answer:
-			"Hosted time is on your plan; time on your own machines is not counted. Model tokens are billed by your provider, on your own key. Each item has a budget, and its page shows what it used.",
+			"Hosted time is on your plan; time on your own machines is not counted. Model tokens are billed by your provider, on your own key. Each item has a budget in dollars, and its page shows what it cost: model, sandbox and retries.",
 	},
 	{
 		question: "Is it open source?",

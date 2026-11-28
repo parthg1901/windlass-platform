@@ -388,6 +388,10 @@ function ProofSection() {
 							on the exact commit it pushed, plus an independent review. On GitHub that verdict is the{" "}
 							<code>windlass/verified</code> check, so you can make it required with branch protection, the same way you
 							treat CI.
+							<span className="lp-lede-more">
+								Every item shows what it cost in dollars: model, sandbox and retries. Usage tracks the median cost per
+								finished item by size of work.
+							</span>
 						</>
 					}
 				/>
