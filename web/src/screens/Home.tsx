@@ -39,6 +39,7 @@ import { filterCount, type Filters } from "../lib/workspace";
 import { useApp, useAuth } from "../state/app";
 import { asking } from "../lib/items";
 import { allowanceState, useChatgpt, useFactoryLimits, useNow, type SessionsState } from "../state/hooks";
+import { LoadError, SkeletonRows } from "../components/ui";
 
 /** The repositories something is saved for: asked when the screen opens and when a session is added or deleted. Empty until they arrive, or where they could not be read. */
 export function useSavedRepositories(sessions: readonly SessionSummary[] | null): SavedRepository[] {
@@ -312,26 +313,14 @@ export function Home({
 			) : null}
 
 			{connection === "failed" ? (
-				<div className="state state-error" role="alert">
-					<WarnIcon size={22} />
-					<h2>The list of agents could not be loaded</h2>
-					<p>{error?.message ?? "The server could not be reached."}</p>
-					<button type="button" className="button button-outline" onClick={() => location.reload()}>
-						Try again
-					</button>
-				</div>
+				<LoadError
+					level={2}
+					subject="The list of agents"
+					error={error?.message ?? "The server could not be reached."}
+					reload={() => location.reload()}
+				/>
 			) : sessions === null ? (
-				<ul className="agents agents-loading" aria-busy="true" aria-label="Loading agents">
-					{[0, 1, 2, 3].map(row => (
-						<li key={row} className="agent-row agent-row-skeleton">
-							<span className="skeleton skeleton-dot" />
-							<div className="agent-main">
-								<span className="skeleton skeleton-title" style={{ width: `${46 - row * 7}%` }} />
-								<span className="skeleton skeleton-meta" style={{ width: `${62 - row * 5}%` }} />
-							</div>
-						</li>
-					))}
-				</ul>
+				<SkeletonRows variant="agent" label="Loading agents" rows={4} />
 			) : empty ? (
 				<OnboardingGate
 					// The setup opens on "Everything" only, never on the agents on no repository.

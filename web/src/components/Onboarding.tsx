@@ -839,7 +839,7 @@ function FirstItemStep({
 					))}
 				</div>
 				<textarea
-					className="input"
+					className="input textarea"
 					aria-label="Or say what it should do"
 					placeholder="Or say what it should do…"
 					value={text}

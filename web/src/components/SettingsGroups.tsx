@@ -1,6 +1,6 @@
 import { useEffect, useState, type MouseEvent, type ReactElement, type ReactNode } from "react";
 import { useHash } from "../lib/router";
-import { WarnIcon } from "./Icons";
+import { LoadError, Loading } from "./ui";
 
 interface GroupProps {
 	id: string;
@@ -79,40 +79,12 @@ export function SettingsLayout({ label, children }: { label: string; children: (
 	);
 }
 
-export function SettingsRefreshError({ error, reload }: { error: string; reload(): void }) {
-	return (
-		<p className="callout callout-warn" role="status">
-			<WarnIcon />
-			<span>
-				{error}{" "}
-				<button className="link" onClick={reload}>
-					Try again
-				</button>
-			</span>
-		</p>
-	);
-}
-
+/** What settings show until they are read: a skeleton, or why they could not be read and a way to try again. */
 export function SettingsPending({ subject, error, reload }: { subject: string; error: string | null; reload(): void }) {
-	return (
-		<section className="usage-section">
-			{error ? (
-				<div className="state state-error" role="alert">
-					<WarnIcon size={22} />
-					<h3>{subject} could not be loaded</h3>
-					<p>{error}</p>
-					<button type="button" className="button button-outline" onClick={reload}>
-						Try again
-					</button>
-				</div>
-			) : (
-				<div className="usage-loading" aria-busy="true" aria-label={`Loading ${subject.toLowerCase()}`}>
-					<span className="skeleton skeleton-title" style={{ width: "34%" }} />
-					<span className="skeleton skeleton-meta" style={{ width: "100%" }} />
-					<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-				</div>
-			)}
-		</section>
+	return error ? (
+		<LoadError subject={subject} error={error} reload={reload} />
+	) : (
+		<Loading label={`Loading ${subject.toLowerCase()}`} />
 	);
 }
 

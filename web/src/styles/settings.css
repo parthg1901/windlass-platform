@@ -97,9 +97,6 @@
 .settings-card > * + * {
 	border-top: 1px solid var(--line);
 }
-.settings-card .usage-loading {
-	margin-top: 0;
-}
 .settings-card .usage-title {
 	min-height: 26px;
 	align-items: center;
@@ -231,15 +228,6 @@
 .run-default > .field-note {
 	margin: 0;
 }
-.run-segmented {
-	display: flex;
-	width: 100%;
-}
-.run-segmented .segment {
-	flex: 1;
-	text-align: center;
-	padding-inline: 8px;
-}
 .run-said {
 	min-height: 1.2em;
 	margin: 0;
@@ -363,14 +351,6 @@
 .run-card {
 	margin-top: 12px;
 	padding: 16px 18px;
-}
-.run-segmented {
-	min-height: var(--h-lg);
-}
-.run-segmented .segment {
-	display: flex;
-	align-items: center;
-	justify-content: center;
 }
 .run-said.tone-bad {
 	color: var(--bad);

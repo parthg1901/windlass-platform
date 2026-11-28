@@ -3,15 +3,18 @@
  * choose its repositories at GitHub), and the ways to add an account or disconnect.
  */
 import { useEffect } from "react";
+import { useApp } from "../state/app";
 import { useGithub, type GithubNotice } from "../state/github";
 import { ExternalIcon, WarnIcon } from "./Icons";
 import { IntegrationCard, IntegrationFacts, IntegrationSteps } from "./IntegrationCard";
 import { OwnerAvatar } from "./RepoTile";
+import { LoadError, Loading, SkeletonLines } from "./ui";
 
 /** Notices said here already: the account menu does not open to say them again. */
 export const shownInSettings = new WeakSet<GithubNotice>();
 
 export function GithubSettings() {
+	const { platform } = useApp();
 	const github = useGithub();
 	const { dismiss } = github;
 	const notice = github.notice?.where === "account" ? github.notice : null;
@@ -20,12 +23,21 @@ export function GithubSettings() {
 	}, [notice]);
 	// Leaving Settings puts it away.
 	useEffect(() => dismiss, [dismiss]);
-	if (!github.enabled) return null;
+	// Until the deployment says whether it offers GitHub, the card holds its place.
+	if (!github.enabled && platform.info !== null) return null;
 	const connection = github.status?.connection ?? null;
 	const busy = github.busy !== null;
 	const opening =
 		github.busy === "leaving" ? "Opening GitHub…" : github.busy === "popup" ? "In the GitHub window…" : null;
-	const state = github.status === null && !github.error ? "loading" : connection ? "connected" : "disconnected";
+	// A connection that could not be read is neither connected nor not: the error says so, the badge claims nothing.
+	const state =
+		!github.enabled || (github.status === null && !github.error)
+			? "loading"
+			: github.status === null
+				? "unknown"
+				: connection
+					? "connected"
+					: "disconnected";
 	const canStart = github.status !== null && !github.error;
 	return (
 		<IntegrationCard
@@ -83,19 +95,11 @@ export function GithubSettings() {
 					Finishing the GitHub connection…
 				</p>
 			) : github.error ? (
-				<p className="callout callout-warn" role="alert">
-					<WarnIcon />
-					<span>
-						{github.error}{" "}
-						<button type="button" className="link" onClick={github.reload}>
-							Try again
-						</button>
-					</span>
-				</p>
+				<LoadError inline error={github.error} reload={github.reload} />
 			) : github.status === null ? (
-				<div className="usage-loading" aria-busy="true" aria-label="Loading GitHub">
-					<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-				</div>
+				<Loading label="Loading GitHub">
+					<SkeletonLines title={false} lines={[58]} />
+				</Loading>
 			) : connection ? (
 				<>
 					<IntegrationFacts facts={[["Signed in as", <span className="mono">@{connection.login}</span>]]} />

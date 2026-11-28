@@ -22,7 +22,7 @@ import {
 import { linkProps } from "../lib/router";
 import { useApp, useAuth } from "../state/app";
 import { CheckIcon, InfoIcon, WarnIcon } from "./Icons";
-import { Button } from "./ui";
+import { Button, LoadError, Loading, Segmented, SkeletonLines } from "./ui";
 
 type Enabled = Extract<BillingView, { enabled: true }>;
 
@@ -151,20 +151,11 @@ export function PlanSection() {
 			</h3>
 			{view === null ? (
 				error ? (
-					<p className="callout callout-warn" role="alert">
-						<WarnIcon />
-						<span>
-							{error}{" "}
-							<button type="button" className="link" onClick={reload}>
-								Try again
-							</button>
-						</span>
-					</p>
+					<LoadError inline error={error} reload={reload} />
 				) : (
-					<div className="usage-loading" aria-busy="true" aria-label="Loading your plan">
-						<span className="skeleton skeleton-meta" style={{ width: "100%" }} />
-						<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-					</div>
+					<Loading label="Loading your plan">
+						<SkeletonLines title={false} />
+					</Loading>
 				)
 			) : !view.enabled ? (
 				<p className="usage-lede">Billing doesn't apply to this account.</p>
@@ -409,28 +400,21 @@ const FEATURES: Array<{ label: string; of(plan: PlanInfo, period: BillingPeriod)
 export function PlanCompare({ view }: { view: Enabled }) {
 	const { go, busy, error } = useGoTo();
 	const [period, setPeriod] = useState<BillingPeriod>("month");
-	const name = useId();
 	const pro = view.plans.find(plan => plan.id === "pro");
 	const saving =
 		pro && pro.yearlyCents !== null ? Math.round(100 - (pro.yearlyCents / (pro.monthlyCents * 12)) * 100) : 0;
 	return (
 		<>
 			<div className="billing-period">
-				<div className="segmented" role="radiogroup" aria-label="Billing period">
-					{(["month", "year"] as const).map(one => (
-						<label key={one} className={`segment${one === period ? " segment-chosen" : ""}`}>
-							<input
-								className="segment-radio"
-								type="radio"
-								name={name}
-								value={one}
-								checked={one === period}
-								onChange={() => setPeriod(one)}
-							/>
-							{one === "month" ? "Monthly" : "Yearly"}
-						</label>
-					))}
-				</div>
+				<Segmented<BillingPeriod>
+					aria-label="Billing period"
+					value={period}
+					onChange={setPeriod}
+					options={[
+						{ value: "month" as const, label: "Monthly" },
+						{ value: "year" as const, label: "Yearly" },
+					]}
+				/>
 				{saving > 0 ? <span className="billing-gloss">Yearly saves {saving}%</span> : null}
 			</div>
 			<div className="billing-grid">

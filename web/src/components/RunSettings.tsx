@@ -36,6 +36,9 @@ import { useCatalogs, useHostedCredentials, useModels, type AccountState } from 
 import { CloudIcon, MachineIcon } from "./Icons";
 import { EffortSelect, ModelSelect } from "./ModelPicker";
 import { AgentGlyph } from "./ui/Pill";
+import { Segmented } from "./ui/Segmented";
+import { Select } from "./ui/Select";
+import { Loading, SkeletonField, SkeletonLines } from "./ui/Skeleton";
 
 type Said = { tone: "good" | "bad"; text: string } | null;
 
@@ -143,30 +146,21 @@ function PlaceFields({
 				<label className="label" htmlFor={id}>
 					Runs on
 				</label>
-				<select
+				<Select
 					id={id}
-					className="select"
+					menuLabel="Runs on"
 					value={value}
 					disabled={disabled || inputs.list === null}
-					onChange={e => choose(e.target.value)}
-				>
-					<option value="hosted">Hosted</option>
-					{machines.map(m => (
-						<option key={m.machineId} value={m.machineId}>
-							{machineLabel(m)}
-						</option>
-					))}
-					{value === "any-machine" && (
-						<option value="any-machine" disabled>
-							Any of your machines
-						</option>
-					)}
-					{typeof run.place === "object" && !machine && (
-						<option value={value} disabled>
-							{placeName(run.place, inputs.list)}
-						</option>
-					)}
-				</select>
+					onChange={choose}
+					options={[
+						{ value: "hosted", label: "Hosted" },
+						...machines.map(m => ({ value: m.machineId, label: machineLabel(m) })),
+						...(value === "any-machine" ? [{ value, label: "Any of your machines", disabled: true }] : []),
+						...(typeof run.place === "object" && !machine
+							? [{ value, label: placeName(run.place, inputs.list), disabled: true }]
+							: []),
+					]}
+				/>
 			</div>
 			{machine ? (
 				<>
@@ -174,45 +168,36 @@ function PlaceFields({
 						<label className="label" htmlFor={id + "-profile"}>
 							Isolation
 						</label>
-						<select
+						<Select<string>
 							id={id + "-profile"}
-							className="select"
+							menuLabel="Isolation"
 							value={run.profile ?? profiles[0]?.id ?? ""}
 							disabled={disabled}
-							onChange={e => onChange({ machineProfile: e.target.value as SandboxProfileId })}
-						>
-							{profiles.map(p => (
-								<option key={p.id} value={p.id}>
-									{machineProfileName(p.id)}
-								</option>
-							))}
-							{run.profile && !profiles.some(p => p.id === run.profile) && (
-								<option value={run.profile} disabled>
-									{machineProfileName(run.profile)} (unavailable)
-								</option>
-							)}
-							{!profiles.length && !run.profile && <option value="">None available</option>}
-						</select>
+							onChange={next => onChange({ machineProfile: next as SandboxProfileId })}
+							options={[
+								...profiles.map(p => ({ value: p.id, label: machineProfileName(p.id) })),
+								...(run.profile && !profiles.some(p => p.id === run.profile)
+									? [{ value: run.profile, label: `${machineProfileName(run.profile)} (unavailable)`, disabled: true }]
+									: []),
+								...(!profiles.length && !run.profile ? [{ value: "", label: "None available" }] : []),
+							]}
+						/>
 					</div>
 					<div className="field">
 						<span className="label" id={id + "-offline"}>
 							When it's offline
 						</span>
-						<div className="segmented run-segmented" role="radiogroup" aria-labelledby={id + "-offline"}>
-							{(["wait", "hosted"] as const).map(choice => (
-								<label key={choice} className={`segment${run.fallback === choice ? " segment-chosen" : ""}`}>
-									<input
-										className="segment-radio"
-										type="radio"
-										name={id + "-offline"}
-										checked={run.fallback === choice}
-										disabled={disabled}
-										onChange={() => onChange({ placeFallback: choice })}
-									/>
-									{choice === "wait" ? "Wait for it" : "Offer Hosted"}
-								</label>
-							))}
-						</div>
+						<Segmented
+							fill
+							aria-labelledby={id + "-offline"}
+							value={run.fallback}
+							disabled={disabled}
+							onChange={choice => onChange({ placeFallback: choice })}
+							options={[
+								{ value: "wait" as const, label: "Wait for it" },
+								{ value: "hosted" as const, label: "Offer Hosted" },
+							]}
+						/>
 					</div>
 				</>
 			) : null}
@@ -241,19 +226,14 @@ function HostedFields({
 					<label className="label" htmlFor={id}>
 						Hosted size
 					</label>
-					<select
+					<Select<string>
 						id={id}
-						className="select"
+						menuLabel="Hosted size"
 						value={hosted.size}
 						disabled={disabled}
-						onChange={e => onChange({ hostedSize: e.target.value as ResolvedRun["size"] })}
-					>
-						{inputs.sizes.map(size => (
-							<option key={size.id} value={size.id}>
-								{sizeLabel(size)}
-							</option>
-						))}
-					</select>
+						onChange={next => onChange({ hostedSize: next as ResolvedRun["size"] })}
+						options={inputs.sizes.map(size => ({ value: size.id, label: sizeLabel(size) }))}
+					/>
 				</div>
 			) : null}
 			{profiles.length > 1 ? (
@@ -261,19 +241,14 @@ function HostedFields({
 					<label className="label" htmlFor={id + "-profile"}>
 						Hosted isolation
 					</label>
-					<select
+					<Select<string>
 						id={id + "-profile"}
-						className="select"
+						menuLabel="Hosted isolation"
 						value={profile}
 						disabled={disabled}
-						onChange={e => onChange({ profile: e.target.value as SandboxProfileId })}
-					>
-						{profiles.map(p => (
-							<option key={p.id} value={p.id}>
-								{p.name}
-							</option>
-						))}
-					</select>
+						onChange={next => onChange({ profile: next as SandboxProfileId })}
+						options={profiles.map(p => ({ value: p.id, label: p.name }))}
+					/>
 				</div>
 			) : null}
 		</div>
@@ -307,23 +282,21 @@ function AgentFields({
 						<label className="label" htmlFor={id}>
 							Agent
 						</label>
-						<select
+						<Select<HarnessId>
 							id={id}
-							className="select"
+							menuLabel="Agent"
 							value={run.agent}
 							disabled={disabled}
-							onChange={e => onChange({ harness: e.target.value as HarnessId })}
-						>
-							{HARNESS_DISPLAY_ORDER.map(agent => {
+							onChange={harness => onChange({ harness })}
+							options={HARNESS_DISPLAY_ORDER.map(agent => {
 								const profiles = run.place !== "hosted" && agent !== "windlass" ? itemProfiles(agent) : [];
-								return (
-									<option key={agent} value={agent}>
-										{HARNESS_NAMES[agent]}
-										{profiles.length === 1 ? ` (requires ${machineProfileName(profiles[0]!)})` : ""}
-									</option>
-								);
+								return {
+									value: agent,
+									label: HARNESS_NAMES[agent],
+									description: profiles.length === 1 ? `Requires ${machineProfileName(profiles[0]!)}` : undefined,
+								};
 							})}
-						</select>
+						/>
 					</div>
 				) : null}
 				<div className="field">
@@ -472,18 +445,25 @@ function PreviousStartPlace({
 
 // ---- Machines: the default place ------------------------------------------------------------------
 
+/** The default place while the account and the deployment are read: its field and its note, as shapes. */
+export function DefaultPlaceSkeleton() {
+	return (
+		<Loading label="Loading your defaults" className="run-default">
+			<div className="run-fields">
+				<SkeletonField />
+			</div>
+			<SkeletonLines title={false} lines={[72]} />
+		</Loading>
+	);
+}
+
 export function DefaultPlace({ account }: { account: AccountState }) {
 	const { client } = useApp();
 	const auth = useAuth();
 	const inputs = useRunInputs();
 	const { saving, save, status } = useSave();
 	const defaults = account.settings?.defaults ?? null;
-	if (!defaults || !inputs.info)
-		return (
-			<p className="usage-empty" aria-busy="true">
-				Reading your defaults…
-			</p>
-		);
+	if (!defaults || !inputs.info) return <DefaultPlaceSkeleton />;
 	const run = runOf({ account: defaults, sizes: inputs.sizes });
 	const hosted = runOf({ account: defaults, item: { place: "hosted" }, sizes: inputs.sizes });
 	const change = (patch: AccountDefaultsPatch) =>
@@ -522,11 +502,22 @@ export function DefaultAgent({ account }: { account: AccountState }) {
 	const inputs = useRunInputs();
 	const { saving, save, status } = useSave();
 	const defaults = account.settings?.defaults ?? null;
+	// One skeleton while the account and the deployment are read, the shape of the fields that replace it.
 	if (!defaults || !inputs.info)
 		return (
-			<p className="usage-empty" aria-busy="true">
-				Reading your defaults…
-			</p>
+			<Loading label="Loading your defaults" className="run-default">
+				<h3 className="usage-title">Builds with</h3>
+				<div className="run-fields">
+					<SkeletonField />
+					<SkeletonField />
+					<SkeletonField />
+				</div>
+				<h3 className="usage-title">Plans &amp; reviews with</h3>
+				<div className="run-fields">
+					<SkeletonField />
+					<SkeletonField />
+				</div>
+			</Loading>
 		);
 	const run = runOf({ account: defaults, sizes: inputs.sizes });
 	const planning = runOf({ account: defaults, sizes: inputs.sizes }, "planner");
@@ -611,9 +602,9 @@ export function RepositoryOverrides({
 	const [open, setOpen] = useState<"place" | "agent" | "review" | "hosted" | null>(null);
 	if (!account.settings || !inputs.info)
 		return (
-			<p className="usage-empty" aria-busy="true">
-				Reading your defaults…
-			</p>
+			<Loading label="Loading your defaults">
+				<SkeletonLines title={false} lines={[100, 100, 100]} />
+			</Loading>
 		);
 	const layers = {
 		account: account.settings.defaults,

@@ -11,10 +11,12 @@ import { useApp, useAuth } from "../state/app";
 import { useNow } from "../state/hooks";
 import { CopyButton } from "./Copy";
 import { Dialog } from "./Dialog";
-import { ApiIcon, WarnIcon } from "./Icons";
+import { ApiIcon } from "./Icons";
 import { CardHead } from "./IntegrationCard";
 import { Check } from "./ui/Check";
 import { Failure } from "./ui/Failure";
+import { LoadError } from "./ui/LoadError";
+import { Loading, SkeletonLines } from "./ui/Skeleton";
 
 const SCOPES: Array<{ scope: ApiTokenScope; name: string; means: string }> = [
 	{
@@ -254,18 +256,11 @@ export function ApiTokens() {
 				) : null}
 				{list === null ? (
 					state.error ? (
-						<div className="state state-error" role="alert">
-							<WarnIcon size={22} />
-							<h2>Your API tokens could not be loaded</h2>
-							<p>{state.error}</p>
-							<button type="button" className="button button-outline" onClick={reload}>
-								Try again
-							</button>
-						</div>
+						<LoadError subject="Your API tokens" error={state.error} reload={reload} />
 					) : (
-						<p className="usage-empty" aria-busy="true">
-							Reading your tokens…
-						</p>
+						<Loading label="Loading your tokens">
+							<SkeletonLines title={false} lines={[58]} />
+						</Loading>
 					)
 				) : list.length === 0 ? (
 					<p className="usage-empty">No API token yet.</p>

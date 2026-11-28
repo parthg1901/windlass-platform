@@ -1,5 +1,5 @@
 import type { ItemMode } from "@contract";
-import { useId } from "react";
+import { Segmented } from "./ui/Segmented";
 import { ITEM_MODE_WORDS } from "../lib/feature";
 
 /** What the chosen mode costs, in one quiet line under the picker. */
@@ -24,27 +24,18 @@ export function ItemModePicker({
 	disabled: boolean;
 	onChange(mode: ItemMode): void;
 }) {
-	const name = useId();
 	return (
-		<div className="segmented" role="radiogroup" aria-label="How it runs" aria-describedby={costId}>
-			{(["orchestrate", "single"] as const).map(mode => (
-				<label
-					key={mode}
-					className={`segment${mode === value ? " segment-chosen" : ""}`}
-					title={ITEM_MODE_WORDS[mode].description}
-				>
-					<input
-						className="segment-radio"
-						type="radio"
-						name={name}
-						value={mode}
-						checked={mode === value}
-						disabled={disabled}
-						onChange={() => onChange(mode)}
-					/>
-					{ITEM_MODE_WORDS[mode].name}
-				</label>
-			))}
-		</div>
+		<Segmented
+			aria-label="How it runs"
+			aria-describedby={costId}
+			value={value}
+			disabled={disabled}
+			onChange={onChange}
+			options={(["orchestrate", "single"] as const).map(mode => ({
+				value: mode,
+				label: ITEM_MODE_WORDS[mode].name,
+				title: ITEM_MODE_WORDS[mode].description,
+			}))}
+		/>
 	);
 }

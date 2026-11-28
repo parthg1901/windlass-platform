@@ -2,13 +2,7 @@ import type { RepositoryAutonomy, RepositoryView } from "@contract";
 import { useEffect, useState } from "react";
 import { ChecksEditor } from "../components/Checks";
 import { RepositoryOverrides } from "../components/RunSettings";
-import {
-	SettingsGroup,
-	SettingsLayout,
-	SettingsPending,
-	SettingsRefreshError,
-	SettingsSection,
-} from "../components/SettingsGroups";
+import { SettingsGroup, SettingsLayout, SettingsPending, SettingsSection } from "../components/SettingsGroups";
 import { EnvironmentSection } from "../components/Environments";
 import { Dialog } from "../components/Dialog";
 import { WarnIcon } from "../components/Icons";
@@ -23,6 +17,7 @@ import { useApp, useAuth } from "../state/app";
 import { useAccount, useNow } from "../state/hooks";
 import type { RepositoryPage } from "./Repository";
 import { Check } from "../components/ui/Check";
+import { LoadError } from "../components/ui";
 
 /** Repository permission for work item screenshots, read by each agent at its next turn. */
 export function ScreenshotsSetting({
@@ -302,11 +297,15 @@ export function RepositorySettings({ page }: { page: RepositoryPage }) {
 	}, [loaded, section]);
 
 	if (view === null)
-		return <SettingsPending subject="What is saved for this repository" error={page.error} reload={page.reload} />;
+		return (
+			<section className="usage-section">
+				<SettingsPending subject="What is saved for this repository" error={page.error} reload={page.reload} />
+			</section>
+		);
 
 	return (
 		<>
-			{page.error && <SettingsRefreshError error={page.error} reload={page.reload} />}
+			{page.error && <LoadError inline stale error={page.error} reload={page.reload} />}
 			<SettingsLayout label="Repository settings sections">
 				<SettingsGroup
 					id="repo-group-items"

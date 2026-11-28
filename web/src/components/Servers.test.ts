@@ -761,7 +761,7 @@ describe("the panel's section", () => {
 		it("lists the project's servers: the command in full, the state, the approval and until when", async () => {
 			render(await summaryOf("checks"));
 			expect(text(".panel-title")).toEqual(["MCP servers"]);
-			expect(host.querySelector("[aria-busy=true]")?.textContent).toBe("Reading the servers…");
+			expect(host.querySelector("[aria-busy=true]")?.getAttribute("aria-label")).toBe("Loading the servers");
 			await pass(500);
 			expect(host.querySelector("[aria-busy=true]")).toBeNull();
 			expect(text(".server-lede")).toEqual(["Approvals are remembered for acme/harbor."]);

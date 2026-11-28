@@ -15,11 +15,12 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode, type Ref }
 import { useHash } from "../lib/router";
 import { PencilIcon, RepoIcon, TrashIcon } from "./Icons";
 import { ProviderIcon, type ProviderId } from "./ProviderIcon";
-import { Menu, type MenuItem } from "./ui";
+import { Menu, Skeleton, SkeletonBadge, SkeletonButton, type MenuItem } from "./ui";
 
-export type IntegrationState = "loading" | "disconnected" | "connected" | "reconnect";
+/** "loading": not read yet, its badge and action are shapes. "unknown": it could not be read, so no state is claimed. */
+export type IntegrationState = "loading" | "unknown" | "disconnected" | "connected" | "reconnect";
 
-const STATE_WORDS: Record<Exclude<IntegrationState, "loading">, string> = {
+const STATE_WORDS: Record<Exclude<IntegrationState, "loading" | "unknown">, string> = {
 	connected: "Connected",
 	disconnected: "Not connected",
 	reconnect: "Needs reconnecting",
@@ -60,13 +61,16 @@ export function IntegrationCard({
 			id={id}
 			aria-labelledby={titleId}
 			data-testid={testId}
+			aria-busy={state === "loading" || undefined}
 		>
 			<CardHead
 				titleId={titleId}
 				mark={<ProviderIcon id={provider} tone="brand" size={20} />}
 				name={name}
 				badge={
-					state === "loading" ? null : (
+					state === "loading" ? (
+						<SkeletonBadge />
+					) : state === "unknown" ? null : (
 						<span className={`integration-state integration-state-${state}`}>
 							<span className="integration-state-dot" aria-hidden="true" />
 							<span className="visually-hidden">: </span>
@@ -75,10 +79,41 @@ export function IntegrationCard({
 					)
 				}
 				what={what}
-				action={action}
+				action={action ?? (state === "loading" ? <SkeletonButton /> : undefined)}
 				more={more}
 			/>
 			{children ? <div className="integration-body">{children}</div> : null}
+		</section>
+	);
+}
+
+/**
+ * A card in the Integrations group while the deployment says which services it offers: its head, as shapes. The
+ * first of them carries the `label` that says the group is loading; the others are hidden from assistive tech.
+ */
+export function IntegrationSkeleton({ label }: { label?: string }) {
+	return (
+		<section
+			className="usage-section integration"
+			{...(label ? { role: "status", "aria-busy": true, "aria-label": label } : { "aria-hidden": true })}
+		>
+			<div className="integration-head">
+				<span className="integration-mark">
+					<Skeleton width={20} height={20} radius="var(--radius-s)" />
+				</span>
+				<div className="integration-heading">
+					<p className="integration-name">
+						<Skeleton width={72} height={16} />
+						<SkeletonBadge />
+					</p>
+					<p className="integration-what">
+						<Skeleton width="58%" />
+					</p>
+				</div>
+				<div className="integration-actions">
+					<SkeletonButton />
+				</div>
+			</div>
 		</section>
 	);
 }

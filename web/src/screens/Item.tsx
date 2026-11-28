@@ -53,6 +53,7 @@ import { AgentGlyph } from "../components/ui/Pill";
 import { Failure } from "../components/ui/Failure";
 import { childrenBehind, partName, REPAIR_WHY, repairKind } from "../lib/subtasks";
 import { partOf, showsSubtasks, SubtasksBlock, SubtaskStrip } from "../components/Subtasks";
+import { LoadError, Loading, Select } from "../components/ui";
 
 const STEP_WORD: Record<StepKind, string> = {
 	subtasks: "Subtasks",
@@ -404,19 +405,14 @@ function NoteBox({ targets, onDone }: { targets: { id: string; label: string }[]
 					<label className="label" htmlFor={ids.to}>
 						Note to
 					</label>
-					<select
+					<Select
 						id={ids.to}
-						className="input select"
+						menuLabel="Note to"
 						value={target.id}
 						disabled={busy}
-						onChange={event => setChosen(event.target.value)}
-					>
-						{targets.map(one => (
-							<option key={one.id} value={one.id}>
-								{one.label}
-							</option>
-						))}
-					</select>
+						onChange={setChosen}
+						options={targets.map(one => ({ value: one.id, label: one.label }))}
+					/>
 				</div>
 			) : null}
 			<label className={targets.length > 1 ? "visually-hidden" : "label"} htmlFor={ids.note}>
@@ -1477,24 +1473,17 @@ export function Item({ page }: { page: ItemPage }) {
 			<main className="home usage repo item">
 				<section className="usage-section">
 					{page.error ? (
-						<div className="state state-error" role="alert">
-							<WarnIcon size={22} />
-							<h2>{page.missing ? "This work item is not one of yours" : "The work item could not be loaded"}</h2>
-							<p>{page.error}</p>
-							{page.missing ? (
+						page.missing ? (
+							<LoadError error={page.error}>
+								<h2>This work item is not one of yours</h2>
+								<p>{page.error}</p>
 								<MissingPageLinks section="factory" />
-							) : (
-								<button type="button" className="button button-outline" onClick={page.reload}>
-									Try again
-								</button>
-							)}
-						</div>
+							</LoadError>
+						) : (
+							<LoadError level={2} subject="The work item" error={page.error} reload={page.reload} />
+						)
 					) : (
-						<div className="usage-loading" aria-busy="true" aria-label="Loading the work item">
-							<span className="skeleton skeleton-title" style={{ width: "44%" }} />
-							<span className="skeleton skeleton-meta" style={{ width: "100%" }} />
-							<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-						</div>
+						<Loading label="Loading the work item" className="ui-loading-spaced" />
 					)}
 				</section>
 			</main>

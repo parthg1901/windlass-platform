@@ -11,6 +11,7 @@ import { createMockClient, type MockClient } from "../api/mock";
 import { App } from "../App";
 import { saveAuth } from "../lib/authStore";
 import { AppProvider } from "../state/app";
+import { chooseOption } from "../test/select";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.setConfig({ testTimeout: 30_000 });
@@ -143,19 +144,12 @@ it("saves who pays per agent and reads it back", async () => {
 	]);
 	const card = host.querySelector<HTMLElement>("#pay-claude")!;
 	expect(card.textContent).toContain("items wait for the reset and sessions ask you first");
-	const limited = card.querySelector<HTMLSelectElement>("#pay-claude-limited")!;
+	const limited = card.querySelector<HTMLButtonElement>("#pay-claude-limited")!;
 	expect(limited.disabled).toBe(false);
-	await act(async () => {
-		limited.value = "key";
-		limited.dispatchEvent(new Event("change", { bubbles: true }));
-	});
+	await chooseOption(limited, "key");
 	await settle();
 	expect(card.textContent).toContain("items and sessions switch to your Anthropic key");
-	const payWith = card.querySelector<HTMLSelectElement>("#pay-claude-with")!;
-	await act(async () => {
-		payWith.value = "plan";
-		payWith.dispatchEvent(new Event("change", { bubbles: true }));
-	});
+	await chooseOption(card.querySelector<HTMLButtonElement>("#pay-claude-with")!, "plan");
 	await settle();
 	expect(limited.disabled).toBe(true);
 	const saved = await client.user(ada).payWith();
@@ -166,7 +160,7 @@ it("saves who pays per agent and reads it back", async () => {
 	act(() => root.unmount());
 	render("/connections");
 	await settle();
-	expect(host.querySelector<HTMLSelectElement>("#pay-claude-with")?.value).toBe("plan");
+	expect(host.querySelector<HTMLElement>("#pay-claude-with")?.dataset.value).toBe("plan");
 	// Without a saved key a limited plan always waits, whatever was chosen.
 	expect(host.querySelector("#pay-codex")?.textContent).toContain("No OpenAI key saved");
 	await expect(

@@ -206,18 +206,18 @@ export function ModelSelect({
 					type="button"
 					{...props}
 					id={id}
-					className={`select picker-select${value === "" ? " is-inherited" : ""}`}
+					className={`select${value === "" ? " is-inherited" : ""}`}
 					data-picker="model"
 					data-value={value}
 					disabled={disabled}
 					aria-describedby={describedBy}
 				>
 					{value === "" ? (
-						<span className="picker-select-text">{inherit.label}</span>
+						<span className="select-text">{inherit.label}</span>
 					) : (
 						<>
 							{modelGlyph(harness, value)}
-							<span className="picker-select-text">{modelDisplay(harness, list, value)}</span>
+							<span className="select-text">{modelDisplay(harness, list, value)}</span>
 						</>
 					)}
 				</button>
@@ -257,14 +257,14 @@ export function EffortSelect({
 					type="button"
 					{...props}
 					id={id ?? fallback}
-					className={`select picker-select picker-effort${value === "" ? " is-inherited" : ""}`}
+					className={`select picker-effort${value === "" ? " is-inherited" : ""}`}
 					data-picker="effort"
 					data-value={value}
 					disabled={disabled}
 					aria-label={`Effort: ${value || "default"}`}
 				>
 					<EffortBars level={Math.max(0, effortChoices(efforts).indexOf(value))} of={efforts.length} />
-					<span className="picker-select-text">{value || "default"}</span>
+					<span className="select-text">{value || "default"}</span>
 				</button>
 			)}
 		/>

@@ -22,6 +22,7 @@ import { absoluteTime, plural } from "../lib/format";
 import { useApp, useAuth } from "../state/app";
 import { WarnIcon } from "./Icons";
 import { Check } from "./ui/Check";
+import { LoadError, Loading, SkeletonLines } from "./ui";
 
 /** What the deployment's hosted sandboxes do with the list, in a sentence. */
 function appliesHere(network: RepositoryNetwork): string {
@@ -171,16 +172,11 @@ export function NetworkSection({
 
 	if (network === null) {
 		return loadError ? (
-			<p className="panel-empty tone-bad" role="alert">
-				<WarnIcon size={13} /> {loadError}{" "}
-				<button type="button" className="link" onClick={load}>
-					Try again
-				</button>
-			</p>
+			<LoadError inline error={loadError} reload={load} />
 		) : (
-			<p className="panel-empty" aria-busy="true">
-				Reading the network list…
-			</p>
+			<Loading label="Loading the network list">
+				<SkeletonLines title={false} />
+			</Loading>
 		);
 	}
 

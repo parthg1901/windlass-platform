@@ -19,7 +19,9 @@ import { useApp, useAuth } from "../state/app";
 import { useAccount } from "../state/hooks";
 import { useGithub } from "../state/github";
 import { Check } from "../components/ui/Check";
-import { SettingsGroup, SettingsLayout, SettingsPending, SettingsRefreshError } from "../components/SettingsGroups";
+import { SettingsGroup, SettingsLayout, SettingsPending } from "../components/SettingsGroups";
+import { IntegrationSkeleton } from "../components/IntegrationCard";
+import { LoadError, Loading, SkeletonLines } from "../components/ui";
 
 export function Settings() {
 	const { platform } = useApp();
@@ -50,12 +52,23 @@ export function Settings() {
 				</div>
 			</header>
 
-			{account.error && settings !== null && <SettingsRefreshError error={account.error} reload={account.reload} />}
+			{account.error && settings !== null && <LoadError inline stale error={account.error} reload={account.reload} />}
 
 			<SettingsLayout label="Settings sections">
 				<SettingsGroup id="settings-account" title="Account" lede="How you sign in, and your plan.">
 					{!auth.profile.demo && <LoginMethods />}
-					{info?.billing ? <PlanSection /> : null}
+					{info?.billing ? (
+						<PlanSection />
+					) : info === null ? (
+						<section className="usage-section billing" aria-labelledby="settings-plan">
+							<h3 className="usage-title" id="settings-plan">
+								Plan
+							</h3>
+							<Loading label="Loading your plan">
+								<SkeletonLines title={false} />
+							</Loading>
+						</section>
+					) : null}
 					<SessionSettings />
 					{!auth.profile.demo ? (
 						<div className="settings-row settings-account-id">
@@ -80,7 +93,7 @@ export function Settings() {
 					}
 				>
 					<section className="usage-section" aria-label="Default models">
-						{settings === null ? (
+						{settings === null && account.error ? (
 							<SettingsPending subject="Your settings" error={account.error} reload={account.reload} />
 						) : (
 							<DefaultAgent account={account} />
@@ -96,18 +109,29 @@ export function Settings() {
 					</div>
 				</SettingsGroup>
 
-				{settings !== null ? (
-					<SettingsGroup
-						id="settings-tools"
-						title="Tools"
-						lede="MCP servers every agent gets, and the secrets they read."
-					>
-						<PersonalServers settings={settings} onChanged={account.replace} />
-						<SettingsSecrets profile={secretsProfile} onChanged={account.reload} />
-					</SettingsGroup>
-				) : null}
+				<SettingsGroup
+					id="settings-tools"
+					title="Tools"
+					lede="MCP servers every agent gets, and the secrets they read."
+				>
+					{settings !== null ? (
+						<>
+							<PersonalServers settings={settings} onChanged={account.replace} />
+							<SettingsSecrets profile={secretsProfile} onChanged={account.reload} />
+						</>
+					) : (
+						<section className="usage-section" aria-label="Tools">
+							<SettingsPending subject="Your tools" error={account.error} reload={account.reload} />
+						</section>
+					)}
+				</SettingsGroup>
 
-				{info?.items || github.enabled || gitlab.error || (gitlab.status && gitlab.status.state !== "off") ? (
+				{info === null ? (
+					<SettingsGroup id="settings-integrations" title="Integrations" lede="Where agents find your code.">
+						<IntegrationSkeleton label="Loading your integrations" />
+						<IntegrationSkeleton />
+					</SettingsGroup>
+				) : info.items || github.enabled || gitlab.error || (gitlab.status && gitlab.status.state !== "off") ? (
 					<SettingsGroup
 						id="settings-integrations"
 						title="Integrations"

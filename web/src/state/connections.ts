@@ -7,9 +7,12 @@ import type { PayWithChoice, PayWithPatch } from "@contract";
 import { useCallback, useEffect, useState } from "react";
 import type { ConnectionInputs } from "../lib/connections";
 import { useApp, useAuth } from "./app";
-import { readKeysAndPlans, useChatgpt, watchModelChanges } from "./hooks";
+import { PROVIDERS_CHANGED, readKeysAndPlans, useChatgpt, watchModelChanges } from "./hooks";
 
-export function useConnectionInputs(): { inputs: ConnectionInputs | null; error: string | null } {
+/** Reads the keys and plans again, wherever they are shown. */
+const rereadProviders = () => window.dispatchEvent(new Event(PROVIDERS_CHANGED));
+
+export function useConnectionInputs(): { inputs: ConnectionInputs | null; error: string | null; reload(): void } {
 	const { client, explain } = useApp();
 	const auth = useAuth();
 	const chatgpt = useChatgpt();
@@ -35,7 +38,7 @@ export function useConnectionInputs(): { inputs: ConnectionInputs | null; error:
 		read && (demo || chatgpt.status || chatgpt.error)
 			? { ...read, chatgpt: Boolean(chatgpt.status?.connected), canConnectChatgpt: !demo }
 			: null;
-	return { inputs, error };
+	return { inputs, error, reload: rereadProviders };
 }
 
 /** The Pay-with choices, and saving one agent's: the list comes back whole from the save. */
@@ -45,6 +48,7 @@ export function usePayWith() {
 	const [choices, setChoices] = useState<PayWithChoice[] | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [saving, setSaving] = useState<PayWithPatch["harness"] | null>(null);
+	const [round, setRound] = useState(0);
 	useEffect(() => {
 		let live = true;
 		client
@@ -57,7 +61,11 @@ export function usePayWith() {
 		return () => {
 			live = false;
 		};
-	}, [client, auth, explain]);
+	}, [client, auth, explain, round]);
+	const reload = useCallback(() => {
+		setError(null);
+		setRound(n => n + 1);
+	}, []);
 	const save = useCallback(
 		async (patch: PayWithPatch) => {
 			setSaving(patch.harness);
@@ -78,5 +86,5 @@ export function usePayWith() {
 		},
 		[client, auth, explain],
 	);
-	return { choices, error, saving, save };
+	return { choices, error, saving, save, reload };
 }

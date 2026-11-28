@@ -2,11 +2,11 @@
  * The upgrade page (`/plans`): Free and Pro side by side, monthly or yearly, and the way to the provider's checkout.
  * A deployment without billing has no such page.
  */
-import { WarnIcon } from "../components/Icons";
 import { HOSTED_SIZES } from "@contract";
 import { SIZE_WEIGHT } from "../../../server/src/billing/meter";
 import { sizeName } from "../lib/sizes";
 import { PlanCompare, useBilling } from "../components/Plan";
+import { LoadError, Loading, SkeletonLines } from "../components/ui";
 
 export function Plans() {
 	const { view, error, reload } = useBilling();
@@ -21,19 +21,11 @@ export function Plans() {
 			</header>
 			{view === null ? (
 				error ? (
-					<div className="state state-error" role="alert">
-						<WarnIcon size={22} />
-						<h2>The plans could not be loaded</h2>
-						<p>{error}</p>
-						<button type="button" className="button button-outline" onClick={reload}>
-							Try again
-						</button>
-					</div>
+					<LoadError level={2} subject="The plans" error={error} reload={reload} />
 				) : (
-					<div className="usage-loading" aria-busy="true" aria-label="Loading the plans">
-						<span className="skeleton skeleton-title" style={{ width: "34%" }} />
-						<span className="skeleton skeleton-meta" style={{ width: "100%" }} />
-					</div>
+					<Loading label="Loading the plans" className="ui-loading-spaced">
+						<SkeletonLines lines={[100]} />
+					</Loading>
 				)
 			) : !view.enabled ? (
 				<div className="state" role="status">

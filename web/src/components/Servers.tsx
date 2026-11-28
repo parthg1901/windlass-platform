@@ -36,6 +36,7 @@ import { useApp, useAuth } from "../state/app";
 import { Dialog } from "./Dialog";
 import { LongText } from "./Fold";
 import { RefreshIcon, WarnIcon } from "./Icons";
+import { LoadError, Loading, SkeletonLines } from "./ui";
 
 type Tone = "on" | "ask" | "bad" | "off";
 
@@ -395,16 +396,12 @@ export function ServersSection({
 					<RefreshIcon size={13} className={loading ? "spin" : undefined} />
 				</button>
 			</h2>
-			{error ? (
-				<p className="panel-empty tone-bad server-error" role="alert">
-					<WarnIcon size={13} /> {error}
-				</p>
-			) : null}
+			{error ? <LoadError inline error={error} /> : null}
 			{state === null ? (
 				error ? null : (
-					<p className="panel-empty" aria-busy="true">
-						Reading the servers…
-					</p>
+					<Loading label="Loading the servers">
+						<SkeletonLines title={false} lines={[72, 46]} />
+					</Loading>
 				)
 			) : servers.length === 0 ? (
 				<p className="panel-empty">

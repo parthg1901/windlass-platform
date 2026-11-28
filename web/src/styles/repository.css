@@ -504,8 +504,9 @@ a.agent-group-name:hover .agent-group-owner {
 	margin-top: 0;
 }
 /* Fields inside a card sit on the page's ground, a step below the card, rather than the sunk well. */
-:is(.repo-form, .run-fields) :is(.input, .select) {
-	background-color: var(--bg);
+.repo-form,
+.run-fields {
+	--field-bg: var(--bg);
 }
 
 /* A repository's network list: presets as checkboxes, hosts one per row, and the hosts found or asked for. */
@@ -708,15 +709,6 @@ a.agent-group-name:hover .agent-group-owner {
 }
 
 
-/* An unset choice: what it comes to, quietly; its open list in the ordinary ink. */
-.select.is-inherited,
-.picker-select.is-inherited {
-	color: var(--ink-dim);
-}
-.select.is-inherited option,
-.select.is-inherited optgroup {
-	color: var(--ink);
-}
 
 .repo-setup {
 	font-size: var(--size-small);
@@ -775,16 +767,11 @@ a.agent-group-name:hover .agent-group-owner {
 	border: 1px solid var(--line);
 	border-radius: 5px;
 }
-.setup-notes textarea {
-	width: 100%;
-	box-sizing: border-box;
-	resize: vertical;
-	padding: 8px;
-	font: inherit;
-	color: var(--ink);
-	background: var(--bg);
-	border: 1px solid var(--line);
-	border-radius: 3px;
+/* A decision on a note: the question, then a compact choice. */
+.setup-question .setup-answer {
+	display: inline-flex;
+	width: auto;
+	margin-top: 4px;
 }
 .setup-actions, .setup-note-row { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
 .setup-note-row details { flex-basis: 100%; overflow-wrap: anywhere; }

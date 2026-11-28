@@ -12,7 +12,7 @@ export function ChatgptPlan() {
 	const { client, explain } = useApp();
 	const auth = useAuth();
 	const { status, error: statusError } = useChatgpt();
-	const { allowed, plan, setPlan, waiting, wait, cancel } = usePlanConnect("openai", status);
+	const { allowed, loaded, error: plansError, plan, setPlan, waiting, wait, cancel } = usePlanConnect("openai", status);
 	const [busy, setBusy] = useState(false);
 	const [checking, setChecking] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -82,7 +82,8 @@ export function ChatgptPlan() {
 			plan={plan}
 			waiting={waiting}
 			busy={busy}
-			error={error || statusError || null}
+			error={error || statusError || plansError || null}
+			loading={(status === null && !statusError) || (!loaded && !plansError)}
 			onConnect={connect}
 			onCancel={cancel}
 			onDisconnect={() => void disconnect()}

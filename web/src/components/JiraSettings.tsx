@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useHash } from "../lib/router";
 import { useApp, useAuth } from "../state/app";
 import { WarnIcon } from "./Icons";
+import { LoadError, Loading, Select, SkeletonLines } from "./ui";
 import {
 	IntegrationCard,
 	IntegrationFacts,
@@ -96,7 +97,7 @@ export function JiraSettings() {
 			provider="jira"
 			name="Jira Cloud"
 			what="File drafts from Jira issues in the projects you map to repositories."
-			state={!status ? (error ? "disconnected" : "loading") : connection ? "connected" : "disconnected"}
+			state={!status ? (error ? "unknown" : "loading") : connection ? "connected" : "disconnected"}
 			action={
 				status?.state === "disconnected" ? (
 					<button
@@ -130,9 +131,9 @@ export function JiraSettings() {
 		>
 			<LinkLine surface="jira" />
 			{!status && !error && (
-				<div className="usage-loading" aria-busy="true" aria-label="Loading Jira">
-					<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-				</div>
+				<Loading label="Loading Jira">
+					<SkeletonLines title={false} lines={[58]} />
+				</Loading>
 			)}
 			{status?.state === "disconnected" && (
 				<IntegrationSteps
@@ -167,20 +168,18 @@ export function JiraSettings() {
 						<MappingForm
 							title="Choose the Jira site to file from"
 							from={
-								<select
+								<Select
 									aria-label="Jira site"
-									className="select"
+									menuLabel="Jira site"
 									value={siteId}
-									onChange={event => setSiteId(event.target.value)}
+									onChange={setSiteId}
 									disabled={busy}
-								>
-									<option value="">Choose a Jira site</option>
-									{connection.sites.map(site => (
-										<option key={site.id} value={site.id}>
-											{site.name} ({site.url})
-										</option>
-									))}
-								</select>
+									placeholder="Choose a Jira site"
+									options={connection.sites.map(site => ({
+										value: site.id,
+										label: `${site.name} (${site.url})`,
+									}))}
+								/>
 							}
 							to={null}
 							submit={
@@ -249,14 +248,11 @@ function JiraProjects({
 				to file a draft. Use <code>windlass-quick</code> to file in Quick mode. Qualifying bugs also use Quick.
 			</details>
 			{projectError ? (
-				<p className="callout callout-warn" role="alert">
-					<WarnIcon />
-					<span>{projectError}</span>
-				</p>
+				<LoadError inline error={projectError} />
 			) : projects === null ? (
-				<div className="usage-loading" aria-busy="true" aria-label="Loading Jira projects">
-					<span className="skeleton skeleton-meta" style={{ width: "58%" }} />
-				</div>
+				<Loading label="Loading Jira projects">
+					<SkeletonLines title={false} lines={[58]} />
+				</Loading>
 			) : projects.length === 0 ? (
 				<p className="usage-empty">No Jira projects found on this site.</p>
 			) : (
@@ -297,58 +293,45 @@ function JiraProjects({
 					<MappingForm
 						title="Map a project"
 						from={
-							<select
+							<Select
 								aria-label="Jira project"
-								className="select"
+								menuLabel="Jira project"
 								disabled={busy}
 								value={projectId}
-								onChange={event => setProjectId(event.target.value)}
-							>
-								<option value="">Choose a project</option>
-								{unmapped.map(project => (
-									<option key={project.id} value={project.id}>
-										{project.name} ({project.key})
-									</option>
-								))}
-							</select>
+								onChange={setProjectId}
+								placeholder="Choose a project"
+								options={unmapped.map(project => ({
+									value: project.id,
+									label: `${project.name} (${project.key})`,
+								}))}
+							/>
 						}
 						to={
-							<>
-								<input
-									type="search"
-									className="input"
-									aria-label="Search repositories"
-									placeholder="Search repositories"
-									value={query}
-									disabled={busy}
-									onChange={event => {
-										setQuery(event.target.value);
+							<Select
+								aria-label="Repository"
+								menuLabel="Repository"
+								disabled={busy}
+								value={repositoryId}
+								onChange={setRepositoryId}
+								placeholder="Choose a repository"
+								filter={{
+									placeholder: "Search repositories",
+									value: query,
+									onChange: next => {
+										setQuery(next);
 										setRepositoryId("");
-									}}
-								/>
-								<select
-									aria-label="Repository"
-									className="select"
-									disabled={busy}
-									value={repositoryId}
-									onChange={event => setRepositoryId(event.target.value)}
-								>
-									<option value="">
-										{searching
-											? found.error
-												? "Repositories unavailable"
-												: "Searching repositories…"
-											: repositories.length
-												? "Choose a repository"
-												: "No writable matches"}
-									</option>
-									{repositories.map(repo => (
-										<option key={repo.id} value={repo.id}>
-											{repo.owner}/{repo.name}
-										</option>
-									))}
-								</select>
-							</>
+									},
+									busy: searching && !found.error,
+								}}
+								empty={
+									searching
+										? found.error
+											? "Repositories unavailable"
+											: "Searching repositories…"
+										: "No writable matches"
+								}
+								options={repositories.map(repo => ({ value: String(repo.id), label: `${repo.owner}/${repo.name}` }))}
+							/>
 						}
 						submit={
 							<button
