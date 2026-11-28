@@ -5140,7 +5140,7 @@ async function machineChecks(): Promise<void> {
 					"hardened unavailable",
 				);
 				const message = await refused(() => user.createSession({ place, profile }), "profile_unavailable");
-				assert(message.includes(denied.unavailableReason!), message);
+				assert(message.includes("--allow-profile " + profile), message);
 				const blocked = await user.createItem({ ...task, profile, start: true });
 				const question = (await user.item(blocked.id)).question;
 				assert(question?.text.includes("--allow-profile " + profile), JSON.stringify(question));

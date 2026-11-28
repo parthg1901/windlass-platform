@@ -103,7 +103,6 @@ import {
 	type GithubStatus,
 	type LinearStatus,
 	type LinearTeamList,
-	isolationName,
 	listedSessions,
 	MAX_ACCOUNT_SECRETS,
 	MAX_PERSONAL_SERVERS,
@@ -185,18 +184,14 @@ import {
 } from "../github/state.js";
 import { getLayer } from "../layer.js";
 import { initialSessionModes } from "../sandbox/profiles.js";
-import { codexModes, innerModesReason } from "../sandbox/codex-modes.js";
+import { type Code, availability, refusalText } from "../sandbox/availability.js";
+import { codexModes } from "../sandbox/codex-modes.js";
 import {
 	capabilitiesOf,
 	hostedCatalog,
-	hostedHarness,
 	hostedKeyMessage,
 	hostedPayer,
 	availableCatalog,
-	itemHarnessProblem,
-	itemProfileProblem,
-	itemSignInMessage,
-	itemSignInMethodProblem,
 	knownHarness,
 	machineHarness,
 	machineHarnesses,
@@ -1172,6 +1167,30 @@ async function continueFrom(
 	}
 }
 
+/** The code a launch refusal carries, by the rule that refused it (availability.ts). */
+const REFUSAL_CODES: Record<Code, string> = {
+	role_is_windlass_only: "bad_input",
+	agent_quick_only: "bad_input",
+	agent_sessions_only: "bad_input",
+	agent_needs_isolation: "bad_input",
+	profile_unknown: "bad_profile",
+	profile_unavailable: "profile_unavailable",
+	profile_not_allowed: "profile_unavailable",
+	no_relay: "profile_unavailable",
+	nothing_pays: "harness_signed_out",
+	windlass_not_connected: "harness_signed_out",
+	runner_outdated: "runner_outdated",
+	runner_signing_disabled: "runner_signing_disabled",
+	machine_not_connected: "machine_not_connected",
+	machine_lacks_agent: "bad_input",
+	sandbox_check_missing: "bad_input",
+	not_signed_in: "harness_signed_out",
+	sign_in_unknown: "harness_signed_out",
+	sign_in_method: "bad_input",
+	model_not_payable: "harness_signed_out",
+	no_network_for_repo: "bad_input",
+};
+
 async function makeSession(
 	c: CreateCtx,
 	profile: UserProfile,
@@ -1195,20 +1214,8 @@ async function makeSession(
 	const caps = capabilitiesOf(harness);
 	// An ACP agent whose modes its profile decides, as far as the machine probed them (Codex's, codex-modes.ts).
 	const profileModes = acp?.capabilities.modes === "profile";
-	if (acp) {
-		const notForItems = item ? itemHarnessProblem(harness) : null;
-		if (notForItems) throw new UserError(notForItems, { code: "bad_input" });
-		const agent = place.kind === "hosted" ? hostedHarness(acp.id) : acp;
-		if (!agent.profiles.includes(input.profile))
-			throw new UserError(
-				`${agent.name} requires ${[...new Set(agent.profiles.map(isolationName))].join(" or ")} isolation here.`,
-				{ code: "bad_input" },
-			);
-		const profileProblem = item ? itemProfileProblem(harness, input.profile) : null;
-		if (profileProblem) throw new UserError(profileProblem, { code: "bad_input" });
-		// Its publish comes over MCP, which any process in the container may reach (platform-tools.ts): it asks every time.
-		if (input.publishUnasked) throw new UserError(publishAsksEveryTime(acp.name), { code: "bad_input" });
-	}
+	// Its publish comes over MCP, which any process in the container may reach (platform-tools.ts): it asks every time.
+	if (acp && input.publishUnasked) throw new UserError(publishAsksEveryTime(acp.name), { code: "bad_input" });
 	let repoUrl = cleanRepoUrl(input.repoUrl);
 	const givenTitle = input.title === undefined || input.title === null ? null : cleanTitle(input.title);
 	// A setup command is saved for a repository of the GitHub connection, and is checked before GitHub is asked anything.
@@ -1273,31 +1280,30 @@ async function makeSession(
 		if (repoUrl && place.kind === "hosted" && (await getLayer()).sandboxes.egress?.() === "none")
 			throw new UserError(HOSTED_OFFLINE_REPOSITORY, { code: "bad_input" });
 		const offered = machine?.harnesses?.find(entry => entry.id === harness);
-		if (acp && machine && !offered)
-			throw new UserError(`This machine does not offer ${acp.name}.`, { code: "bad_input" });
-		// A work item is not watched: one filed on a machine whose agent is not known to be signed in would only fail at its first turn.
-		const signedOut =
-			item && acp && offered ? itemSignInMessage(acp, machine?.name ?? "your machine", offered.signIn) : null;
-		if (signedOut) throw new UserError(signedOut, { code: "harness_signed_out" });
+		const profiles = machine ? machine.profiles : (await getLayer()).sandboxes.profiles();
+		// A hosted agent's own model list comes from the checks of the plans and keys that can pay for it (`hostedCatalog`).
+		const credentials =
+			place.kind === "hosted" && caps.models === "harness" ? await hostedCredentials(c.db, c.key[0]!) : undefined;
+		// Whether this agent can do this work here, in this profile (availability.ts). A work item is not watched, so
+		// it also needs its agent paid for already. The repository's network is judged above, a model's payer below.
+		const verdict = availability({
+			agent: harness,
+			role: item ? "quick" : "session",
+			place: machine ? { kind: "machine", machine } : { kind: "hosted", profiles },
+			profile: input.profile,
+			credentials: {
+				keys: (credentials ?? []).filter(c => !c.plan).map(c => c.provider),
+				plans: (credentials ?? []).flatMap(c => (c.plan && isPlanProvider(c.provider) ? [c.provider] : [])),
+			},
+			repo: false,
+		});
+		if (!verdict.ok) throw new UserError(refusalText(verdict), { code: REFUSAL_CODES[verdict.code] });
 		const itemSignIn = item && acp?.itemTokens === "sign-in" ? (machine ? offered?.method : "api-key") : undefined;
-		const methodProblem =
-			item && machine && acp ? itemSignInMethodProblem(acp, machine?.name ?? "your machine", offered?.method) : null;
-		if (methodProblem) throw new UserError(methodProblem, { code: "bad_input" });
 		const hostedSize =
 			place.kind === "hosted"
 				? await sessionHostedSize(c, input.hostedSize, repo?.provider === "github" ? setupKeyOf(repo.id) : null, item)
 				: undefined;
-		const profiles = machine ? machine.profiles : (await getLayer()).sandboxes.profiles();
-		const chosen = profiles.find(candidate => candidate.id === input.profile);
-		if (!chosen) throw new UserError("That sandbox does not exist.", { code: "bad_profile" });
-		if (!chosen.available) {
-			throw new UserError(`${chosen.name} cannot be chosen yet. ${chosen.unavailableReason ?? ""}`.trim(), {
-				code: "profile_unavailable",
-			});
-		}
-		// A hosted ACP agent runs only on Settings keys (`hostedHarness`).
-		if (!machine && acp && !chosen.platformKeys)
-			throw new UserError("This hosted profile has no configured Settings-key relay.", { code: "profile_unavailable" });
+		const chosen = profiles.find(candidate => candidate.id === input.profile)!;
 		// Letting the agent publish unasked is for sandboxes whose commands cannot ask in its name.
 		const unaskedProblem = repo && input.publishUnasked === true ? publishUnaskedProblem(commandSandbox(chosen)) : null;
 		if (unaskedProblem !== null) throw new UserError(unaskedProblem, { code: "bad_input" });
@@ -1307,13 +1313,7 @@ async function makeSession(
 				: undefined;
 		if (offered?.optionsDigest && !catalog)
 			throw new UserError("The machine’s current model list could not be read. Try again.", { code: "bad_input" });
-		// A hosted agent's own model list comes from the Settings keys' checks (`hostedCatalog`).
-		const credentials =
-			place.kind === "hosted" && caps.models === "harness" ? await hostedCredentials(c.db, c.key[0]!) : undefined;
 		const options = credentials ? hostedCatalog(harness, credentials) : availableCatalog(catalog ?? undefined, offered);
-		// Where its commands run in its own sandbox, the machine must have probed that sandbox's modes.
-		if (profileModes && acp.sandboxedOn.includes(chosen.id) && !offered?.modes?.includes("workspace-write"))
-			throw new UserError(offered?.modeReason ?? innerModesReason, { code: "bad_input" });
 		const modes = initialSessionModes(
 			chosen.id,
 			harness,

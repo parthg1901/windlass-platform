@@ -250,6 +250,10 @@ export async function launchMachineProfiles(db: RawAccess, uid: string, id: stri
 	const plans = await machinePlans(db, uid);
 	return {
 		name,
+		os: row.os,
+		arch: row.arch,
+		// An outdated or unsigned runner was refused above.
+		warnings: [],
 		slots: report.slots,
 		egress: report.egress,
 		allowedProfiles: report.allowedProfiles,

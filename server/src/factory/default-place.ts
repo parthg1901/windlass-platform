@@ -7,7 +7,7 @@ import {
 	type SandboxPlace,
 	type SandboxProfileId,
 } from "../contract.js";
-import { type Availability, availability, availableProfiles } from "../sandbox/availability.js";
+import { availability, availableProfiles, refusalText } from "../sandbox/availability.js";
 import { initialHarnessModels, machinePayerProblem, knownHarness } from "../sandbox/harnesses.js";
 import { resolveRun, runAgent, type ResolvedRun } from "./resolve-run.js";
 import { agentModelRefusal, machineSlots, runnerProblem, type AgentModels } from "./placement.js";
@@ -46,10 +46,6 @@ function itemAvailability(machine: MachineSummary, harness: HarnessId, profile?:
 /** A machine's report says what pays for its agents, and Windlass's payer is the turn's to judge. */
 const NO_CREDENTIALS = { keys: [] };
 
-/** A refusal as one line: the rule, then what to do about it. */
-const refusalLine = (refused: Extract<Availability, { ok: false }>) =>
-	refused.fix ? `${refused.message} ${refused.fix.text}` : refused.message;
-
 /** The profiles of the machine a work item can run this agent in, the agent's own default first. */
 export function profilesForItems(machine: MachineSummary, harness: HarnessId) {
 	const place = { kind: "machine" as const, machine };
@@ -83,7 +79,7 @@ export function placeProblem(policy: ItemPlaceDefaults, machines: readonly Machi
 	const verdicts = candidates.map(m => itemAvailability(m, harness ?? "windlass", machineProfile));
 	const refused = verdicts.find(v => !v.ok);
 	if (verdicts.some(v => v.ok) || !refused || refused.ok) return null;
-	return (candidates.length > 1 ? "None of your machines can run this. " : "") + refusalLine(refused);
+	return (candidates.length > 1 ? "None of your machines can run this. " : "") + refusalText(refused);
 }
 
 export function defaultPlaceRetryAt(at: number, attempt: number) {
@@ -166,7 +162,7 @@ export function checkRunPlace(
 			const catalogModel = model.code === "bad_model" && list?.source === "harness" && list.fetchedAt != null;
 			refusal = { code: catalogModel ? "bad_input" : model.code, message: model.message };
 			reasons.push(`“${label}”: ${model.reason}.`);
-		} else if (!verdict.ok) reasons.push(refusalLine(verdict));
+		} else if (!verdict.ok) reasons.push(refusalText(verdict));
 		else {
 			const room = roomProblem(machine);
 			const place = { kind: "machine" as const, machineId: machine.machineId };

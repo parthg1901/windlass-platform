@@ -326,6 +326,10 @@ function notesFor(ask: Ask, profile: SandboxProfileId): Note[] {
 	return notes;
 }
 
+/** A refusal as one line: the rule, then what to do about it. */
+export const refusalText = (refused: Extract<Availability, { ok: false }>) =>
+	refused.fix ? `${refused.message} ${refused.fix.text}` : refused.message;
+
 type Refusal = { code: Code; detail?: string; allowed?: string };
 
 /** The first rule that refuses this agent, role, place and profile; null when none does. */
