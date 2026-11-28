@@ -22,6 +22,7 @@ import {
 } from "../server/src/factory/attachments.js";
 import { S3ObjectStore } from "../server/src/bucket/s3.js";
 import { StandInObjectStore } from "../server/src/bucket/stand-in.js";
+import { noSpend } from "../server/src/factory/budget.js";
 import { commitScript } from "../server/src/github/git.js";
 import type { SandboxHandle } from "../server/src/sandbox/api.js";
 import type { ItemsCtx } from "../server/src/actors/user-items.js";
@@ -379,6 +380,7 @@ async function cases() {
 		revision: 1,
 		updatedAt: Date.now(),
 		createdAt: Date.now(),
+		spent: noSpend(),
 		source: "web",
 		repository: { provider: "github", id: 7101, owner: "ada", name: "harbor", branch: "main" },
 	} as ItemSummary;
