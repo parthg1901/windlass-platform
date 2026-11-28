@@ -31,6 +31,7 @@ import {
 	type SessionSnapshot,
 	type TimelineItem,
 	type TurnOutcome,
+	type ModelKeySpend,
 	type TurnUsage,
 	type Verified,
 	type WindlassEvent,
@@ -304,6 +305,8 @@ export interface TurnEnd {
 	verified: Verified | null;
 	/** An ACP turn's ending carries the context's fill instead of token counts (null: not reported); a Windlass turn's has none. */
 	context?: AcpContext | null;
+	/** The plan or key that paid for the turn, where one did (`ModelKeySpend`). */
+	modelKey?: ModelKeySpend;
 }
 
 export interface TurnView {
@@ -1242,6 +1245,7 @@ function endTurn(draft: Draft, item: Extract<TimelineItem, { kind: "turn.ended" 
 			cachedShare: item.cachedShare,
 			message: item.message,
 			verified: item.verified,
+			...(item.modelKey && { modelKey: item.modelKey }),
 			...(item.context !== undefined ? { context: contextOf(item.context) } : {}),
 		},
 	});

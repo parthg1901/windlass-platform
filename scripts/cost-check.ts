@@ -452,3 +452,56 @@ test("prices off: nothing is read", async () => {
 	assert.deepEqual(await new ModelPriceCache({ url: null, fetch: stub }).prices(), { models: null, source: null });
 	assert.equal(calls.length, 0);
 });
+
+test("a session's summary says what its turns used, by model and payer, without hosted time", async () => {
+	const { summaryOf } = await import("../server/src/actors/agent-session/summary.js");
+	const { addSandbox, addTurn, noUsage } = await import("../server/src/factory/cost.js");
+	type Meta = Parameters<typeof summaryOf>[0];
+	const base = {
+		sessionId: "s_1",
+		harness: "claude",
+		title: "t",
+		place: { kind: "hosted" },
+		profile: "e2b-open",
+		model: "default",
+		mode: "auto",
+		availableModes: [],
+		repoUrl: null,
+		createdAt: 0,
+		updatedAt: 0,
+		status: "idle",
+		turns: 2,
+		lastOutcome: "succeeded",
+		sandbox: "paused",
+	} as unknown as Meta;
+	assert.equal(summaryOf(base).spent, undefined, "nothing used: no spend");
+	const spent = noUsage();
+	const turn = (plan: boolean) =>
+		turnMeter({
+			harness: "claude",
+			model: "anthropic/claude-sonnet-4-5",
+			key: { provider: "anthropic", generation: "g", ...(plan && { plan: true as const }) },
+			usage: tokens(1_000_000, 0, 0),
+			size: null,
+		});
+	addTurn(spent, turn(false));
+	addTurn(spent, turn(true));
+	addSandbox(spent, "small", 600);
+	const summary = summaryOf({ ...base, spent } as Meta);
+	assert.deepEqual(
+		summary.spent?.models.map(line => [line.payer, line.turns]),
+		[
+			["key", 1],
+			["plan", 1],
+		],
+	);
+	assert.deepEqual(summary.spent?.sandbox, [], "hosted time is the sandbox's, said apart");
+	const cost = itemCost(summary.spent, RATES);
+	assert.deepEqual(
+		cost.payers.map(payer => [payer.payer, payer.usd]),
+		[
+			["plan", 3],
+			["key", 3],
+		],
+	);
+});

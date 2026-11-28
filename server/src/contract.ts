@@ -399,6 +399,11 @@ export interface SessionSummary {
 	paused?: { reason: "restart" | "machine"; since: number; held: number };
 	turns: number;
 	lastOutcome: TurnOutcome | null;
+	/**
+	 * What the session's turns used, by model and by who paid (a plan or a key), priced in the browser like an item's
+	 * cost (factory/cost.ts `itemCost`). Absent before a turn that used anything; only model turns, not sandbox time.
+	 */
+	spent?: import("./contract/cost.js").SpendUsage;
 	/** The last few turns' start times, oldest first (StartTimes). */
 	startTimes?: StartTimes[];
 	/** Whether the sandbox exists and whether it is running or paused. */

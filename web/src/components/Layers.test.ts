@@ -115,6 +115,19 @@ it("says a sandbox in three plain outcome lines, open facts as plain facts", () 
 	);
 });
 
+it("says what keeps a hosted agent's credential on the platform: the plan or the key that paid", () => {
+	const [sandboxed] = profilesFor("docker").filter(p => p.id.startsWith("docker-"));
+	const signIn = (paidBy?: "plan" | "key") =>
+		isolationOutcomes(sandboxed!, {
+			hosted: true,
+			mode: { id: "auto", name: "Auto", description: null },
+			...(paidBy && { paidBy }),
+		})[2]!.text;
+	expect(signIn("plan")).toBe("Your plan's token stays on the platform");
+	expect(signIn("key")).toBe("Your API key stays on the platform");
+	expect(signIn()).toBe("Your plan or key stays on the platform");
+});
+
 it("reads the variable a server could not start without", () => {
 	expect(missingVariable("the environment variable WIKI_TOKEN named in its headers is not set")).toBe("WIKI_TOKEN");
 	expect(missingVariable("it exited with code 1")).toBeNull();

@@ -3,7 +3,7 @@
  * included (its turns, and what they are worth at API prices), what an API key paid, and hosted time the Windlass plan
  * included or billed as extra. The headline is what the item added to your bills. Token counts are only details.
  */
-import type { CostRates, ItemSize, ItemSummary, SpendUsage, WorkType } from "@contract";
+import type { CostRates, ItemSize, ItemSummary, ModelKeySpend, SpendUsage, WorkType } from "@contract";
 import { PLAN_NAMES } from "@contract";
 import {
 	type CostLine,
@@ -61,6 +61,21 @@ export function lineWords(line: CostLine): string {
 /** What an item's summary used, its parts' too for a feature, priced. */
 export function summaryCost(item: Pick<ItemSummary, "spent" | "partsUsage">, rates: CostRates): ItemCost {
 	return itemCost(mergeUsage([item.spent.usage, item.partsUsage]), rates);
+}
+
+/**
+ * A session's model cost by who paid (`SessionSummary.spent`), one row per plan and key as an item's cost says them:
+ * "Included in your Claude plan: 1 turn · ≈ $0.05 at API prices", "Paid with your Anthropic key: $0.06". Empty before
+ * a turn used anything.
+ */
+export function sessionPayerRows(spent: SpendUsage | undefined, rates: CostRates): { label: string; value: string }[] {
+	if (!spent?.models.length) return [];
+	return itemCost(spent, rates).payers.map(payer => ({ label: payerLabel(payer), value: payerAmount(payer) }));
+}
+
+/** Who paid for one turn, from its `turn.ended`: "Included in your Claude plan", "Paid with your Anthropic key"; null when it does not say. */
+export function turnPayerLabel(modelKey: ModelKeySpend | undefined): string | null {
+	return modelKey ? payerLabel({ payer: modelKey.plan ? "plan" : "key", provider: modelKey.provider }) : null;
 }
 
 /** Whether anything was used to cost. */
