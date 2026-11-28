@@ -1684,7 +1684,7 @@ test("placement 2 refuses approval for missing screenshots, tags, profile, egres
 		assert.throws(() => placementFeature([mac], needs as PlacementNeeds), reason);
 	assert.throws(
 		() => placementFeature([mac], {}, [], false, "Mac", { harness: "claude" }),
-		/does not offer Claude Code/,
+		/was not started with Claude Code/,
 	);
 	assert.doesNotThrow(() =>
 		placementFeature([mac], { tags: ["build", "os:darwin", "arch:arm64", "screenshots", "harness:windlass"] }),
@@ -2249,7 +2249,7 @@ test("hosted requires an approved route and a deployment profile", () => {
 });
 
 const signedIn = [
-	{ id: "claude", adapter: "fixture", image: "fixture", signIn: "token" },
+	{ id: "claude", adapter: "fixture", image: "fixture", signIn: "token", method: "subscription" },
 	{ id: "opencode", adapter: "fixture", image: "fixture", signIn: "token" },
 ] as const;
 const agentMac = (overrides: Partial<MachineSummary> = {}) =>
@@ -2318,7 +2318,7 @@ test("plan proposals preserve an explicit agent for the approval check", () => {
 	}
 	const profile = proposal();
 	Object.assign(profile.subtasks[0], { agent: { harness: "claude" }, needs: { profile: "docker-windlass-sandbox" } });
-	assert.throws(() => proposed(profile), /Claude Code requires Open isolation/);
+	assert.throws(() => proposed(profile), /Claude Code runs only in Open isolation/);
 });
 
 test("approval names each agent that works without asking, and needs the person's confirmation of every one", () => {
@@ -2371,21 +2371,25 @@ test("the planner's proposal cannot pick an agent the place does not offer, has 
 		assert.equal(fit.permanent, true);
 		assert.match(String(fit.refused), pattern);
 	};
-	refused({ harness: "opencode" }, agentMac({ harnesses: [signedIn[0]] }), /‘Mac’: it does not offer OpenCode/);
+	refused(
+		{ harness: "opencode" },
+		agentMac({ harnesses: [signedIn[0]] }),
+		/The runner on “Mac” was not started with OpenCode/,
+	);
 	refused(
 		{ harness: "claude" },
 		agentMac({ harnesses: [{ ...signedIn[0], signIn: "none" }] }),
-		/Claude Code is not signed in there/,
+		/Nothing connected can pay for Claude Code on “Mac”/,
 	);
 	refused(
 		{ harness: "claude" },
 		agentMac({ harnesses: [{ ...signedIn[0], signIn: "unknown" }] }),
-		/could not say whether Claude Code is signed in/,
+		/couldn't check whether Claude Code is signed in/,
 	);
 	refused(
 		{ harness: "claude" },
 		agentMac({ allowedProfiles: ["docker-windlass-sandbox"] }),
-		/does not allow the Open profile, which Claude Code needs/,
+		/has not allowed Open isolation on “Mac”/,
 	);
 	refused({ harness: "claude", model: "opus" }, agentMac(), /Claude Code: That model is not offered/);
 	refused(
@@ -2406,9 +2410,16 @@ test("the planner's proposal cannot pick an agent the place does not offer, has 
 	const hosted = choosePlacement(
 		task({ harness: "claude" }),
 		{ preferred: { kind: "hosted" }, alternatives: [] },
+		{ machines: [], hostedProfiles: ["docker-hardened"], keyProfiles: ["docker-hardened"] },
+	);
+	assert.match(String(hosted.refused), /Nothing connected can pay for Claude Code on Hosted/);
+	// Where no hosted isolation can use plans or keys at all, that is the reason: a key would not help.
+	const noRelay = choosePlacement(
+		task({ harness: "claude" }),
+		{ preferred: { kind: "hosted" }, alternatives: [] },
 		{ machines: [], hostedProfiles: ["docker-hardened"] },
 	);
-	assert.match(String(hosted.refused), /Add an Anthropic key on the Connections page to run Claude Code here/);
+	assert.match(String(noRelay.refused), /can't use your plans or keys, which Claude Code needs/);
 	const keyed = choosePlacement(
 		task({ harness: "claude" }),
 		{ preferred: { kind: "hosted" }, alternatives: [] },
@@ -2478,7 +2489,7 @@ test("the planner's proposal cannot pick an agent the place does not offer, has 
 				agents: ["index"],
 				inventory: { machines: plannerMachines([agentMac({ harnesses: [signedIn[0]] })]), hostedProfiles: [] },
 			}),
-		/index: ‘Mac’: it does not offer OpenCode/,
+		/index: The runner on “Mac” was not started with OpenCode/,
 	);
 	// Windlass children keep the machine's first allowed profile and name no harness.
 	const windlass = dispatch(placementFeature([agentMac()]), [agentMac()]).jobs![0].placement;
@@ -2623,17 +2634,14 @@ test("a re-plan can't keep a machine agent on a subtask it moves out of the hard
 	replan.subtasks[0].budget.tokens -= 1000;
 	assert.throws(
 		() => advance(item, { kind: "file_plan", key: currentKey(item)!, plan: replan, at: 8 }),
-		/index: Claude Code requires Open isolation/,
+		/index: Claude Code runs only in Open isolation/,
 	);
 	// Placement refuses such a subtask for good, wherever it came from.
 	const task = { ...mixedPlan().subtasks[0], needs: { profile: "docker-windlass-sandbox" as const } };
 	const fit = choosePlacement(task, { preferred: { kind: "machine", machineId: macId }, alternatives: [] }, inventory);
 	assert.equal(fit.decision, undefined);
 	assert.equal(fit.permanent, true);
-	assert.match(
-		String(fit.refused),
-		/‘Mac’: Claude Code runs only in the Open profile, and the subtask asks for Strict/,
-	);
+	assert.match(String(fit.refused), /Claude Code runs only in Open isolation on “Mac”/);
 });
 
 test("a Windlass subtask choosing only an effort is held to the feature's model at approval", () => {

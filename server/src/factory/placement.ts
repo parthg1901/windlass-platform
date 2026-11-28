@@ -26,18 +26,23 @@ import {
 	hostedCatalog,
 	hostedProvider,
 	hostedProviders,
-	hostedKeyMessage,
 	initialHarnessModels,
 	selectedKey,
-	machinePayerProblem,
 	harnessName,
 	machineHarness,
 	subtaskHarnessProblem,
 } from "../sandbox/harnesses.js";
+import {
+	type Availability,
+	type MachineFacts,
+	availability,
+	credentialsOf,
+	refusalText,
+} from "../sandbox/availability.js";
 import { checkItemEffort, chosenModel, ModelProblem } from "../account-models.js";
 
-/** A machine harness (Claude Code, OpenCode) runs only in the hardened container. */
-const HARNESS_PROFILE = "docker-hardened";
+/** The profiles a machine serves; the rest are a hosted deployment's. */
+const MACHINE_PROFILES: readonly SandboxProfileId[] = ["docker-hardened", "docker-windlass-sandbox"];
 
 /**
  * The models each agent offers, as a session would be checked against them (user.ts, `makeSession`):
@@ -224,50 +229,79 @@ export function agentModelProblem(
 	return agentModelRefusal(agent, list, featureModel)?.reason ?? null;
 }
 
+/** A reason a place cannot run a subtask: a fragment said after the machine's name, or a whole sentence of its own. */
+type Unfit = { text: string; whole?: true };
+
 /**
- * Whether a place can run the subtask's agent, from its last report: a machine harness needs the machine
- * to offer it, be signed into it ("token": an item is not watched, so one that needs a sign-in would fail at
- * its first turn) and allow its hardened profile. Every refusal is permanent: the owner changes the machine,
- * then approves or retries.
+ * The machine as `availability` judges an agent on it, from its last report. Both machine profiles count as
+ * listed: whether one can be used now is judged with the machine's room, and may change. Its runner and its
+ * network are judged before this.
  */
-function agentFit(machine: Machine, task: PlanSubtask, inventory: PlacementInventory): string | null {
+const machineFacts = (m: Machine): MachineFacts => ({
+	name: m.name,
+	os: m.os,
+	arch: m.arch,
+	allowedProfiles: m.allowedProfiles,
+	egress: m.egress,
+	warnings: [],
+	profiles: MACHINE_PROFILES.map(id => ({ id, available: true })),
+	harnesses: m.harnesses,
+});
+
+/** Whether the machine can run the subtask's agent as a part, in the profile it needs or the agent's own (availability.ts). */
+function agentOnMachine(m: Machine, task: PlanSubtask): Availability {
+	const needs = task.needs?.profile;
+	return availability({
+		agent: subtaskHarness(task),
+		role: "part",
+		place: { kind: "machine", machine: machineFacts(m) },
+		...(needs && MACHINE_PROFILES.some(id => id === needs) && { profile: needs }),
+		credentials: { keys: [] },
+		model: task.agent?.model,
+		repo: false,
+	});
+}
+
+/**
+ * Whether a place can run the subtask's agent, from its last report: the agent's own rules (`agentOnMachine`),
+ * the payer the part was approved with, and its model. Every refusal is permanent: the owner changes the
+ * machine, then approves or retries.
+ */
+function agentFit(
+	machine: Machine,
+	task: PlanSubtask,
+	inventory: PlacementInventory,
+	verdict: Availability | null,
+): Unfit | null {
 	const harness = subtaskHarness(task);
-	const profile = machineHarness(harness);
-	if (profile) {
-		const offered = machine.harnesses?.find(h => h.id === harness);
-		if (!offered) return `it does not offer ${profile.name}`;
-		// What pays on a machine: its own login, or the account's plans and keys through Pay with (`listedHarness`).
-		const source = "machine";
-		const payer = machinePayerProblem(offered, task.agent?.model, offered.platformKeys ?? []);
-		if (offered.signIn === "none")
-			return offered.paysWith
-				? `nothing can pay for ${profile.name} there (connect a plan or add a key on Connections)`
-				: `${profile.name} is not signed in there (run windlass-runner login ${profile.id} on it)`;
-		if (offered.signIn !== "token")
-			return `it could not say whether ${profile.name} is signed in there, and a subtask runs only where it is`;
+	if (verdict && !verdict.ok) return { text: refusalText(verdict), whole: true };
+	if (verdict) {
 		const chosen = task.resolved;
 		if (
 			chosen &&
 			typeof chosen.place === "object" &&
 			chosen.place.machine === machine.machineId &&
-			chosen.payer !== source
+			chosen.payer !== "machine"
 		)
-			return "The payer selected for this part has changed. Restore its original payer before retrying.";
-		if (payer) return payer;
-		if (machine.allowedProfiles && !machine.allowedProfiles.includes(HARNESS_PROFILE))
-			return `the owner does not allow the ${isolationName(HARNESS_PROFILE)} profile, which ${profile.name} needs`;
+			return { text: "The payer selected for this part has changed. Restore its original payer before retrying." };
 	}
 	const list = usesAccountModels(harness)
 		? inventory.models?.windlass
 		: inventory.models?.machines?.[machine.machineId]?.[harness];
-	return agentModelProblem(task.agent, list, inventory.featureModel);
+	const model = agentModelProblem(task.agent, list, inventory.featureModel);
+	return model ? { text: model } : null;
 }
 
 /** What the machine cannot do at all, from its last report. Kept while it is offline. */
-function capabilityFit(machine: Machine, task: PlanSubtask, inventory: PlacementInventory): string | null {
+function capabilityFit(
+	machine: Machine,
+	task: PlanSubtask,
+	inventory: PlacementInventory,
+	verdict: Availability | null,
+): Unfit | null {
 	const needs = task.needs ?? {};
 	const runner = runnerProblem(machine.warnings);
-	if (runner) return runner;
+	if (runner) return { text: runner };
 	const screenshots = machine.screenshots && subtaskHarness(task) === "windlass";
 	const tags = new Set([
 		...machine.tags,
@@ -280,16 +314,17 @@ function capabilityFit(machine: Machine, task: PlanSubtask, inventory: Placement
 		...(machine.harnesses?.map(h => "harness:" + h.id) ?? []),
 	]);
 	const missing = needs.tags?.find(t => !tags.has(t));
-	if (missing) return `missing tag ‘${missing}’`;
-	if (needs.screenshots && !screenshots) return "start this runner with --screenshots and a pinned screenshot image";
+	if (missing) return { text: `missing tag ‘${missing}’` };
+	if (needs.screenshots && !screenshots)
+		return { text: "start this runner with --screenshots and a pinned screenshot image" };
 	if (machine.egress === "none" || (needs.egress && needs.egress !== machine.egress))
-		return "the egress policy does not support this repository task";
-	const agent = agentFit(machine, task, inventory);
+		return { text: "the egress policy does not support this repository task" };
+	const agent = agentFit(machine, task, inventory, verdict);
 	if (agent) return agent;
-	if (needs.profile && needs.profile !== "docker-hardened" && needs.profile !== "docker-windlass-sandbox")
-		return "this profile runs only on hosted sandboxes";
+	if (needs.profile && !MACHINE_PROFILES.some(id => id === needs.profile))
+		return { text: "this profile runs only on hosted sandboxes" };
 	if (needs.profile && machine.allowedProfiles && !machine.allowedProfiles.some(p => p === needs.profile))
-		return `the owner does not allow the ${isolationName(needs.profile)} profile`;
+		return { text: `the owner does not allow the ${isolationName(needs.profile)} profile` };
 	return null;
 }
 
@@ -377,7 +412,26 @@ function candidate(
 	if (notForSubtasks) return { refused: notForSubtasks, permanent: true };
 	if (place.kind === "hosted") {
 		const profiles = harness === "windlass" ? inventory.hostedProfiles : (inventory.keyProfiles ?? []);
-		if (harness !== "windlass" && !provider) return { refused: hostedKeyMessage(harness, model), permanent: true };
+		if (machineHarness(harness)) {
+			const keyProfiles = inventory.keyProfiles ?? [];
+			const verdict = availability({
+				agent: harness,
+				role: "part",
+				place: {
+					kind: "hosted",
+					profiles: inventory.hostedProfiles.map(id => ({
+						id,
+						available: true,
+						...(keyProfiles.includes(id) && { platformKeys: true as const }),
+					})),
+				},
+				...(needs.profile && { profile: needs.profile }),
+				credentials: credentialsOf(inventory.hostedCredentials ?? []),
+				model,
+				repo: false,
+			});
+			if (!verdict.ok) return { refused: refusalText(verdict), permanent: true };
+		}
 		const modelProblem = agentModelProblem(
 			task.agent,
 			usesAccountModels(harness)
@@ -452,12 +506,8 @@ function candidate(
 	const notNow = (message: string): Candidate => ({ refused: `‘${m.name}’: ${message}.`, permanent: false });
 	if (m.orchestrator === "never" || (m.orchestrator === "named" && !task.place))
 		return never("owner placement policy is " + m.orchestrator);
-	const onMachine = harness !== "windlass" ? harness : null;
-	// A machine harness runs only in the hardened container, whatever profile the subtask asks for.
-	if (onMachine && needs.profile && needs.profile !== HARNESS_PROFILE)
-		return never(
-			`${harnessName(onMachine)} runs only in the ${isolationName(HARNESS_PROFILE)} profile, and the subtask asks for ${isolationName(needs.profile)}`,
-		);
+	// Another agent than Windlass has rules of its own about where it runs.
+	const verdict = machineHarness(harness) ? agentOnMachine(m, task) : null;
 	const slots = machineSlots(m);
 	const needed = Math.max(
 		1,
@@ -471,8 +521,8 @@ function candidate(
 	const units = sandboxSlots(needed, slots.max ?? 1);
 	// A machine that has never reported is judged when it connects. One that has keeps its last report.
 	const reported = m.online || m.egress !== undefined;
-	const incapable = reported ? capabilityFit(m, task, inventory) : null;
-	if (incapable) return never(incapable);
+	const incapable = reported ? capabilityFit(m, task, inventory, verdict) : null;
+	if (incapable) return incapable.whole ? { refused: incapable.text, permanent: true } : never(incapable.text);
 	if (limited) return waiting(limited, m.name);
 	if (tokenWait) return { wait: tokenWait, dailyCap: true };
 	if (!m.online) return { wait: `Waiting for ‘${m.name}’ to come back online.`, offline: true };
@@ -485,7 +535,9 @@ function candidate(
 	if (needs.cpus && slots.unit.cpus <= 0) return notNow("per-slot CPU capacity is unknown");
 	if ((m.freeDiskBytes ?? 0) < 5 * GiB) return notNow("at least 5 GiB of reported free disk is required");
 	const allowed = m.availableProfiles.filter(p => !m.allowedProfiles || m.allowedProfiles.some(id => id === p));
-	const wanted: SandboxProfileId | undefined = needs.profile ?? (onMachine ? HARNESS_PROFILE : undefined);
+	// An agent with rules of its own takes the profile they give it; before its machine has reported, Open.
+	const wanted: SandboxProfileId | undefined =
+		needs.profile ?? (verdict ? (verdict.ok ? verdict.profile : "docker-hardened") : undefined);
 	const profile = wanted
 		? allowed.find(p => p === wanted)
 		: (allowed.find(p => p === inventory.defaultProfile) ?? allowed[0]);

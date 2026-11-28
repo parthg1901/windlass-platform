@@ -16,12 +16,15 @@ import { SIZE_WEIGHT } from "../billing/meter.js";
 import { choice } from "./answered.js";
 import { runAgent } from "./resolve-run.js";
 import {
+	anyOf,
 	subtaskHarnessProblem,
 	harnessName,
 	hostedProfiles,
 	knownHarness,
+	machineHarness,
 	worksWithoutAsking,
 } from "../sandbox/harnesses.js";
+import { isolationName } from "../contract/isolation.js";
 import { MAX_ACCEPTANCE_CRITERIA, MAX_ITEM_BODY_CHARS, MAX_NOTE_CHARS, MAX_TITLE_CHARS } from "../contract.js";
 
 /**
@@ -343,9 +346,12 @@ export function agentOf(value: unknown): SubtaskAgent | undefined {
 export function agentProfileProblem(task: Pick<PlanSubtask, "agent" | "needs">): string | null {
 	const agent = task.agent,
 		profile = task.needs?.profile;
-	return agent && worksWithoutAsking(agent.harness) && profile !== undefined && !hostedProfiles.includes(profile)
-		? `${harnessName(agent.harness)} requires Open isolation.`
-		: null;
+	// The profiles of its record, on a machine or hosted; Windlass runs in any.
+	const acp = agent && machineHarness(agent.harness);
+	if (!acp || profile === undefined) return null;
+	const profiles = [...acp.profiles, ...hostedProfiles];
+	if (profiles.includes(profile)) return null;
+	return `${acp.name} runs only in ${anyOf([...new Set(profiles.map(isolationName))])} isolation.`;
 }
 
 function placementFields(s: Record<string, unknown>): Pick<PlanSubtask, "place" | "needs" | "agent"> {
