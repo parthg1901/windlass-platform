@@ -85,6 +85,22 @@ export function turnMeter(input: {
 	};
 }
 
+/**
+ * One turn's share of an agent's reported cost. Claude Code reports its session's running total (`total_cost_usd`,
+ * which a resumed session carries on), not the turn's: the turn's is what the total grew by since the last turn
+ * ended (`previous`). A total below that is a counter that started again, and all of it is this turn's. `total`
+ * is what to remember for the next turn.
+ */
+export function turnCost(
+	reported: { amount: number; currency: string } | null | undefined,
+	previous: number | undefined,
+): { cost: { amount: number; currency: string } | null; total: number | undefined } {
+	if (!reported || reported.currency !== "USD" || !Number.isFinite(reported.amount) || reported.amount < 0)
+		return { cost: reported ?? null, total: previous };
+	const amount = previous !== undefined && reported.amount >= previous ? reported.amount - previous : reported.amount;
+	return { cost: { amount, currency: "USD" }, total: reported.amount };
+}
+
 export const noUsage = (): SpendUsage => ({ models: [], sandbox: [] });
 
 const noTokens = (): UsageTokens => ({ inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 });

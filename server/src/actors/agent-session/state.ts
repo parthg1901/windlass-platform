@@ -100,6 +100,8 @@ export interface SessionMeta {
 	lastOutcome: TurnOutcome | null;
 	/** What its turns used, by model and payer (`SessionSummary.spent`). */
 	spent?: import("../../contract/cost.js").SpendUsage;
+	/** The agent's reported running cost at the end of its last turn (factory/cost.ts `turnCost`), in USD. */
+	agentCostTotal?: number;
 	/** The sandbox this session was given, kept when it turns out to be gone so the next turn can say so. */
 	sandboxId: string | null;
 	sandbox: "none" | "running" | "paused";

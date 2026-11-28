@@ -6,7 +6,7 @@ import { UsageBook, type UsageEntry, type UsageLimits } from "../server/src/usag
 import { FACTORY_DEFAULTS } from "../server/src/factory/budget.js";
 import { createItem } from "../server/src/factory/blueprint.js";
 import { chargeTurn, noteHostedTime } from "../server/src/factory/change.js";
-import { itemCost, mergeUsage, turnMeter, type TurnMeter } from "../server/src/factory/cost.js";
+import { itemCost, mergeUsage, turnCost, turnMeter, type TurnMeter } from "../server/src/factory/cost.js";
 import type { FactoryItem, FeatureJob } from "../server/src/factory/types.js";
 import {
 	MAX_CATALOG_BYTES,
@@ -504,4 +504,24 @@ test("a session's summary says what its turns used, by model and payer, without 
 			["key", 3],
 		],
 	);
+});
+
+test("Claude Code's reported cost is its session's running total: a turn counts what it grew by", () => {
+	const usd = (amount: number) => ({ amount, currency: "USD" });
+	// The live sequence: $0.06 after the first turn, then $0.11, $0.17, $0.23 for one-line replies.
+	let total: number | undefined;
+	const turns = [0.06, 0.11, 0.17, 0.23].map(amount => {
+		const one = turnCost(usd(amount), total);
+		total = one.total;
+		return Math.round((one.cost?.amount ?? 0) * 100) / 100;
+	});
+	assert.deepEqual(turns, [0.06, 0.05, 0.06, 0.06]);
+	// A total below the last is a counter that started again: all of it is this turn's.
+	assert.deepEqual(turnCost(usd(0.02), 0.23), { cost: usd(0.02), total: 0.02 });
+	// Nothing reported, or not in dollars: nothing changes.
+	assert.deepEqual(turnCost(null, 0.23), { cost: null, total: 0.23 });
+	assert.deepEqual(turnCost({ amount: 3, currency: "EUR" }, 0.23), {
+		cost: { amount: 3, currency: "EUR" },
+		total: 0.23,
+	});
 });
