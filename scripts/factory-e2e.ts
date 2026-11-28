@@ -5405,34 +5405,53 @@ async function machineChecks(): Promise<void> {
 		);
 
 		await check("machine: a Codex item is filed on each profile it runs on, in that profile's item mode", async () => {
-			const harnesses = runner.fake.report.harnesses;
-			runner.fake.report.harnesses = [
-				...(harnesses ?? []),
+			// A demo account cannot connect the ChatGPT plan that pays for Codex on a machine: a signed-in account with
+			// one connects its own machine, which offers Codex with no login of its own there.
+			const signedIn = await fixtureLogin(client, standin, "machine-codex");
+			const owner = client.user.getOrCreate([signedIn.profile.uid], { params: { token: signedIn.token } });
+			const { url } = await owner.githubConnect({ origin: ORIGIN });
+			const back = await fetch(standin.authorize("ada", url), { redirect: "manual" });
+			await owner.githubComplete((back.headers.get("location") ?? "").split("#github=")[1]!);
+			const codexRunner = new StandInRunner(API, ENDPOINT);
+			codexRunner.fake.report.harnesses = [
 				{
 					id: "codex",
 					adapter: "codex-acp 0.15.0",
 					image: "sha256:fake",
-					// No login of its own on the machine: the connected ChatGPT plan pays for it there.
 					signIn: "none",
 					modes: ["agent-full-access", "read-only", "workspace-write"],
 				},
 			];
-			runner.report();
 			const filed: string[] = [];
 			try {
+				await codexRunner.pair(owner);
+				await codexRunner.connectControl();
+				codexRunner.report();
 				await waitFor(
-					"the machine reports Codex",
-					async () => (await user.machines())[0]?.harnesses?.some(h => h.id === "codex" && h.method === "chatgpt"),
+					"the machine reports Codex paid by the ChatGPT plan",
+					async () => {
+						const row = (await owner.machines())[0];
+						return (
+							row?.profiles.filter(p => p.available).length === 2 &&
+							row.harnesses?.some(h => h.id === "codex" && h.method === "chatgpt")
+						);
+					},
 					15_000,
 				);
+				const codexTask = { ...task, place: { kind: "machine" as const, machineId: codexRunner.id.machineId } };
 				for (const [profile, mode] of [
 					["docker-hardened", "agent-full-access"],
 					["docker-windlass-sandbox", "workspace-write"],
 				] as const) {
 					// Filing makes the builder's session; it used to be refused with "A work item and its reviewer use the profile's approval mode."
-					const item = await user.createItem({ ...task, title: `Codex on ${profile}`, profile, harness: "codex" });
+					const item = await owner.createItem({
+						...codexTask,
+						title: `Codex on ${profile}`,
+						profile,
+						harness: "codex",
+					});
 					filed.push(item.id);
-					const builder = (await user.listSessions()).find(s => s.id === item.sessionId);
+					const builder = (await owner.listSessions()).find(s => s.id === item.sessionId);
 					assert(
 						item.agent?.harness === "codex" &&
 							builder?.harness === "codex" &&
@@ -5443,9 +5462,8 @@ async function machineChecks(): Promise<void> {
 				}
 				return filed.join(", ");
 			} finally {
-				for (const id of filed) await user.actOnItem({ id, action: { kind: "cancel" } });
-				runner.fake.report.harnesses = harnesses;
-				runner.report();
+				for (const id of filed) await owner.actOnItem({ id, action: { kind: "cancel" } });
+				await codexRunner.setOffline(true);
 			}
 		});
 

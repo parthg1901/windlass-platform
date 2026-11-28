@@ -1399,10 +1399,10 @@ async function claudeChecks(
 				);
 				return JSON.stringify(end.context);
 			});
-			await check("Claude's error and last reported sign-out give the machine login command", async () => {
+			await check("Claude's error and last reported sign-out say nothing pays for it on the machine", async () => {
 				const { end } = await play("signedout");
 				const name = (await user.machines()).find(m => m.machineId === place.machineId)!.name;
-				const sentence = `Claude Code on “${name}” is not signed in. Run windlass-runner login claude there.`;
+				const sentence = `Nothing can pay for Claude Code on “${name}” yet. Connect a plan or add a key on Connections.`;
 				assert(
 					end.outcome === "error" && end.message?.includes("Authentication required") && end.message.includes(sentence),
 					JSON.stringify(end),
@@ -1424,7 +1424,9 @@ async function claudeChecks(
 							() => "",
 							e => e.message,
 						);
-					assert(refused.includes(sentence), "signed-out prompt was not refused with the login command");
+					// Pay with decides the next prompt: with no plan connected, a key would pay.
+					const payWith = "Add an Anthropic key on the Connections page to run Claude Code here.";
+					assert(refused.includes(payWith), `signed-out prompt was not refused by Pay with: ${refused}`);
 				} finally {
 					entry.signIn = "token";
 					runner.report();
