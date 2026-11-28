@@ -9,3 +9,7 @@ e5055f2b96ffd84bf2bc9d317fb34c3c8ba4967a:scripts/e2b-check.ts:curl-auth-header:3
 f0ad1bc1fce5fa9d65c1db416c213081c2d3a22a:scripts/model-relay-route-check.ts:generic-api-key:656
 5da3907c9a6e4740729fc7a6cca4d533e9bce196:scripts/model-relay-route-check.ts:generic-api-key:580
 e1c4cbfa8f432596ee012d389b4ef4d8703808c4:scripts/model-relay-route-check.ts:generic-api-key:1626
+# The plan-limit check asserts a plan account's key name (plan/anthropic/g1); no credential.
+0c8c7ddd8cfac8f6c1b308d554e266cf93c782ef:scripts/model-plans-check.ts:generic-api-key:957
+# The connect codex test's fake access token, now assembled at runtime; no credential.
+daabf3c26393b2efc3e9607650042b6ade9a7a41:cli/test/connect-codex.test.ts:jwt:22
