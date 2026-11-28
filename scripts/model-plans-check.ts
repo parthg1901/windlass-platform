@@ -72,14 +72,13 @@ test("a connected Claude plan is checked, sealed and opened only for the relay",
 	let refuseAll = false;
 	const server = createServer((req, res) => {
 		assert.equal(req.method, "GET");
-		assert.equal(req.url, "/api/oauth/profile");
+		assert.equal(req.url, "/v1/models?limit=1");
 		assert.equal(req.headers["anthropic-beta"], "oauth-2025-04-20");
+		assert.equal(req.headers["anthropic-version"], "2023-06-01");
 		const token = req.headers.authorization?.replace(/^Bearer /, "") ?? "";
 		seen.push(token);
 		if (token !== tokens.good || refuseAll) return void res.writeHead(401).end(JSON.stringify({ error: token }));
-		res.end(
-			JSON.stringify({ account: { email: "a@b.com", echo: token }, organization: { organization_type: "claude_max" } }),
-		);
+		res.end(JSON.stringify({ data: [{ type: "model", id: "claude-x", echo: token }] }));
 	});
 	await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => server.close());
@@ -108,7 +107,7 @@ test("a connected Claude plan is checked, sealed and opened only for the relay",
 	assert.deepEqual((await credentials.modelPlans(a.context)).plans, []);
 
 	const plan = await credentials.internalConnectPlan(a.route, "anthropic", good.digest, good.sealed);
-	assert.deepEqual({ account: plan.account, ok: plan.ok }, { account: "a@b.com · Max", ok: true });
+	assert.deepEqual({ account: plan.account, ok: plan.ok }, { account: null, ok: true });
 	clean(plan);
 	clean(a.sql.prepare("SELECT * FROM model_plan").all());
 	assert.deepEqual(await credentials.modelPlans(a.context), { allowed: true, plans: [plan] });
@@ -292,7 +291,7 @@ test("a terminal connects a plan only after its user approves the code, once", a
 		const token = req.headers.authorization?.replace(/^Bearer /, "") ?? "";
 		if (token === unchecked) return void res.writeHead(500).end("{}");
 		if (token !== good) return void res.writeHead(401).end("{}");
-		res.end(JSON.stringify({ account: { email: "a@b.com" }, organization: { organization_type: "claude_max" } }));
+		res.end(JSON.stringify({ data: [] }));
 	});
 	await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
 	t.after(() => server.close());
@@ -338,8 +337,8 @@ test("a terminal connects a plan only after its user approves the code, once", a
 	assert.deepEqual([typo.status, typo.body.code], [400, "bad_plan_token"]);
 	assert.equal(await state(first.request), "approved");
 	const done = await world.post(connect, { request: first.request, token: good });
-	assert.deepEqual(done, { status: 200, body: { account: "a@b.com · Max" } });
-	assert.equal((await world.plans("plan-check-a")).plans[0]?.account, "a@b.com · Max");
+	assert.deepEqual(done, { status: 200, body: { account: null } });
+	assert.equal((await world.plans("plan-check-a")).plans[0]?.account, null);
 	assert.deepEqual((await world.plans("plan-check-c")).plans, []);
 	const again = await world.post(connect, { request: first.request, token: good });
 	assert.deepEqual([again.status, again.body.code], [404, "connect_code_not_found"]);
@@ -919,16 +918,7 @@ test("a plan's models: ChatGPT's listed catalog, a Claude plan's from its agent 
 });
 
 test("plan names come from the account, and an unknown one is shown as it came", async () => {
-	const { claudePlanLabel, chatgptPlanLabel, accountLabel } = await import("../server/src/credentials/plan-labels.js");
-	assert.equal(claudePlanLabel("claude_max"), "Max");
-	assert.equal(claudePlanLabel("Claude Max 20x subscription"), "Ultra");
-	assert.equal(claudePlanLabel("max5"), "Max");
-	assert.equal(claudePlanLabel("claude_pro"), "Pro");
-	assert.equal(claudePlanLabel("claude_team"), "Team");
-	assert.equal(claudePlanLabel("claude_enterprise"), "Enterprise");
-	assert.equal(claudePlanLabel("free"), "Free");
-	assert.equal(claudePlanLabel("claude_galaxy_brain"), "Claude Galaxy Brain");
-	assert.equal(claudePlanLabel(undefined), null);
+	const { chatgptPlanLabel, accountLabel } = await import("../server/src/credentials/plan-labels.js");
 	assert.equal(chatgptPlanLabel("plus"), "Plus");
 	assert.equal(chatgptPlanLabel("pro"), "Pro");
 	assert.equal(chatgptPlanLabel("go"), "Go");

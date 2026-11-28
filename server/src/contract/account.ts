@@ -103,7 +103,7 @@ export type ModelProviderCheck = ModelProviderStatus & { message?: string };
 
 export interface ModelPlanStatus {
 	provider: PlanProvider;
-	/** The account the plan belongs to, as the provider names it ("a@b.com · Max"); never the token. */
+	/** The account the plan belongs to, as the provider names it ("a@b.com · Plus"); null when the provider does not say (a Claude setup token cannot read its account). Never the token. */
 	account: string | null;
 	addedAt: number;
 	/** When `models` was last learned; a plan without a check offers only the agent's default. */
