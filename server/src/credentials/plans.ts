@@ -16,11 +16,10 @@
 import { randomUUID } from "node:crypto";
 import { UserError } from "rivetkit";
 import { config } from "../config.js";
-import { isPlanProvider, validPlanToken, PLAN_NAMES, type ModelPlanStatus, type PlanProvider } from "../contract.js";
+import { isPlanProvider, validPlanToken, type ModelPlanStatus, type PlanProvider } from "../contract.js";
 import type { DefaultsDb } from "../repository-defaults.js";
 import { serverSealer } from "../signin/seal.js";
 import { safeModelId } from "./keys.js";
-import { accountLabel, claudePlanLabel } from "./plan-labels.js";
 import { HEALTHY, healthAt, nextHealth, type PlanHealthState, type PlanReading } from "./plan-health.js";
 
 export const MODEL_PLAN_TABLES = [
@@ -104,31 +103,21 @@ const MAX_PLAN_MODELS = 32;
 const MODELS_FROM: Record<PlanProvider, "provider" | "agent"> = { anthropic: "agent", openai: "provider" };
 
 /**
- * Asks Anthropic whose plan the token is, the way Claude Code reads its own profile. Null when Anthropic
- * refused it; throws when Anthropic could not be asked. The answer can echo the token, so only the
- * account's email and tier are read from it.
+ * Asks Anthropic whether it takes the token, with the cheapest call a setup token may make: listing models. A
+ * setup token has only the `user:inference` scope, so the profile (whose account it is) is closed to it. False
+ * when Anthropic refused it; throws when Anthropic could not be asked.
  */
-async function claudeAccount(token: string): Promise<string | null> {
+async function claudeAccepts(token: string): Promise<boolean> {
 	const origin = (process.env.WLP_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com").replace(/\/+$/, "");
-	const res = await fetch(origin + "/api/oauth/profile", {
-		headers: { authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
+	const res = await fetch(origin + "/v1/models?limit=1", {
+		headers: { authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20", "anthropic-version": "2023-06-01" },
 		redirect: "error",
 		signal: AbortSignal.timeout(8_000),
 	});
-	if (res.status === 401 || res.status === 403) {
-		await res.body?.cancel();
-		return null;
-	}
-	if (!res.ok) {
-		await res.body?.cancel();
-		throw new Error("Plan check unavailable");
-	}
-	const body = (await res.json()) as {
-		account?: { email?: unknown };
-		organization?: { organization_type?: unknown };
-	};
-	const email = typeof body.account?.email === "string" ? body.account.email : null;
-	return accountLabel(email, claudePlanLabel(body.organization?.organization_type)) ?? PLAN_NAMES.anthropic;
+	await res.body?.cancel();
+	if (res.status === 401 || res.status === 403) return false;
+	if (!res.ok) throw new Error("Plan check unavailable");
+	return true;
 }
 
 export class PlanProblem extends Error {
@@ -150,13 +139,13 @@ export async function connectPlan(
 	if (!plansAllowed(uid)) throw new PlanProblem("Connecting a plan is not available on this account.", "plans_off");
 	if (provider !== "anthropic" || !validPlanToken(provider, token))
 		throw new PlanProblem("That's not a setup token. It starts with sk-ant-oat01-.", "bad_plan_token");
-	let account: string | null;
+	let accepted: boolean;
 	try {
-		account = await claudeAccount(token);
+		accepted = await claudeAccepts(token);
 	} catch {
 		throw new PlanProblem("Anthropic could not be reached to check the plan. Try again.", "plan_check_unavailable");
 	}
-	if (account === null)
+	if (!accepted)
 		throw new PlanProblem("Anthropic did not accept that token. Run claude setup-token again.", "plan_refused");
 	const now = Date.now();
 	const [row] = await db.execute<PlanRow>(
@@ -167,28 +156,27 @@ export async function connectPlan(
 		provider,
 		serverSealer().seal("model-plan", subject(uid, provider), token),
 		randomUUID(),
-		account,
+		null,
 		now,
 		now,
 	);
 	return status(row!);
 }
 
-/** Asks Anthropic again whose the saved Claude plan is: a token it no longer accepts makes the plan unusable. */
+/** Asks Anthropic again whether it takes the saved Claude plan's token: one it no longer accepts makes the plan unusable. */
 export async function claudePlanCheck(db: DefaultsDb, uid: string): Promise<void> {
 	// Whatever the last check said: a token Anthropic refused once may be accepted again.
 	const saved = await savedPlan(db, uid, "anthropic", false);
 	if (!saved) return;
-	let account: string | null;
+	let accepted: boolean;
 	try {
-		account = await claudeAccount(saved.secret);
+		accepted = await claudeAccepts(saved.secret);
 	} catch {
 		throw new PlanProblem("Anthropic could not be reached to check the plan. Try again.", "plan_check_unavailable");
 	}
 	await db.execute(
-		"UPDATE model_plan SET account = COALESCE(?, account), check_ok = ? WHERE provider = 'anthropic' AND generation = ?",
-		account,
-		account === null ? 0 : 1,
+		"UPDATE model_plan SET check_ok = ? WHERE provider = 'anthropic' AND generation = ?",
+		accepted ? 1 : 0,
 		saved.generation,
 	);
 }
