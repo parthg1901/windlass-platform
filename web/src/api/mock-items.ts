@@ -5819,7 +5819,7 @@ const AGENTS_1280: Omit<MockShot, "caption"> = {
 	file: "agents-1280.png",
 	width: 1280,
 	height: 800,
-	bytes: 83_653,
+	bytes: 133_085,
 	shows: "after",
 	page: "/",
 };
@@ -5827,17 +5827,17 @@ const AGENTS_390: Omit<MockShot, "caption"> = {
 	file: "agents-390.png",
 	width: 390,
 	height: 844,
-	bytes: 54_328,
+	bytes: 70_391,
 	shows: "after",
 	page: "/",
 };
 const ITEM_FULL_PAGE: Omit<MockShot, "caption"> = {
 	file: "item-full-page.png",
 	width: 1280,
-	height: 6000,
-	bytes: 92_550,
+	height: 3202,
+	bytes: 361_602,
 	shows: "after",
-	page: "/items/i_8c76c0007d0f3a91, the whole page",
+	page: "/items/i_8c76c0007d0ff000, the whole page",
 };
 
 const SEEDED_REPORTS: Record<number, { run?: number; title: string; blocks: MockBlock[]; shots?: MockShot[] }> = {

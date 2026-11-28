@@ -79,7 +79,7 @@ const SHOTS = [
 		alt: "A session: the agent's tool calls on the timeline, its answer, and the session panel",
 		path: "/agents/add-test",
 		viewport: DESKTOP,
-		ready: `__shot.text("Fixing it.") && __shot.text("Files changed")`,
+		ready: `__shot.text("Fixing it.") && __shot.text("Changes") && !__shot.text("Reading the workspace")`,
 		// From the first prompt; the "Jump to latest" button that scrolling up shows would cover a line.
 		before: `(async () => { __shot.scrollAllToTop(); await __shot.settle(); __shot.hide(__shot.button("Jump to latest")); })()`,
 	},
@@ -103,10 +103,10 @@ const SHOTS = [
 	},
 	{
 		name: "factory",
-		alt: "The Factory: work items, what each one needs, and the turns running",
+		alt: "The Factory: work items, what each one needs, and the hosted slots in use",
 		path: "/factory",
 		viewport: DESKTOP,
-		ready: `__shot.text("Migrate the docs search to the new index") && __shot.text("factory turns running")`,
+		ready: `__shot.text("Migrate the docs search to the new index") && __shot.text("slots busy")`,
 	},
 	{
 		name: "phone",
