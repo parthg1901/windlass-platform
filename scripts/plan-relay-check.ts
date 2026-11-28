@@ -339,8 +339,13 @@ test("on a ChatGPT plan it takes Codex's routes to api.openai.com with the curre
 	const REFRESHED = "chatgpt-access-" + "b".repeat(40);
 	const { seen, send, relay } = await stack(
 		t,
-		(_seen, res) => {
-			res.writeHead(200, { "content-type": "text/event-stream" });
+		(seen, res) => {
+			if (seen.url === "/v1/models") {
+				res.writeHead(200, { "content-type": "application/json" });
+				return void res.end('{"models":[]}');
+			}
+			// As api.openai.com answers a ChatGPT token's stream: a 200 with no content type.
+			res.writeHead(200);
 			res.end('data: {"type":"response.completed"}\n\n');
 		},
 		{ token: ACCESS, wire: "chatgpt-plan", harness: "codex" },
@@ -357,7 +362,9 @@ test("on a ChatGPT plan it takes Codex's routes to api.openai.com with the curre
 			},
 			method === "POST" ? "{}" : "",
 		);
-	assert.equal((await codex("/v1/responses")).status, 200);
+	const streamed = await codex("/v1/responses");
+	assert.equal(streamed.status, 200, "an untyped stream on Responses is passed as the event stream it is");
+	assert.match(streamed.body, /response\.completed/);
 	assert.equal(seen.at(-1)!.headers.authorization, `Bearer ${ACCESS}`);
 	assert.equal(seen.at(-1)!.headers.originator, undefined, "Codex's own headers stay here");
 	await relay.hand(REFRESHED);

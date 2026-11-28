@@ -63,6 +63,12 @@ function planProvider(state, { upstream, take, now = Date.now, seen = () => {} }
 			return { ...target, ...upstream, secrets: [...state.used, state.placeholder] };
 		},
 		responseFilter: (type, url, secrets) => scrubStream(secrets ?? [], type, true),
+		// api.openai.com answers a ChatGPT plan's stream with a 200 and no content type (as for Windlass's own
+		// ChatGPT models, windlass.cjs); the agent reads it as the event stream it asked for.
+		untyped: (method, url) =>
+			wire === "chatgpt-plan" && method === "POST" && url.split("?")[0] === "/v1/responses"
+				? "text/event-stream"
+				: null,
 		errorBody,
 		// The headers come through `limitHeaders`; of an error body only its code and a named reset go on.
 		observe(status, headers, text) {
