@@ -13,7 +13,7 @@ import { serviceParams } from "../auth.js";
 import type { JiraReservation } from "./jira-site.js";
 import { mayUse } from "../access.js";
 import { config } from "../config.js";
-import type { CreateItemInput, GithubId, ItemSummary, UserProfile } from "../contract.js";
+import type { CreateItemInput, GithubId, ItemFiler, ItemSummary, UserProfile } from "../contract.js";
 import {
 	issueMode,
 	linearIdentifier,
@@ -38,8 +38,38 @@ import { GithubProblem, problemOf, resolveBoundRepository, resolveRepository } f
 import { sourceCaps } from "../sources/registry.js";
 import { SOURCE_IDS, type SourceId } from "../sources/types.js";
 import { accountLimits } from "../user-limits.js";
-import { gitlabAccess, isActorGone, itemActor } from "./internal.js";
+import { gitlabAccess, type HasClient, isActorGone, itemActor } from "./internal.js";
+import { type Surface, surfaceAccountsOf } from "./surface-accounts.js";
 import type { ItemsCtx, ItemsState } from "./user-items.js";
+
+/** A person who filed from another surface, resolved to the Windlass user they linked. */
+export type Filer = { uid: string; verified: true; filer: ItemFiler };
+
+/**
+ * The one way every intake learns whose item a delivery is: the person on the surface who triggered it (added the label,
+ * mentioned Windlass, assigned the issue), as the Windlass user they linked. Null when they linked none: then nothing is
+ * filed for them, under nobody else's account. `tenant` is where the id is the surface's: a GitHub installation (which the
+ * linked account must also have), a Slack team, a Linear workspace, Jira's `JIRA_TENANT`, a GitLab instance.
+ */
+export async function resolveFiler(
+	c: HasClient,
+	surface: Surface | "github",
+	tenant: string,
+	externalUserId: string | null | undefined,
+): Promise<Filer | null> {
+	if (!externalUserId) return null;
+	let uid: string | null = null;
+	try {
+		if (surface === "github") {
+			const link = await c.client().githubAccount.get([externalUserId], serviceOptions()).internalWho();
+			if (link?.installations.some((id: GithubId) => String(id) === tenant)) uid = link.uid;
+		} else uid = await surfaceAccountsOf(c, surface, tenant).internalWho(externalUserId);
+	} catch (error) {
+		if (!isActorGone(error)) throw error;
+	}
+	return uid ? { uid, verified: true, filer: { surface, externalUserId, verified: true } } : null;
+}
+const serviceOptions = () => ({ params: serviceParams() });
 
 /** The sources of an item filed from an issue: the ones that share the queue, the cap and the reservations. */
 export const INTAKE_SOURCES: ReadonlySet<ItemSummary["source"]> = new Set(SOURCE_IDS);
@@ -248,7 +278,7 @@ export async function fileTrackerIssue(
 				...fields,
 				siteId: f.project.siteId,
 				projectId: f.project.id,
-				origin: { jira: { ...source, trusted: false }, sender },
+				origin: { jira: { ...source, trusted: false }, sender, ...(f.filer && { filer: f.filer }) },
 			},
 		};
 	} else
@@ -257,7 +287,7 @@ export async function fileTrackerIssue(
 				...fields,
 				workspaceId: f.team.workspaceId,
 				teamId: f.team.id,
-				origin: { linear: { ...source, trusted }, sender },
+				origin: { linear: { ...source, trusted }, sender, ...(f.filer && { filer: f.filer }) },
 			},
 		};
 	const item = await file(profile, input, sourceId, intake);
@@ -282,7 +312,21 @@ export async function fileGitlabIssue(
 	const projectId = decimalId(delivery.projectId),
 		iid = decimalId(delivery.iid);
 	if (!projectId || !iid) return null;
-	const { project, token, viewer } = await gitlabAccess(c, profile.uid, projectId);
+	let access;
+	try {
+		access = await gitlabAccess(c, profile.uid, projectId);
+	} catch (error) {
+		// A linked filer whose own GitLab connection does not hold this project files nothing.
+		if (
+			(error as { code?: string })?.code === "gitlab_project" ||
+			(error as { code?: string })?.code === "gitlab_not_connected"
+		) {
+			console.log(`gitlab.intake.no_access uid=${profile.uid} project=${projectId}`);
+			return null;
+		}
+		throw error;
+	}
+	const { project, token, viewer } = access;
 	if (viewer !== delivery.senderId) return null;
 	const path = `/projects/${projectId}/issues/${iid}`;
 	const get = async (path: string) => {
@@ -333,7 +377,9 @@ export async function fileGitlabIssue(
 		note: "",
 	});
 	const input = intakeInput(task, "single", project, decimalId(author.id) === viewer, key);
-	const item = await file(profile, input, { project, iid, generation, sources });
+	// The sender is this account's own GitLab user (checked above), linked by connecting GitLab.
+	const filer = { surface: "gitlab", externalUserId: viewer, verified: true };
+	const item = await file(profile, input, { project, iid, generation, sources, filer });
 	// Acknowledgement is best effort: failure to react must never undo a successful filing.
 	const host = gitlabCodeHost(app, { id: viewer, project, accessToken: async () => token });
 	await host
@@ -382,7 +428,13 @@ export async function fileSlackRequest(
 	if (cap) return { kind: "refused", reason: cap, dailyCap: true };
 	const mode = issueMode(parsed.quick ? "quick" : "", [], process.env.WLP_FACTORY_ORCHESTRATE !== "0");
 	const input = intakeInput(parsed.task, mode.mode, { id: repository.id, branch: repository.defaultBranch }, true, key);
-	const binding = { teamId: d.teamId, channelId: d.channelId, threadTs: d.threadTs, generation: f.generation };
+	const binding = {
+		teamId: d.teamId,
+		channelId: d.channelId,
+		threadTs: d.threadTs,
+		generation: f.generation,
+		...(f.filer && { filer: f.filer }),
+	};
 	const item = await file(profile, { input, binding });
 	return { kind: "filed", itemId: item.id, state: item.state };
 }

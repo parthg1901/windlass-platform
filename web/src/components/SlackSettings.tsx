@@ -15,7 +15,7 @@ import {
 import { ProviderIcon } from "./ProviderIcon";
 import { Check } from "./ui";
 
-const RETURN = /^#slack(?:-error|-link)?=/;
+const RETURN = /^#slack(?:-error)?=/;
 
 const callbackErrors = new Map([
 	["denied", "Slack was not given access. Connect again when you’re ready."],
@@ -33,10 +33,8 @@ export function SlackSettings() {
 	const [repositoryId, setRepositoryId] = useState("");
 	const [repositories, setRepositories] = useState<GithubRepository[] | null>(null);
 	const [repoProblem, setRepoProblem] = useState("");
-	const [proof, setProof] = useState("");
 	const card = useRef<HTMLElement>(null);
 	const repoSelect = useRef<HTMLSelectElement>(null);
-	const confirmLink = useRef<HTMLButtonElement>(null);
 	const showReturn = useRef(false);
 	const initial = useRef<Promise<SlackStatus> | null>(null);
 	// A return to the page already open (only its fragment changes) is read again.
@@ -49,7 +47,7 @@ export function SlackSettings() {
 		// StrictMode may replay this effect, but a callback ticket can only be redeemed once.
 		if (!initial.current || initialRound.current !== returned) {
 			initialRound.current = returned;
-			const back = /^#(slack|slack-error|slack-link)=(.*)$/.exec(location.hash);
+			const back = /^#(slack|slack-error)=(.*)$/.exec(location.hash);
 			if (back) {
 				showReturn.current = true;
 				history.replaceState(history.state, "", location.pathname + location.search);
@@ -63,7 +61,7 @@ export function SlackSettings() {
 					}
 				} else if (back?.[1] === "slack-error") {
 					setError(callbackErrors.get(back[2]!) ?? "Slack could not be connected. Try again.");
-				} else if (back?.[1] === "slack-link") setProof(back[2]!);
+				}
 				return api.slack();
 			})();
 		}
@@ -125,7 +123,6 @@ export function SlackSettings() {
 		if (!showReturn.current || (!status && !error) || !card.current) return;
 		showReturn.current = false;
 		card.current.scrollIntoView?.({ block: "start" });
-		confirmLink.current?.focus({ preventScroll: true });
 	}, [status, error]);
 
 	async function run(work: () => Promise<void>) {
@@ -328,50 +325,6 @@ export function SlackSettings() {
 						}
 					/>
 				</>
-			)}
-			{status && (
-				<div className="integration-part">
-					<h4 className="usage-title">Your Slack account</h4>
-					{status.links.length === 0 && (
-						<p className="field-note">
-							Not linked. To file work as this account, open the private, one-time link Windlass sends you in Slack.
-						</p>
-					)}
-					<ul className="settings-list" aria-label="Linked Slack identities">
-						{status.links.map(link => (
-							<li className="usage-kept-row" key={link.teamId}>
-								<div className="usage-kept-main">
-									<span className="usage-kept-title">{link.workspaceName}</span>
-								</div>
-								<span />
-								<button
-									type="button"
-									className="button button-outline button-small"
-									aria-label={`Unlink Slack identity in ${link.workspaceName}`}
-									disabled={busy}
-									onClick={() => void run(async () => setStatus(await api.unlinkSlack(link.teamId)))}
-								>
-									Unlink
-								</button>
-							</li>
-						))}
-					</ul>
-					{proof && (
-						<button
-							ref={confirmLink}
-							type="button"
-							className="button button-outline"
-							disabled={busy}
-							onClick={() => {
-								const ticket = proof;
-								setProof("");
-								void run(async () => setStatus(await api.linkSlack(ticket)));
-							}}
-						>
-							Link Slack identity
-						</button>
-					)}
-				</div>
 			)}
 			{error && (
 				<p className="callout callout-warn" role="alert">

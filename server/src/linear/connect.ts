@@ -6,6 +6,7 @@ import {
 	LinearError,
 	type LinearIdentity,
 	type LinearToken,
+	type LinearWorkspace,
 	linearApp,
 	redactLinear,
 } from "./app.js";
@@ -40,6 +41,19 @@ const ticketSubject = (uid: string) => `linear-connect\n${uid}`;
 
 export function openLinearTicket(uid: string, ticket: string): LinearTicket {
 	return JSON.parse(serverSealer().open("transit", ticketSubject(uid), ticket));
+}
+
+/** What a sign-in as oneself proved: the Linear person and workspace, for the user who began it. */
+export interface LinearLinkTicket {
+	nonce: string;
+	person: { id: string; name: string };
+	workspace: LinearWorkspace;
+}
+
+const linkSubject = (uid: string) => `linear-link\n${uid}`;
+
+export function openLinearLinkTicket(uid: string, ticket: string): LinearLinkTicket {
+	return JSON.parse(serverSealer().open("transit", linkSubject(uid), ticket));
 }
 
 export type LinearClaim =
@@ -114,6 +128,8 @@ export async function linearCallbackResponse(request: Request, deps: LinearConne
 	}
 	if (!origins.includes(claimed.origin)) return unreadable();
 	const { uid, origin } = claimed;
+	if (claimed.nonce.startsWith("link."))
+		return linked(app, params, { uid, origin, nonce: claimed.nonce, verifier: claimed.verifier }, log);
 
 	let token: LinearToken | null = null;
 	try {
@@ -156,5 +172,38 @@ export async function linearCallbackResponse(request: Request, deps: LinearConne
 			`[wlp] linear.connect.failed uid=${uid}: ${redactLinear(error instanceof Error ? error.message : "unknown error", [token?.accessToken, token?.refreshToken])}`,
 		);
 		return failed(origin, unreachable ? "unreachable" : "failed");
+	}
+}
+
+/**
+ * The end of a sign-in as oneself (`linear/app.ts` `person`): the person's token proves who they are and is revoked at once.
+ * The web app is sent back with a ticket only the user who began it can redeem (`linkAccount`), or `link-error`.
+ */
+async function linked(
+	app: LinearApp,
+	params: URLSearchParams,
+	claimed: { uid: string; origin: string; nonce: string; verifier: string | null },
+	log: (line: string) => void,
+): Promise<Response> {
+	const { uid, origin } = claimed;
+	const failure = (code: LinearConnectFailure) => back(origin, `link-error=${code}`);
+	if (params.get("error") !== null) return failure(params.get("error") === "access_denied" ? "denied" : "failed");
+	const code = params.get("code");
+	if (code === null || code === "" || code.length > 2048) return failure("code");
+	let token: LinearToken | null = null;
+	try {
+		token = await app.exchangeCode(code, claimed.verifier);
+		const { person, workspace } = await app.person(token.accessToken);
+		const ticket: LinearLinkTicket = { nonce: claimed.nonce, person, workspace };
+		log(`[wlp] linear.link.confirmed uid=${uid} workspace=${workspace.id}`);
+		return back(origin, `link=linear.${serverSealer().seal("transit", linkSubject(uid), JSON.stringify(ticket))}`);
+	} catch (error) {
+		const unreachable = error instanceof LinearError && error.unreachable;
+		log(
+			`[wlp] linear.link.failed uid=${uid}: ${redactLinear(error instanceof Error ? error.message : "unknown error", [token?.accessToken, token?.refreshToken])}`,
+		);
+		return failure(unreachable ? "unreachable" : error instanceof LinearError ? "code" : "failed");
+	} finally {
+		if (token) await app.revoke(token.accessToken).catch(() => undefined);
 	}
 }

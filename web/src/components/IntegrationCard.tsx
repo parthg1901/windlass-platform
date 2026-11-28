@@ -327,7 +327,7 @@ export function MappingForm({
 }
 
 /**
- * A count that goes up each time a connection's return fragment (`#gitlab=…`, `#slack-link=…`) arrives in a page
+ * A count that goes up each time a connection's return fragment (`#gitlab=…`, `#link=…`) arrives in a page
  * that is already open. A return from the provider's own site is a new page load, which every panel reads on mount;
  * a return to the same document (a link opened in the tab that already shows Settings, or the mock) only changes
  * the fragment, and a panel that read it once at mount would keep showing what it showed before.

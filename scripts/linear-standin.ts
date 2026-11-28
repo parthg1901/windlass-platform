@@ -67,11 +67,13 @@ interface Grant {
 	challenge: string | null;
 	scopes: string[];
 	actor: "app" | "user";
+	person?: StandinPerson;
 	used: boolean;
 }
 
 interface Session {
 	actor: "app" | "user";
+	person?: StandinPerson;
 	expiresAt: number;
 	refresh: string;
 	scopes: string[];
@@ -119,8 +121,8 @@ export class LinearStandin {
 	/** The paths of API calls, without credentials. */
 	readonly calls: string[] = [];
 	readonly deliveries: Array<{ deliveryId: string; status: number; body: string }> = [];
-	/** What the next consent does. */
-	consent: { approve: boolean; actor?: "app" | "user" } = { approve: true };
+	/** What the next consent does. `person`: who signs in as themselves (the owner, `human`, when unset). */
+	consent: { approve: boolean; actor?: "app" | "user"; person?: StandinPerson } = { approve: true };
 
 	private readonly grants = new Map<string, Grant>();
 	private readonly sessions = new Map<string, Session>();
@@ -418,6 +420,7 @@ export class LinearStandin {
 				challenge,
 				scopes: this.options.grantScopes ? this.options.grantScopes(asked) : asked,
 				actor,
+				person: this.consent.person,
 				used: false,
 			});
 			back.searchParams.set("code", code);
@@ -433,7 +436,7 @@ export class LinearStandin {
 		const form = new URLSearchParams(raw);
 		if (form.get("client_id") !== this.clientId || form.get("client_secret") !== this.clientSecret)
 			return send(401, { error: "invalid_client", error_description: "client credentials are not valid" });
-		let actor: "app" | "user", scopes: string[];
+		let actor: "app" | "user", scopes: string[], person: StandinPerson | undefined;
 		if (form.get("grant_type") === "authorization_code") {
 			const grant = this.grants.get(form.get("code") ?? "");
 			if (!grant || grant.used)
@@ -448,7 +451,7 @@ export class LinearStandin {
 					.digest("base64url") !== grant.challenge
 			)
 				return send(400, { error: "invalid_grant", error_description: "code_verifier does not match" });
-			({ actor, scopes } = grant);
+			({ actor, scopes, person } = grant);
 		} else if (form.get("grant_type") === "refresh_token") {
 			const old = this.refreshes.get(form.get("refresh_token") ?? "");
 			const session = old ? this.sessions.get(old) : undefined;
@@ -456,11 +459,11 @@ export class LinearStandin {
 				return send(400, { error: "invalid_grant", error_description: "the refresh token is not valid" });
 			this.refreshes.delete(session.refresh);
 			this.sessions.delete(old);
-			({ actor, scopes } = session);
+			({ actor, scopes, person } = session);
 		} else return send(400, { error: "unsupported_grant_type" });
 		const accessToken = "lin_oauth_" + randomBytes(20).toString("hex");
 		const refresh = "lin_refresh_" + randomBytes(20).toString("hex");
-		this.sessions.set(accessToken, { actor, expiresAt: Date.now() + 86_399_000, refresh, scopes });
+		this.sessions.set(accessToken, { actor, person, expiresAt: Date.now() + 86_399_000, refresh, scopes });
 		this.refreshes.set(refresh, accessToken);
 		send(200, {
 			access_token: accessToken,
@@ -530,7 +533,7 @@ export class LinearStandin {
 			return send(200, { data: { comment: comment ? { issue: { id: comment.issueId } } : null } });
 		}
 		if (/\bviewer\b/.test(query)) {
-			const viewer = session.actor === "app" ? this.appUser : this.human;
+			const viewer = session.actor === "app" ? this.appUser : (session.person ?? this.human);
 			return send(200, {
 				data: { viewer: { id: viewer.id, name: viewer.name, app: viewer.app }, organization: this.workspace },
 			});

@@ -155,6 +155,9 @@ import {
 	type LinearStatus,
 	type GitlabStatus,
 	type SlackSettingsActions,
+	type LinkedAccount,
+	type LinkedAccountsActions,
+	type LinkSurface,
 	type SlackStatus,
 	type SlackMapping,
 	type LinearTeamList,
@@ -497,8 +500,6 @@ export interface MockClient extends PlatformClient {
 	mockNextAnswer(kind: "elsewhere" | "error"): void;
 	/** Makes the next call about GitHub of that kind fail (`__wlpMock.mockNextGithub("protected")`, then push). */
 	mockNextGithub(kind: MockGithubFailure): void;
-	/** A single-use proof like the one Slack sends privately to a member. */
-	mockSlackLinkTicket(): string;
 	/**
 	 * Every integration in Settings connected and mapped, for looking at them together: GitLab on a project (or,
 	 * with "gitlab-reconnect", GitLab having refused the saved grant), Linear and Jira with a mapping each, and Slack
@@ -1508,7 +1509,6 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		{ id: "C08HARB01", name: "harbor-engineering" },
 		{ id: "C08DOCS01", name: "docs-triage" },
 	];
-	const slackMember = { teamId: slackWorkspace.id, workspaceName: slackWorkspace.name };
 	const slackKey = (key: string) => "wlp.mock.slack." + key;
 	function slackTicket(key: string) {
 		const ticket = crypto.randomUUID();
@@ -1524,10 +1524,9 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		const mappings = (): SlackMapping[] => JSON.parse(recall(slackKey("mappings")) || "[]");
 		const status = (): SlackStatus => {
 			if (options.slack === false) return { state: "off" };
-			const links = recall(slackKey("member")) === uid() ? [slackMember] : [];
 			return recall(slackKey("owner")) === uid()
-				? { state: "connected", workspaceName: slackWorkspace.name, mappings: mappings(), links }
-				: { state: "disconnected", links };
+				? { state: "connected", workspaceName: slackWorkspace.name, mappings: mappings() }
+				: { state: "disconnected" };
 		};
 		const owner = () => {
 			if (status().state !== "connected") throw new Error("Connect a Slack workspace first.");
@@ -1581,19 +1580,50 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 			},
 			async disconnectSlack() {
 				owner();
-				for (const key of ["owner", "member", "member-ticket", "mappings", uid()]) keep(slackKey(key), "");
+				for (const key of ["owner", "mappings", uid()]) keep(slackKey(key), "");
 				return status();
 			},
-			async linkSlack(ticket) {
-				claimSlack("member-ticket", ticket);
-				if (recall(slackKey("member")) && recall(slackKey("member")) !== uid())
-					throw new Error("This Slack account is already linked.");
-				keep(slackKey("member"), uid());
-				return status();
+		};
+	}
+
+	// ---- Linked accounts ------------------------------------------------------------------------
+
+	const LINKED_TENANT_NAMES: Record<LinkSurface, string> = {
+		slack: slackWorkspace.name,
+		linear: "Harbor Labs",
+		jira: "Atlassian",
+	};
+	function linkedAccountsActions(world: () => World): LinkedAccountsActions {
+		const key = () => `wlp.mock.linked.${world().profile.uid}`;
+		const list = (): LinkedAccount[] => JSON.parse(recall(key()) || "[]");
+		const store = (next: LinkedAccount[]) => {
+			keep(key(), JSON.stringify(next));
+			return next;
+		};
+		return {
+			async linkedAccounts() {
+				return list();
 			},
-			async unlinkSlack(team) {
-				if (team === slackMember.teamId && recall(slackKey("member")) === uid()) keep(slackKey("member"), "");
-				return status();
+			async linkAccount(ticket) {
+				const [surface, tenant, proof] = ticket.split(".");
+				let account: LinkedAccount | null = null;
+				if (surface === "slack" && tenant && proof)
+					account = { surface, tenant, tenantName: LINKED_TENANT_NAMES.slack, name: "" };
+				else if (surface === "linear" && tenant)
+					account = { surface, tenant: "mock-linear", tenantName: LINKED_TENANT_NAMES.linear, name: "Ada" };
+				if (!account)
+					throw new PlatformError("user", "This link is not valid for this account any more. Start again.", {
+						reason: "link_ticket",
+					});
+				const linked = account;
+				return store([...list().filter(a => a.surface !== linked.surface || a.tenant !== linked.tenant), linked]);
+			},
+			async linkAccountStart({ origin }) {
+				const search = typeof location === "undefined" ? "" : location.search;
+				return { url: `${origin.replace(/\/$/, "")}/settings${search}#link=linear.${crypto.randomUUID()}` };
+			},
+			async unlinkAccount({ surface, tenant }) {
+				return store(list().filter(a => a.surface !== surface || a.tenant !== tenant));
 			},
 		};
 	}
@@ -6026,6 +6056,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				return { state: "disconnected" };
 			},
 			...slackActions(world),
+			...linkedAccountsActions(world),
 			async linear(): Promise<LinearStatus> {
 				await latency(200);
 				if (options.linear === false) return { state: "off" };
@@ -7417,7 +7448,6 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		mockNextAnswer(kind) {
 			nextAnswer = kind;
 		},
-		mockSlackLinkTicket: () => slackTicket("member-ticket"),
 		mockIntegrations(state = "connected", uid = "u_ada") {
 			const at = realNow();
 			keep(`wlp.mock.gitlab.${uid}`, state === "gitlab-reconnect" ? "reconnect" : String(gitlabProjects[0]!.id));
@@ -7438,7 +7468,12 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				}),
 			);
 			keep(slackKey("owner"), uid);
-			keep(slackKey("member"), uid);
+			keep(
+				`wlp.mock.linked.${uid}`,
+				JSON.stringify([
+					{ surface: "slack", tenant: slackWorkspace.id, tenantName: slackWorkspace.name, name: "" },
+				] satisfies LinkedAccount[]),
+			);
 			keep(
 				slackKey("mappings"),
 				JSON.stringify([

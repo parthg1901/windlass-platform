@@ -100,7 +100,7 @@ On GitHub, removing the label cancels a draft. Closing the issue cancels an item
 
 ### From a GitLab issue
 
-After [connecting GitLab in Settings](/docs/settings#gitlab), use the connected account to add the `windlass` label to an open issue in the selected project, or write an issue note beginning with `/windlass`. Windlass re-reads the issue and any command note, then files a **Quick** item. It acknowledges the filing with a 👀 reaction on the issue for a label, or on the note for a command. Redelivering the event, or labelling the issue again while its item is open, does not file another item. Once that item is done, failed or cancelled, the next label or command files a new one.
+After [connecting GitLab in Settings](/docs/settings#gitlab), use the connected account to add the `windlass` label to an open issue in the selected project, or write an issue note beginning with `/windlass`. As on GitHub, the item is filed in the Windlass account connected to the GitLab user who labelled or commented, and that account must have the project selected. Labels and commands from GitLab users not connected to Windlass file nothing. Windlass re-reads the issue and any command note, then files a **Quick** item. It acknowledges the filing with a 👀 reaction on the issue for a label, or on the note for a command. Redelivering the event, or labelling the issue again while its item is open, does not file another item. Once that item is done, failed or cancelled, the next label or command files a new one.
 
 Your own issue starts immediately; an issue someone else wrote starts as a draft. In both cases the issue and note are quoted as untrusted input.
 
@@ -123,6 +123,8 @@ Where the platform has a Linear OAuth client and signing secret, you can file a 
 
 **Placement and limits.** The item resolves its place and agent as any item does. GitHub, Linear and Jira issues and Slack requests share one daily limit, including drafts and filings in progress. If the daily limit is full, a later trigger or redelivery can file the issue once there is room.
 
+**Who it's filed for.** The item belongs to the person who added the label or made the assignment. It is filed in the Windlass account they [linked](/docs/settings#linked-accounts), with that account's GitHub connection, which needs write access to the team's repository. The team owner's account is only used to read the issue and post updates on it. If that person hasn't linked a Windlass account, nothing is filed and Windlass comments once on the issue asking them to link.
+
 **Trust.** Linear identifies the Windlass app as the connected user. Issues arrive as drafts with their authors' text quoted. Review and start the item in Windlass. Its page and list link to the Linear issue by its identifier, for example ENG-123.
 
 **Updates on the issue.** When you start the item, Windlass moves the issue to the first state in the team's Started category. If the issue is already started, it keeps its current state. When a plan needs approval or the item asks you a question, Windlass comments once for that question with a link to the item page.
@@ -137,11 +139,13 @@ Connect Jira Cloud and map a project to a writable GitHub repository in [Setting
 
 To try it, add `windlass` to an open issue or assign it to the account that connected Jira. Creating an issue with either also files a draft. Use `windlass-quick` for Quick mode. A qualifying Bug or issue labelled `bug` also uses Quick. Windlass quotes the issue text for you to review before starting the draft.
 
+The draft belongs to the person who added the label or made the assignment. It is filed in the Windlass account [linked](/docs/settings#linked-accounts) to their Jira account, with that account's GitHub connection. Connecting Jira links your own Jira account. If that person hasn't linked one, nothing is filed and Windlass comments once on the issue asking them to link. The project owner's connection still posts the comments below.
+
 Jira receives a comment linking to the draft, another when the PR opens, and a final outcome with the PR link when available. The issue keeps its Jira status. Only one item is active per site and issue, even after a project changes owners. A fresh trigger after it ends can file another.
 
 ### From Slack
 
-In a [mapped channel](/docs/settings#slack), send `@Windlass Fix the setup guide` or `/windlass quick Fix the setup guide`. Put `quick` first to skip planning. The first time, follow the bot’s private link, confirm your Windlass account in Settings, then send the request again. You need write access to the mapped repository.
+In a [mapped channel](/docs/settings#slack), send `@Windlass Fix the setup guide` or `/windlass quick Fix the setup guide`. Put `quick` first to skip planning. The first time, follow the bot’s private link, confirm it under [Linked accounts](/docs/settings#linked-accounts), then send the request again. The item is filed in your own Windlass account, and your GitHub account needs write access to the mapped repository.
 
 The item uses your saved defaults and shares the daily limit with GitHub, Linear and Jira issues. Windlass posts item links in the mention’s thread when a plan or question needs you, a pull request opens, or work ends. For a slash command, follow the thread under the bot’s acknowledgement.
 

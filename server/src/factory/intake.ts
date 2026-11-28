@@ -190,6 +190,7 @@ export interface SlackFiling {
 	delivery: SlackDelivery;
 	repository: { id: GithubId };
 	generation: string;
+	filer?: import("../contract.js").ItemFiler;
 }
 
 export interface SlackBinding {
@@ -197,6 +198,8 @@ export interface SlackBinding {
 	channelId: string;
 	threadTs: string | null;
 	generation: string;
+	/** The linked Slack member who asked. */
+	filer?: import("../contract.js").ItemFiler;
 }
 
 export function taskOfSlack(raw: string) {
@@ -223,6 +226,8 @@ export interface GitlabBinding {
 	/** The issue's nth filing: an ended item lets it be filed again. */
 	generation: number;
 	sources: string[];
+	/** The linked GitLab user who labelled the issue or wrote the command. */
+	filer?: import("../contract.js").ItemFiler;
 }
 export interface JiraBinding extends Omit<LinearBinding, "origin" | "teamId" | "workspaceId"> {
 	origin: JiraIssueOrigin;
@@ -264,6 +269,8 @@ export interface LinearFiling {
 	 * read now, no longer has it. Only a filing that was interrupted is finished then.
 	 */
 	trigger: { via: "label" | "assignment"; at: number; sender: { id: string; name: string }; lapsed?: true };
+	/** The sender as the Windlass user they linked (issue-intake.ts `resolveFiler`): the account this files in. */
+	filer?: import("../contract.js").ItemFiler;
 }
 
 /** Outcome of filing a verified tracker issue or Slack request. */

@@ -395,12 +395,24 @@ export interface ItemAgent {
 /** How a work item was filed: on the web, through the API, or from a work source (sources/types.ts). */
 export type ItemSource = "web" | "api" | SourceId;
 
+/**
+ * Who filed an item from another surface (Slack, Linear, Jira), when that is not the owner at the web, the API or
+ * GitHub. `verified`: the surface's user is linked to this Windlass user. An item without one is the owner's. Only a
+ * verified filer's item may pay with the owner's plan (pay-with.ts `decidePayer`).
+ */
+export interface ItemFiler {
+	surface: string;
+	externalUserId: string;
+	verified: boolean;
+}
+
 /** The PR closes this issue in the item's repository. The sender added the label or wrote the command. */
 export interface GithubIssueOrigin {
 	jira?: undefined;
 	issue: { number: number; url: string; author: string; trusted: boolean };
 	sender: string;
 	linear?: undefined;
+	filer?: ItemFiler;
 }
 
 /** Linear provenance is separate from the GitHub PR binding. The event sender and issue author may differ. */
@@ -410,6 +422,7 @@ export interface LinearIssueOrigin {
 	linear: { id: string; identifier: string; url: string; author: string; trusted: boolean };
 	sender: string;
 	issue?: undefined;
+	filer?: ItemFiler;
 }
 
 /** Jira text is always third-party, even when the consenting account wrote it. */
@@ -418,6 +431,7 @@ export interface JiraIssueOrigin {
 	sender: string;
 	issue?: undefined;
 	linear?: undefined;
+	filer?: ItemFiler;
 }
 
 export type ItemOrigin = GithubIssueOrigin | LinearIssueOrigin | JiraIssueOrigin;

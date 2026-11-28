@@ -296,10 +296,29 @@ async function run() {
 				labels?: string[];
 				assignee?: StandinPerson | null;
 				creator?: StandinPerson;
+				actor?: StandinPerson;
 				title?: string;
 				description?: string;
 			} = {},
 		) => linear.createIssue({ team, ...input });
+		/** Signs in at Linear as `person` and links that Linear user to `who`: the ticket the web app is sent back with. */
+		const linkTicket = async (who: typeof owner, person: StandinPerson) => {
+			linear.consent = { approve: true, person };
+			try {
+				const start = new URL((await who.linkAccountStart({ surface: "linear", origin: ORIGIN })).url);
+				assert.equal(start.searchParams.get("actor"), null, "a person signs in as themselves");
+				assert.equal(start.searchParams.get("scope"), "read");
+				const answer = await callback(new URL(await linear.authorize(start.href)).searchParams);
+				const landing = new URL(answer.headers.get("location")!);
+				assert.match(landing.hash, /^#link=linear\..+$/);
+				return landing.hash.slice("#link=".length);
+			} finally {
+				linear.consent = { approve: true };
+			}
+		};
+		const linked = [{ surface: "linear", tenant: linear.workspace.id, tenantName: "Acme", name: "Ada Owner" }];
+		const prompts = (issue: StandinIssue) =>
+			[...linear.comments.values()].filter(c => c.issueId === issue.id && c.body.includes("isn't linked")).length;
 		const update = (issue: StandinIssue, patch: Parameters<typeof linear.updateIssue>[1], actor?: StandinPerson) =>
 			linear.updateIssue(issue, patch, actor);
 
@@ -382,6 +401,19 @@ async function run() {
 			assert.equal(saved.teams.find(t => t.id === ops.id)!.mapping, null);
 			assert.equal((await owner.linearTeams()).teams.find(t => t.id === eng.id)!.mapping?.repository.name, "factory");
 		});
+
+		await check(
+			"identity: the owner links their Linear user by signing in as themselves, with a ticket only they can use",
+			async () => {
+				const third = await loginHttp(api).demo();
+				const someone = client.user.getOrCreate([third.profile.uid], { params: { token: third.token } });
+				const ticket = await linkTicket(owner, linear.human);
+				assert.equal(await code(someone.linkAccount(ticket)), "link_ticket", "another user's ticket is refused");
+				assert.deepEqual(await owner.linkAccount(ticket), linked);
+				assert.equal(await code(owner.linkAccount(ticket)), "link_ticket", "a ticket works once");
+				assert.deepEqual(await someone.linkedAccounts(), []);
+			},
+		);
 
 		await check("bad signatures are refused and unmapped teams are ignored, with nothing taken in", async () => {
 			const before = (await rows()).length;
@@ -535,6 +567,37 @@ async function run() {
 			assert.deepEqual(linear.writes, []);
 		});
 
+		await check(
+			"identity: a sender files in the Windlass account they linked; an unlinked one is asked once and files nothing",
+			async () => {
+				const count = (await linearItems()).length;
+				const asked = created(eng, { labels: ["windlass"], actor: linear.stranger });
+				assert.deepEqual(await qualifying(asked.payload), {
+					kind: "ignored",
+					why: "The person who asked has not linked a Windlass account.",
+				});
+				assert.equal(prompts(asked.issue), 1);
+				assert.equal(
+					(await qualifying(update(asked.issue, { assignee: linear.appUser }, linear.stranger))).kind,
+					"ignored",
+				);
+				assert.equal(prompts(asked.issue), 1, "asked once per issue");
+				assert.equal((await linearItems()).length, count);
+
+				// Revoked, the owner is unlinked too; linked again, what they label is theirs, with them as its verified filer.
+				assert.deepEqual(await owner.unlinkAccount({ surface: "linear", tenant: linear.workspace.id }), []);
+				const unlinked = created(eng, { labels: ["windlass"] });
+				assert.equal((await qualifying(unlinked.payload)).kind, "ignored");
+				assert.equal(prompts(unlinked.issue), 1);
+				assert.deepEqual(await owner.linkAccount(await linkTicket(owner, linear.human)), linked);
+				const own = created(eng, { labels: ["windlass"] });
+				assert.equal((await qualifying(own.payload)).kind, "filed");
+				const [item] = await itemsOf(own.issue);
+				assert.deepEqual(item?.origin?.filer, { surface: "linear", externalUserId: linear.human.id, verified: true });
+				await owner.actOnItem({ id: item!.id, action: { kind: "cancel" } });
+			},
+		);
+
 		await check("an issue that no longer qualifies by the time the owner's actor reads it files nothing", async () => {
 			// The label is added and removed again before the delivery is worked on: Linear's own state decides, not the payload.
 			const made = created(eng, { labels: ["windlass"] });
@@ -606,6 +669,7 @@ async function run() {
 					const made = created(eng, {
 						labels: ["windlass"],
 						creator: linear.stranger,
+						actor: linear.human,
 						description: "Do the thing.\n- [ ] ship it\n<!-- hidden words -->",
 					});
 					assert.equal((await qualifying(made.payload)).kind, "filed");
@@ -627,7 +691,11 @@ async function run() {
 					(linear.stranger as { name: string }).name = eve.name;
 				}
 				// An author Linear no longer knows (an integration, a deleted user) is third-party as well.
-				const nobody = created(eng, { labels: ["windlass"], creator: { id: randomUUID(), name: "Gone", app: false } });
+				const nobody = created(eng, {
+					labels: ["windlass"],
+					creator: { id: randomUUID(), name: "Gone", app: false },
+					actor: linear.human,
+				});
 				assert.equal((await qualifying(nobody.payload)).kind, "filed");
 				const [orphan] = await itemsOf(nobody.issue);
 				assert.equal(orphan.state, "draft");
@@ -948,6 +1016,8 @@ async function run() {
 				const consent = new URL(await linear.authorize((await other.linearConnect({ origin: ORIGIN })).url));
 				const ticket = ticketFrom(await callback(consent.searchParams));
 				await other.linearComplete(ticket);
+				// Sam is the second owner's Linear account: what Sam labels is the second owner's.
+				await other.linkAccount(await linkTicket(other, linear.stranger));
 
 				// ENG is the first owner's while it is mapped; OPS is free.
 				assert.equal(
@@ -960,7 +1030,9 @@ async function run() {
 				assert.equal((await linearItems()).length, ownItems + 1);
 				assert.equal((await other.listItems({ source: "linear" })).length, 0);
 				await other.saveLinearMapping({ teamId: ops.id, repositoryId: second.id });
-				assert.deepEqual((await send(created(ops, { labels: ["windlass"] }).payload)).json, { taken: true });
+				assert.deepEqual((await send(created(ops, { labels: ["windlass"], actor: linear.stranger }).payload)).json, {
+					taken: true,
+				});
 				assert.equal((await other.listItems({ source: "linear" })).length, 1);
 				assert.equal((await linearItems()).length, ownItems + 1, "a team of the second owner charged the first");
 
@@ -971,7 +1043,9 @@ async function run() {
 					await code(owner.saveLinearMapping({ teamId: eng.id, repositoryId: repo.id })),
 					"linear_team_taken",
 				);
-				assert.deepEqual((await send(created(eng, { labels: ["windlass"] }).payload)).json, { taken: true });
+				assert.deepEqual((await send(created(eng, { labels: ["windlass"], actor: linear.stranger }).payload)).json, {
+					taken: true,
+				});
 				assert.equal((await other.listItems({ source: "linear" })).length, 2);
 				assert.equal((await linearItems()).length, ownItems + 1, "a team given up charged its former owner");
 

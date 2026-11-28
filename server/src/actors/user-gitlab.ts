@@ -6,12 +6,20 @@ import { assertOrigin, authenticate, checkGeneration, requireServiceFor, service
 import { config, ownEngineEndpoint } from "../config.js";
 import type { GitlabProjectList, GitlabStatus, SessionRepository } from "../contract.js";
 import { challengeOf, GitlabApp, GitlabError, newVerifier, projectAccess, type GitlabToken } from "../gitlab/app.js";
-import { GITLAB_RECONNECT, gitlabApp, issuerOf, openGitlabTicket, type GitlabConnectStore } from "../gitlab/connect.js";
+import {
+	GITLAB_RECONNECT,
+	gitlabApp,
+	gitlabTenant,
+	issuerOf,
+	openGitlabTicket,
+	type GitlabConnectStore,
+} from "../gitlab/connect.js";
 import { decimalId } from "../gitlab/ids.js";
 import { openSecret, sealSecret } from "../repo-secrets.js";
 import { readSignedPayload, signedPayload } from "../signatures.js";
 import { serverSealer } from "../signin/seal.js";
-import { isActorGone, userActor } from "./internal.js";
+import { type HasClient, isActorGone, userActor } from "./internal.js";
+import { surfaceAccountsOf } from "./surface-accounts.js";
 
 const STATE_TTL = 10 * 60_000;
 const invalid = () => new UserError("Start connecting GitLab again.", { code: "gitlab_state" });
@@ -157,6 +165,8 @@ function hookBinding(saved: Grant | undefined) {
 	return projectId && { projectId, bindingId: JSON.stringify([saved.issuer, saved.hook_id]) };
 }
 
+const accounts = (c: Context, app: GitlabApp) => surfaceAccountsOf(c as HasClient, "gitlab", gitlabTenant(app));
+
 type Claimed = { origin: string; verifier: string };
 export const userGitlab = actor({
 	onBeforeConnect: async (c, params: { token: string } | undefined) => {
@@ -296,6 +306,8 @@ export const userGitlab = actor({
 					);
 				});
 				if (previous) await retire(c, app, previous, { viewer: viewerId, token });
+				// Connecting signs in as oneself at GitLab: issues this GitLab user files are filed in this account.
+				await accounts(c, app).internalLink(c.key[0]!, viewerId, "", app.settings.baseUrl);
 				return status(c);
 			});
 		},
@@ -372,6 +384,7 @@ export const userGitlab = actor({
 				});
 				// Local access ends even when the instance is down or the saved token expired.
 				if (app && saved) await retire(c, app, saved);
+				if (app && saved) await accounts(c, app).internalUnlink(c.key[0]!, saved.viewer);
 				return status(c);
 			});
 		},

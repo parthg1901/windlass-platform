@@ -64,7 +64,8 @@ export type SourceBinding = {
 		/** Only the mapping captured at admission authorizes posting (Slack's rule). */
 		mappingGeneration: string | null;
 		/** What the page and the first log line show. Empty names where the source keeps none. */
-		origin: { author: string; sender: string; trusted: boolean };
+		/** `filer`: the linked person on the surface who filed it (contract `ItemFiler`). */
+		origin: { author: string; sender: string; trusted: boolean; filer?: import("../contract.js").ItemFiler };
 		trigger: { via: string | null; at: number; senderId: string } | null;
 		modeReason?: string | null;
 	} & (S extends keyof SourceExtra ? { extra: SourceExtra[S] } : { extra?: undefined });

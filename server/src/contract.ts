@@ -4,7 +4,8 @@
  * contract/github.ts (GitHub, GitLab, Linear, publishing), repository.ts (setup, checks, environments, network, secrets),
  * account.ts (settings, model providers, API tokens), machines.ts, items.ts (work items), reviews.ts,
  * timeline.ts (Windlass/ACP events, timeline), questions.ts (questions, MCP servers), actors.ts (actor
- * actions/events, snapshot), limits.ts (endpoints, paths, size limits), slack.ts (Slack settings), usage.ts,
+ * actions/events, snapshot), limits.ts (endpoints, paths, size limits), slack.ts (Slack settings), identity.ts
+ * (linked accounts on other surfaces), usage.ts,
  * hosted-sizes.ts, isolation.ts.
  */
 
@@ -50,6 +51,7 @@ export * from "./contract/questions.js";
 export * from "./contract/actors.js";
 export * from "./contract/limits.js";
 export * from "./contract/slack.js";
+export * from "./contract/identity.js";
 
 // Sandboxes
 

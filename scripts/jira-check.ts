@@ -84,10 +84,12 @@ async function run() {
 		};
 		const { user: a, uid } = await account(),
 			{ user: b } = await account();
-		for (const [owner, other] of [
-			[a, b],
-			[b, a],
-		]) {
+		// Connecting Jira links the Jira account it signs in as: Ada is a's, Bob is b's.
+		for (const [owner, other, person] of [
+			[a, b, jira.ada],
+			[b, a, jira.bob],
+		] as const) {
+			jira.consentAs = person;
 			const callback = jira.authorize((await owner.jiraConnect({ origin })).url);
 			const back = await fetch(callback, { redirect: "manual" });
 			assert.equal(back.status, 302);
@@ -101,6 +103,9 @@ async function run() {
 			);
 			await assert.rejects(owner.jiraComplete(ticket), { code: "jira_ticket" });
 			await owner.jiraSelectSite("acme");
+			assert.deepEqual(await owner.linkedAccounts(), [
+				{ surface: "jira", tenant: "atlassian", tenantName: "Atlassian", name: person.displayName },
+			]);
 		}
 		const map = { projectId: "10", siteId: "acme", repositoryId: repo.id };
 		await a.saveJiraMapping(map);
@@ -187,17 +192,20 @@ async function run() {
 		await b.saveJiraMapping(map);
 		assert.equal(await jira.post(url, assignment), false);
 		[hook, url] = [...jira.hooks][0];
-		const current = jira.event(assigned, hook);
+		// From here Bob, b's own Jira account, assigns and labels: the project's new owner files as themselves.
+		assigned.fields.assignee = jira.bob;
+		interrupted.fields.creator = jira.bob;
+		const current = jira.event(assigned, hook, jira.bob);
 		assert.equal(await jira.post(url, current), true);
 		assert.deepEqual(await b.listItems(), []);
 		await giveUp();
 		assert.equal(await jira.post(url, current), true);
 		assert.deepEqual(await b.listItems(), []);
-		const fresh = jira.event(assigned, hook);
+		const fresh = jira.event(assigned, hook, jira.bob);
 		await Promise.all([jira.post(url, fresh), jira.post(url, fresh)]);
 		assert.equal((await b.listItems()).length, 1);
 		await assert.rejects(a.actOnItem({ id: failed.id, action: { kind: "retry" } }), { code: "item_conflict" });
-		assert.equal(await jira.post(url, jira.event(interrupted, hook)), true);
+		assert.equal(await jira.post(url, jira.event(interrupted, hook, jira.bob)), true);
 		assert.equal(await site.internalActivateIssue(interrupted.id, uid, "i_0000000000000103", 1), false);
 		assert.equal(
 			(await b.listItems()).filter(i => i.origin?.jira?.id === interrupted.id && i.state === "draft").length,
@@ -210,16 +218,42 @@ async function run() {
 		await b.jiraSelectSite("harbor");
 		await b.saveJiraMapping({ ...map, siteId: "harbor" });
 		[hook, url] = [...jira.hooks][0];
-		const twin = jira.event(jira.issue("harbor", assigned.id, ["windlass"]), hook);
+		const twin = jira.event(jira.issue("harbor", assigned.id, ["windlass"]), hook, jira.bob);
 		assert.equal(await jira.post(url, twin), true);
 		assert.equal(
 			(await b.listItems()).filter(i => i.origin?.jira?.id === assigned.id && i.state === "draft").length,
 			2,
 		);
+
+		// The person who labels files in their own account: Ada labels on b's project and the item is a's.
+		const prompts = (key: string) =>
+			jira.comments.filter(c => c.issue === key && c.body.content[0]?.content[0]?.text.includes("isn't linked")).length;
+		const strangers = jira.issue("harbor", "104", ["windlass"]);
+		assert.equal(await jira.post(url, jira.event(strangers, hook, jira.sam)), false);
+		assert.equal(await jira.post(url, jira.event(strangers, hook, jira.sam)), false);
+		assert.equal(prompts("harbor/104"), 1, "an unlinked person is asked to link once per issue");
+		assert.equal((await a.listItems()).filter(i => i.origin?.jira?.id === "104").length, 0);
+		assert.equal((await b.listItems()).filter(i => i.origin?.jira?.id === "104").length, 0);
+		const adas = jira.issue("harbor", "105", ["windlass"]);
+		assert.equal(await jira.post(url, jira.event(adas, hook, jira.ada)), true);
+		const filed = (await a.listItems()).find(i => i.origin?.jira?.id === "105")!;
+		assert.deepEqual(filed.origin?.filer, { surface: "jira", externalUserId: "acct:ada", verified: true });
+		assert.equal((await b.listItems()).filter(i => i.origin?.jira?.id === "105").length, 0);
+		// Its comments are written by the project's owner, with b's connection.
+		assert.equal((await milestone(filed.id, "filed")).author.accountId, jira.bob.accountId);
+		// Unlinking makes Ada unlinked again.
+		assert.deepEqual(await a.unlinkAccount({ surface: "jira", tenant: "atlassian" }), []);
+		const after = jira.issue("harbor", "106", ["windlass"]);
+		assert.equal(await jira.post(url, jira.event(after, hook, jira.ada)), false);
+		assert.equal(prompts("harbor/106"), 1);
+		assert.equal((await a.listItems()).filter(i => i.origin?.jira?.id === "106").length, 0);
+
 		assert.equal((await b.disconnectJira()).state, "disconnected");
 		assert.equal(jira.hooks.size, 0);
 		assert.equal(await jira.post(url, twin), false);
-		console.log("PASS Jira OAuth, signed intake, comments, retry, owner handoff, paging and disconnect");
+		console.log(
+			"PASS Jira OAuth and account links, signed intake as the person who asked, comments, retry, owner handoff, paging and disconnect",
+		);
 	} finally {
 		child.kill("SIGTERM");
 		const guard = setTimeout(() => child.kill("SIGKILL"), 10_000);

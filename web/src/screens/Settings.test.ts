@@ -562,7 +562,6 @@ describe("Integrations in Settings", () => {
 			const card = slack(screen.host);
 			expect(location.hash).toBe("");
 			expect(card.textContent).toContain("Acme Engineering");
-			expect(card.textContent).toContain("Not linked");
 			expect(card.querySelector('option[value="7105"]')).toBeNull(); // read-only
 			const channel = card.querySelector<HTMLSelectElement>('[aria-label="Slack channel"]')!;
 			expect(Array.from(channel.options, o => o.text)).toEqual([
@@ -612,9 +611,11 @@ describe("Integrations in Settings", () => {
 		}
 	});
 
-	it("scrubs private Slack links and lets a member confirm and unlink without installing a workspace", async () => {
+	const linked = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-testid='linked-accounts']")!;
+
+	it("scrubs a private link and lets a member confirm and unlink it without installing a workspace", async () => {
 		const client = createMockClient({ pace: 0 });
-		const fragment = "#slack-link=" + client.mockSlackLinkTicket();
+		const fragment = "#link=slack.T08ACME01." + crypto.randomUUID();
 		history.replaceState(null, "", "/settings?mock=1" + fragment);
 		rememberAppPage();
 		expect(lastAppHref()).toBe("/settings?mock=1");
@@ -623,24 +624,88 @@ describe("Integrations in Settings", () => {
 		HTMLElement.prototype.scrollIntoView = scroll;
 		const screen = await open(client, fragment);
 		try {
-			const card = slack(screen.host);
+			const card = linked(screen.host);
 			expect(location.hash).toBe("");
-			expect(card.textContent).toContain("Not linked");
+			expect(card.textContent).toContain("No linked accounts.");
 			expect(card.innerHTML).not.toContain(fragment.split("=")[1]!);
 			expect(scroll.mock.contexts).toEqual([card]);
-			expect(document.activeElement?.textContent).toBe("Link Slack identity");
-			await press(card, "Link Slack identity");
+			expect(document.activeElement?.textContent).toBe("Link this account");
+			await press(card, "Link this account");
 			await screen.settle();
+			expect(card.querySelector('[aria-label="Linked accounts"]')?.textContent).toContain("Slack");
 			expect(card.textContent).toContain("Acme Engineering");
 			expect(card.textContent).not.toContain("T08ACME01");
-			expect(card.textContent).toContain("Not connected");
-			await press(card, "Unlink Slack identity in Acme Engineering");
+			expect(card.textContent).not.toContain("Link this account");
+			expect(slack(screen.host).textContent).toContain("Not connected");
+			await press(card, "Unlink Slack account in Acme Engineering");
 			await screen.settle();
-			expect(card.textContent).toContain("Not linked");
+			expect(card.textContent).toContain("No linked accounts.");
+			expect(await client.user(screen.auth).linkedAccounts()).toEqual([]);
 		} finally {
 			HTMLElement.prototype.scrollIntoView = previousScroll;
 			screen.close();
 			client.dispose();
+		}
+	});
+
+	it("starts linking a Linear account and explains a failed link", async () => {
+		const client = createMockClient({ pace: 0 });
+		const user = client.user;
+		const start = vi.fn();
+		vi.spyOn(client, "user").mockImplementation(auth => {
+			const api = user(auth);
+			return {
+				...api,
+				linkAccountStart: input => {
+					start(input);
+					return api.linkAccountStart(input);
+				},
+			};
+		});
+		const screen = await open(client, "#link-error=denied");
+		const assign = vi.fn();
+		try {
+			const card = linked(screen.host);
+			expect(location.hash).toBe("");
+			expect(card.querySelector('[role="alert"]')?.textContent).toBe(
+				"Linear was not given access. Try again when you’re ready.",
+			);
+			expect(card.textContent).toContain("Connecting Jira in Settings links the Jira account you connect with.");
+			vi.stubGlobal("location", {
+				assign,
+				origin: "http://localhost",
+				pathname: "/settings",
+				search: "?mock=1",
+				hash: "",
+			});
+			try {
+				await press(card, "Link Linear account…");
+			} finally {
+				vi.unstubAllGlobals();
+			}
+			expect(start).toHaveBeenCalledWith({ surface: "linear", origin: "http://localhost" });
+			const landing = new URL(assign.mock.calls[0]![0]);
+			expect(landing.pathname + landing.search).toBe("/settings?mock=1");
+			expect(landing.hash).toMatch(/^#link=linear\./);
+		} finally {
+			screen.close();
+			client.dispose();
+		}
+		for (const [hash, message] of [
+			["#link-error=used", "That link expired. Start again."],
+			["#link-error=other", "The account could not be linked. Try again."],
+		] as const) {
+			const client = createMockClient({ pace: 0, linear: false, jira: false });
+			const screen = await open(client, hash);
+			try {
+				const card = linked(screen.host);
+				expect(card.querySelector('[role="alert"]')?.textContent).toBe(message);
+				expect(card.textContent).not.toContain("Link Linear account…");
+				expect(card.textContent).not.toContain("Connecting Jira");
+			} finally {
+				screen.close();
+				client.dispose();
+			}
 		}
 	});
 
@@ -662,7 +727,7 @@ describe("Integrations in Settings", () => {
 		}
 		for (const options of [{ slack: false }, { items: "off" }] as const) {
 			const client = createMockClient({ pace: 0, ...options });
-			const screen = await open(client, "?mock=1#slack-link=private-proof");
+			const screen = await open(client, "?mock=1#link=slack.T123.private-proof");
 			try {
 				expect(location.hash).toBe("");
 				expect(location.search).toBe("?mock=1");

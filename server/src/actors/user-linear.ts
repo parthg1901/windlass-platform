@@ -12,6 +12,7 @@
  *   linear_delivery    the deliveries that were taken in, for redelivery.
  *
  * Which user a delivery goes to is `linearWorkspace`'s claim of the team, made when a mapping is saved and given up when it ends.
+ * That user reads the issue; the item is filed in the account of the person who triggered it (`resolveFiler`), or not at all.
  *
  * An app token cannot say which person authorized it (linear/app.ts), so no Linear person is the owner's own: every issue is filed
  * as third-party text (a draft, quoted), as GitHub's issues of other people are.
@@ -38,12 +39,21 @@ import {
 	type LinearWrite,
 	type LinearTeam as ProtocolTeam,
 } from "../linear/app.js";
-import { type LinearClaim, type LinearConnectStore, openLinearTicket } from "../linear/connect.js";
+import {
+	type LinearClaim,
+	type LinearConnectStore,
+	type LinearLinkTicket,
+	openLinearLinkTicket,
+	openLinearTicket,
+} from "../linear/connect.js";
 import { isTriggerLabel, type LinearDelivery, type LinearDispatch } from "../linear/webhook.js";
 import { openSecret, sealSecret } from "../repo-secrets.js";
 import { readSignedPayload, signedPayload } from "../signatures.js";
 import { serverSealer } from "../signin/seal.js";
+import { createHash } from "node:crypto";
 import { createClient } from "rivetkit/client";
+import { resolveFiler } from "./issue-intake.js";
+import { linkedAccountsUrl, surfaceAccountsOf } from "./surface-accounts.js";
 import { isActorGone, type ActorClient } from "./internal.js";
 import type { ItemsState } from "./user-items.js";
 
@@ -386,6 +396,50 @@ export async function beginLinearConnect(c: LinearCtx, input: { origin: string }
 	}
 }
 
+/** Nonces of a sign-in that proves a Linear person (a linked account) start with this; a connection's never do. */
+export const LINK_NONCE = "link.";
+
+/** Begins a sign-in at Linear as oneself, to link that Linear user to this account: the address to send the browser to. */
+export async function beginLinearLink(c: LinearCtx, input: { origin: string }): Promise<{ url: string }> {
+	const app = requireLinear();
+	const origin = typeof input?.origin === "string" ? input.origin.replace(/\/+$/, "") : "";
+	if (!config.origins.includes(origin))
+		throw new UserError("Linear can only be linked from the web app's own address.", { code: "origin_not_allowed" });
+	const verifier = newVerifier();
+	const nonce = LINK_NONCE + newVerifier();
+	const now = Date.now();
+	await c.db.execute("DELETE FROM linear_state WHERE expires_at <= ?", now);
+	await c.db.execute(
+		"DELETE FROM linear_state WHERE nonce NOT IN (SELECT nonce FROM linear_state ORDER BY expires_at DESC LIMIT ?)",
+		MAX_PENDING - 1,
+	);
+	await c.db.execute(
+		"INSERT INTO linear_state (nonce, verifier, origin, expires_at) VALUES (?, ?, ?, ?)",
+		nonce,
+		verifier,
+		origin,
+		now + LINEAR_STATE_TTL_MS,
+	);
+	return { url: app.authorizeUrl(issueState(c.key[0]!, nonce, origin, now), challengeOf(verifier), "person") };
+}
+
+/** The Linear person a link ticket proves, taking its state out of the list; null for a ticket not this user's or used. */
+export async function completeLinearLink(c: LinearCtx, ticket: string) {
+	let proven: LinearLinkTicket;
+	try {
+		proven = openLinearLinkTicket(c.key[0]!, ticket);
+	} catch {
+		return null;
+	}
+	if (!proven.nonce.startsWith(LINK_NONCE)) return null;
+	const claimed = await c.db.execute(
+		"DELETE FROM linear_state WHERE nonce = ? AND expires_at > ? RETURNING nonce",
+		`ticket:${proven.nonce}`,
+		Date.now(),
+	);
+	return claimed.length ? proven : null;
+}
+
 /** Takes a state's number out of the list: it is there once. Answers with the verifier and the origin that began it. */
 export async function claimLinearState(
 	c: LinearCtx,
@@ -667,7 +721,7 @@ function issueUrl(reported: string, urlKey: string, identifier: string): string 
 export async function fileLinearDelivery(
 	c: LinearCtx,
 	delivery: LinearDelivery,
-	file: (filing: LinearFiling) => Promise<TrackerFiled>,
+	file: (filing: LinearFiling, uid: string) => Promise<TrackerFiled>,
 ): Promise<LinearDispatch> {
 	const app = linearApp();
 	const stored = await readConnection(c.db);
@@ -716,11 +770,11 @@ async function decide(
 	reasons: Array<"label" | "assignment">,
 	teamId: string,
 	repositoryId: GithubId,
-	file: (filing: LinearFiling) => Promise<TrackerFiled>,
+	file: (filing: LinearFiling, uid: string) => Promise<TrackerFiled>,
 ): Promise<TrackerFiled> {
-	let issue;
+	let issue, token: string;
 	try {
-		const { token } = await accessToken(c, app);
+		({ token } = await accessToken(c, app));
 		issue = await app.issue(token, delivery.issueId);
 	} catch (error) {
 		if (error instanceof LinearError && error.unauthorized)
@@ -736,27 +790,65 @@ async function decide(
 		assignment: issue.assigneeId !== null && lower(issue.assigneeId) === stored.appUser.id,
 	};
 	const via = reasons.find(reason => holds[reason]);
-	return file({
-		issue: {
-			id: lower(issue.id),
-			identifier: issue.identifier,
-			url: issueUrl(issue.url, stored.workspace.urlKey, issue.identifier),
-			title: issue.title,
-			description: issue.description,
-			labels: issue.labels.map(label => label.name),
-			creator: issue.creator && { id: lower(issue.creator.id), name: issue.creator.name },
-			closed: issue.archived || issue.stateType === "completed" || issue.stateType === "canceled",
+	// The item is the sender's, in their own account: never the owner's on their behalf.
+	const sender = delivery.actorId && lower(delivery.actorId);
+	const filer = await resolveFiler(c, "linear", stored.workspace.id, sender);
+	if (!filer) {
+		if (via && sender) await askToLink(c, app, token, stored.workspace.id, issue.id, sender);
+		console.log(`linear.intake.unlinked workspace=${stored.workspace.id} delivery=${lower(delivery.deliveryId)}`);
+		return { kind: "ignored", why: "The person who asked has not linked a Windlass account." };
+	}
+	return file(
+		{
+			issue: {
+				id: lower(issue.id),
+				identifier: issue.identifier,
+				url: issueUrl(issue.url, stored.workspace.urlKey, issue.identifier),
+				title: issue.title,
+				description: issue.description,
+				labels: issue.labels.map(label => label.name),
+				creator: issue.creator && { id: lower(issue.creator.id), name: issue.creator.name },
+				closed: issue.archived || issue.stateType === "completed" || issue.stateType === "canceled",
+			},
+			team: { id: teamId, workspaceId: stored.workspace.id },
+			repository: { id: repositoryId },
+			owner: { linearUserId: NOBODY },
+			trigger: {
+				via: via ?? reasons[0]!,
+				at: delivery.sentAt,
+				sender: { id: sender || NOBODY, name: "a Linear user" },
+				...(via ? {} : { lapsed: true as const }),
+			},
+			filer: filer.filer,
 		},
-		team: { id: teamId, workspaceId: stored.workspace.id },
-		repository: { id: repositoryId },
-		owner: { linearUserId: NOBODY },
-		trigger: {
-			via: via ?? reasons[0]!,
-			at: delivery.sentAt,
-			sender: { id: delivery.actorId ?? NOBODY, name: "a Linear user" },
-			...(via ? {} : { lapsed: true as const }),
-		},
-	});
+		filer.uid,
+	);
+}
+
+/** Asks an unlinked person, once per issue, to link their Linear account. Best effort: the delivery is decided either way. */
+async function askToLink(
+	c: LinearCtx,
+	app: LinearApp,
+	token: string,
+	workspaceId: string,
+	issueId: string,
+	person: string,
+) {
+	try {
+		if (!(await surfaceAccountsOf(c, "linear", workspaceId).internalPromptOnce(person, issueId))) return;
+		const id = createHash("sha256").update(`link-prompt:${issueId}:${person}`).digest("hex");
+		await app.comment(
+			token,
+			issueId,
+			`${id.slice(0, 8)}-${id.slice(8, 12)}-4${id.slice(13, 16)}-8${id.slice(17, 20)}-${id.slice(20, 32)}`,
+			`Windlass files work in the Windlass account of the person who asks for it, and that person's Linear account isn't linked yet, so nothing was filed. Link your Linear account in Windlass, then add the label or assignment again: ${linkedAccountsUrl(config.origins[0] ?? "")}`,
+		);
+	} catch (error) {
+		c.log.warn({
+			msg: "Could not ask a Linear user to link their account",
+			status: error instanceof LinearError ? error.status : undefined,
+		});
+	}
 }
 
 // ---------------------------------------------------------------------------------------------
