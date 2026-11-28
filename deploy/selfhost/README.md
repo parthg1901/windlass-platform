@@ -256,6 +256,15 @@ Docker rotates the services' JSON logs at 32 MiB with up to three files per serv
 
 The platform and the runner name the log driver of every container they start, whatever the daemon's default. Session, relay, egress and helper containers use `--log-driver none`: nothing reads those logs, and an agent can write to its session container's main process output, so a default unbounded log would let it fill the host's disk. The runner's own container, started by setup's printed command or the Machines page, uses `--log-driver json-file --log-opt max-size=16m --log-opt max-file=3`, and `docker logs windlass-runner` still works. Containers created before that change keep the log settings they were created with until they are replaced.
 
+### Releasing to a running stack
+
+`release.sh <stack env file>` releases the checked-out commit. It builds the server image, then backs up first only when the newest backup is older than `SELFHOST_RELEASE_BACKUP_MAX_AGE_HOURS` (default 6; a backup restarts the engine). Then it replaces only the server. The engine is replaced only when its image or its Compose definition differs from the running container. In that case the server is stopped first, and it starts once the engine reports ready (see Engine readiness). On failure the previous env file is put back and the previous release started again. `SELFHOST_RELEASE_DRY_RUN=1` prints the plan and changes nothing. The script's header lists the other settings: history and log directories, minimum free disk, backup command and wait times.
+
+```sh
+SELFHOST_RELEASE_DRY_RUN=1 deploy/selfhost/release.sh "$ENV"
+deploy/selfhost/release.sh "$ENV"
+```
+
 ### Docker daemon settings
 
 On a platform host, set `live-restore` and a bounded default log in `/etc/docker/daemon.json`, for the containers that set none themselves (a tunnel connector, for example):
