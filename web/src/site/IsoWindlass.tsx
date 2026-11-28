@@ -15,8 +15,8 @@ import type { CSSProperties } from "react";
 
 const C = Math.cos(Math.PI / 6);
 const S = 0.5;
-const OX = 512;
-const OY = 52;
+const OX = 566;
+const OY = 50;
 
 type Point = [number, number];
 
@@ -32,7 +32,7 @@ const at = (x: number, y: number, z: number) => iso(x, y, z).map(f).join(" ");
 /* ---- the layout and the clock ---------------------------------------------------------------------- */
 
 const LINE_X = 100;
-const START = 506;
+const START = 584;
 const END = 142;
 const HAUL = START - END;
 const LOOP = 14;
@@ -45,10 +45,11 @@ const ROPE_Z = DRUM.z - DRUM.r;
 const TURN = (2 * Math.PI * DRUM.r) / (HAUL / LOOP);
 
 const GATES = [
-	{ y: 434, n: "02", label: "implement", kind: "implement" },
-	{ y: 356, n: "03", label: "check", kind: "check" },
-	{ y: 278, n: "04", label: "ci", kind: "ci" },
-	{ y: 202, n: "05", label: "review", kind: "review" },
+	{ y: 512, n: "02", label: "plan", kind: "plan" },
+	{ y: 434, n: "03", label: "build", kind: "implement" },
+	{ y: 356, n: "04", label: "check", kind: "check" },
+	{ y: 278, n: "05", label: "ci", kind: "ci" },
+	{ y: 202, n: "06", label: "review", kind: "review" },
 ] satisfies { y: number; n: string; label: string; kind: GateKind }[];
 
 const CRATES = ["#412", "#418", "#423", "#427"];
@@ -166,7 +167,7 @@ function Frame({ x }: { x: number }) {
 	);
 }
 
-type GateKind = "implement" | "check" | "ci" | "review";
+type GateKind = "plan" | "implement" | "check" | "ci" | "review";
 
 function Lamp({
 	x,
@@ -212,6 +213,35 @@ function SideLamp({ x, y, z, delay }: { x: number; y: number; z: number; delay: 
  */
 function Gate({ kind, y, part, delay }: { kind: GateKind; y: number; part: "back" | "front"; delay: number }) {
 	const L = LINE_X;
+	if (kind === "plan") {
+		if (part === "back")
+			return <Box className="iso-post" x0={L - 26} x1={L - 22} y0={y - 2} y1={y + 2} z0={0} z1={52} />;
+		const tag = (dx: number, z: number) => (
+			<g key={dx}>
+				<path className="iso-cable" d={`M${at(L + dx, y, 50)} L${at(L + dx, y, z + 6)}`} />
+				<Box className="iso-tag" x0={L + dx - 4} x1={L + dx + 4} y0={y - 1} y1={y + 1} z0={z} z1={z + 6} />
+			</g>
+		);
+		return (
+			<g>
+				<Box className="iso-post" x0={L + 22} x1={L + 26} y0={y - 2} y1={y + 2} z0={0} z1={52} />
+				<Box className="iso-beam" x0={L - 26} x1={L + 26} y0={y - 3} y1={y + 3} z0={50} z1={56} />
+				{tag(-13, 34)}
+				{tag(0, 38)}
+				{tag(13, 34)}
+				<Box className="iso-post" x0={L + 42} x1={L + 45} y0={y - 1.5} y1={y + 1.5} z0={0} z1={22} />
+				<polygon
+					className="iso-t iso-board"
+					points={pts([L + 34, y - 12, 30], [L + 54, y - 12, 22], [L + 54, y + 12, 22], [L + 34, y + 12, 30])}
+				/>
+				<path
+					className="iso-screen-lines iso-board-lines"
+					d={[[-7], [-1], [5]].map(([d]) => `M${at(L + 40, y + d!, 27.6)} L${at(L + 50, y + d!, 23.6)}`).join(" ")}
+				/>
+				<Lamp x={L} y={y + 3} z={56} delay={delay} r={3} />
+			</g>
+		);
+	}
 	if (kind === "implement") {
 		if (part === "back")
 			return <Box className="iso-wall" x0={L - 28} x1={L - 24} y0={y - 18} y1={y + 18} z0={0} z1={42} />;
@@ -300,7 +330,7 @@ function Gate({ kind, y, part, delay }: { kind: GateKind; y: number; part: "back
 }
 
 function GateLabel({ y, n, label, kind }: { y: number; n: string; label: string; kind: GateKind }) {
-	const [x0, y0] = iso(72, y, kind === "ci" ? 70 : kind === "implement" ? 44 : 52);
+	const [x0, y0] = iso(72, y, kind === "ci" ? 70 : kind === "implement" ? 44 : kind === "plan" ? 54 : 52);
 	const x1 = x0 - 18;
 	const y1 = (kind === "ci" ? y0 + 10 : y0) - 12;
 	return (
@@ -347,26 +377,29 @@ function PullTag({ index, label }: { index: number; label: string }) {
 			transform={`translate(${f(x)} ${f(y)})`}
 		>
 			<g className="iso-pull-in">
-				<rect x={-62} y={-13} width={124} height={26} rx={7} />
-				<circle cx={-49} cy={0} r={3} />
-				<text x={-40} y={4}>
-					PR {label} · ready for you
+				<rect x={-84} y={-13} width={168} height={26} rx={7} />
+				<circle cx={-71} cy={0} r={3} />
+				<text x={-62} y={4}>
+					PR {label} · windlass/verified ✓
 				</text>
 			</g>
 		</g>
 	);
 }
 
+/** A part of the picture that builds in on load: the `i`th, 160 ms after the one before (landing.css `.iso-in`). */
+const build = (i: number, className = "iso-in") => ({ className, style: { "--i": i } as CSSProperties });
+
 /* ---- the picture -------------------------------------------------------------------------------- */
 
 export function IsoWindlass() {
 	const { y: dy, z: dz, r, from, to, flange } = DRUM;
-	const rope = `M${at(LINE_X, 540, ROPE_Z)} L${at(LINE_X, dy, ROPE_Z)}`;
+	const rope = `M${at(LINE_X, 620, ROPE_Z)} L${at(LINE_X, dy, ROPE_Z)}`;
 	const coils: string[] = [];
 	for (let x = from + 6; x <= to - 5; x += 9.5) coils.push(`M${arc(x, dy, dz, r + 0.6, -135, 45, 28).join(" L")}`);
 	const grid: string[] = [];
-	for (let x = 0; x <= 200; x += 40) grid.push(`M${at(x, 0, 0)} L${at(x, 540, 0)}`);
-	for (let y = 0; y <= 540; y += 40) grid.push(`M${at(0, y, 0)} L${at(200, y, 0)}`);
+	for (let x = 0; x <= 200; x += 40) grid.push(`M${at(x, 0, 0)} L${at(x, 620, 0)}`);
+	for (let y = 0; y <= 620; y += 40) grid.push(`M${at(0, y, 0)} L${at(200, y, 0)}`);
 	const timing = {
 		"--iso-loop": `${LOOP}s`,
 		"--iso-gap": `${GAP}s`,
@@ -374,91 +407,105 @@ export function IsoWindlass() {
 		"--iso-click": `${f((TURN / 16) * 1000) / 1000}s`,
 		"--iso-dash": `${f((8 / (HAUL / LOOP)) * 1000) / 1000}s`,
 	} as CSSProperties;
-	const [ex, ey] = iso(LINE_X - 18, 526, 0);
+	const [ex, ey] = iso(LINE_X - 18, 606, 0);
 	const [wx, wy] = iso(to + 30, dy - 40, dz + 30);
 	const travel = { "--iso-dx": `${f(HAUL * C)}px`, "--iso-dy": `${f(-HAUL * S)}px` } as CSSProperties;
 	return (
-		<svg className="iso" viewBox="0 8 790 424" role="img" aria-labelledby="iso-title" style={{ ...timing, ...travel }}>
+		<svg className="iso" viewBox="0 8 850 468" role="img" aria-labelledby="iso-title" style={{ ...timing, ...travel }}>
 			<title id="iso-title">
-				A windlass on a deck hauls work items in on its line. Each passes implement, check, CI and review, and comes up
-				as a pull request ready for you.
+				A windlass on a deck hauls work items in on its line. Each is planned, built, checked, run through CI and
+				reviewed, and comes up as a pull request ready for you.
 			</title>
 
 			{/* the deck */}
-			<Box className="iso-deck" x0={0} x1={200} y0={0} y1={540} z0={-12} z1={0} />
-			<path className="iso-grid" d={grid.join(" ")} />
-			<path
-				className="iso-track"
-				d={`M${at(LINE_X - 18, 540, 0)} L${at(LINE_X - 18, dy + 50, 0)} M${at(LINE_X + 18, 540, 0)} L${at(LINE_X + 18, dy + 50, 0)}`}
-			/>
+			<g {...build(0)}>
+				<Box className="iso-deck" x0={0} x1={200} y0={0} y1={620} z0={-12} z1={0} />
+				<path className="iso-grid" d={grid.join(" ")} />
+				<path
+					className="iso-track"
+					d={`M${at(LINE_X - 18, 620, 0)} L${at(LINE_X - 18, dy + 50, 0)} M${at(LINE_X + 18, 620, 0)} L${at(LINE_X + 18, dy + 50, 0)}`}
+				/>
+			</g>
 
 			{/* the windlass: back frame, drum with its line, front frame and crank */}
-			<Frame x={from - 16} />
-			<path className="iso-l iso-flange" d={cylinder(from - 4, from, dy, dz, flange)} />
-			<path className="iso-drum" d={cylinder(from, to, dy, dz, r)} />
-			<path className="iso-coils" d={coils.join(" ")} />
-			<path className="iso-l iso-flange" d={cylinder(to, to + 4, dy, dz, flange)} />
-			<g transform={face(to + 4, dy, dz)}>
-				<circle className="iso-r iso-cap" r={flange} />
-				<g className="iso-spin">
-					<path className="iso-ratchet" d={teeth(flange - 9, 16, 4)} />
-					<path
-						className="iso-spokes"
-						d={`M0 ${-flange + 13} V${flange - 13} M${-(flange - 13) * C} ${-(flange - 13) * S} L${(flange - 13) * C} ${(flange - 13) * S} M${-(flange - 13) * C} ${(flange - 13) * S} L${(flange - 13) * C} ${-(flange - 13) * S}`}
-					/>
-					<circle className="iso-tick" cx={0} cy={-(flange - 5)} r={2.2} />
-				</g>
-				<circle className="iso-axle" r={5} />
-				<g className="iso-pawl" transform={`translate(${f((flange - 2) * 0.7)} ${f(-(flange - 2) * 0.72)})`}>
-					<g className="iso-pawl-arm">
-						<path d="M0 0 L-9 9 L-6 11 Z" />
-						<circle r={2} />
+			<g {...build(GATES.length + 1)}>
+				<Frame x={from - 16} />
+				<path className="iso-l iso-flange" d={cylinder(from - 4, from, dy, dz, flange)} />
+				<path className="iso-drum" d={cylinder(from, to, dy, dz, r)} />
+				<path className="iso-coils" d={coils.join(" ")} />
+				<path className="iso-l iso-flange" d={cylinder(to, to + 4, dy, dz, flange)} />
+				<g transform={face(to + 4, dy, dz)}>
+					<circle className="iso-r iso-cap" r={flange} />
+					<g className="iso-spin">
+						<path className="iso-ratchet" d={teeth(flange - 9, 16, 4)} />
+						<path
+							className="iso-spokes"
+							d={`M0 ${-flange + 13} V${flange - 13} M${-(flange - 13) * C} ${-(flange - 13) * S} L${(flange - 13) * C} ${(flange - 13) * S} M${-(flange - 13) * C} ${(flange - 13) * S} L${(flange - 13) * C} ${-(flange - 13) * S}`}
+						/>
+						<circle className="iso-tick" cx={0} cy={-(flange - 5)} r={2.2} />
+					</g>
+					<circle className="iso-axle" r={5} />
+					<g className="iso-pawl" transform={`translate(${f((flange - 2) * 0.7)} ${f(-(flange - 2) * 0.72)})`}>
+						<g className="iso-pawl-arm">
+							<path d="M0 0 L-9 9 L-6 11 Z" />
+							<circle r={2} />
+						</g>
 					</g>
 				</g>
-			</g>
-			<Frame x={to + 12} />
-			<g transform={face(to + 18, dy, dz)}>
-				<g className="iso-spin">
-					<path className="iso-crank" d="M0 0 L0 -24" />
-					<circle className="iso-crank-knob" cx={0} cy={-24} r={3.4} />
+				<Frame x={to + 12} />
+				<g transform={face(to + 18, dy, dz)}>
+					<g className="iso-spin">
+						<path className="iso-crank" d="M0 0 L0 -24" />
+						<circle className="iso-crank-knob" cx={0} cy={-24} r={3.4} />
+					</g>
 				</g>
 			</g>
 
 			{/* the line and what it hauls */}
-			<path className="iso-rope" d={rope} />
-			<path className="iso-rope-lay" d={rope} />
-			{GATES.map(gate => (
-				<Gate key={gate.y} kind={gate.kind} y={gate.y} part="back" delay={0} />
+			<g {...build(GATES.length + 2, "iso-in-fade")}>
+				<path className="iso-rope" d={rope} />
+				<path className="iso-rope-lay" d={rope} />
+			</g>
+			{GATES.map((gate, index) => (
+				<g key={gate.y} {...build(index + 1)}>
+					<Gate kind={gate.kind} y={gate.y} part="back" delay={0} />
+				</g>
 			))}
-			<g className="iso-crates">
+			<g className="iso-crates iso-in-fade" style={{ "--i": GATES.length + 3 } as CSSProperties}>
 				{CRATES.map((label, index) => (
 					<Crate key={label} index={index} label={label} />
 				))}
 			</g>
-			{GATES.map(gate => {
+			{GATES.map((gate, index) => {
 				const at = (LOOP * (START - gate.y)) / HAUL;
-				return <Gate key={gate.y} kind={gate.kind} y={gate.y} part="front" delay={(at % GAP) - GAP} />;
+				return (
+					<g key={gate.y} {...build(index + 1)}>
+						<Gate kind={gate.kind} y={gate.y} part="front" delay={(at % GAP) - GAP} />
+					</g>
+				);
 			})}
 
 			{/* labels */}
-			{GATES.map(gate => (
-				<GateLabel key={gate.y} {...gate} />
+			{GATES.map((gate, index) => (
+				<g key={gate.y} {...build(index + 1.6, "iso-in-fade")}>
+					<GateLabel {...gate} />
+				</g>
 			))}
-			<g className="iso-label">
+			<g className="iso-label iso-in-fade" style={{ "--i": 0.6 } as CSSProperties}>
 				<path className="iso-leader" d={`M${f(ex - 2)} ${f(ey - 2)} L${f(ex - 22)} ${f(ey - 14)} H${f(ex - 28)}`} />
 				<text x={f(ex - 32)} y={f(ey - 11)} textAnchor="end">
 					<tspan className="iso-label-n">01</tspan> file
 				</text>
 				<text className="iso-label-sub" x={f(ex - 32)} y={f(ey + 2.5)} textAnchor="end">
-					issue, API or Factory
+					an issue or a chat
 				</text>
 			</g>
-			<g className="iso-label">
+			<g className="iso-label iso-in-fade" style={{ "--i": GATES.length + 1.6 } as CSSProperties}>
 				<text x={f(wx + 18)} y={f(wy)}>
-					<tspan className="iso-label-n">06</tspan> windlass
+					<tspan className="iso-label-n">07</tspan> verified
 				</text>
 				<text className="iso-label-sub" x={f(wx + 18)} y={f(wy + 13.5)}>
-					hauls it in; you merge
+					08 · you merge, or auto-merge
 				</text>
 			</g>
 			{PULLS.map((label, index) => (

@@ -1,7 +1,7 @@
 import type { LoginProvider } from "@contract";
 import { useEffect, useRef, useState } from "react";
 import { GitHubLogo, GoogleLogo } from "../components/AgentLogos";
-import { InfoIcon, WarnIcon } from "../components/Icons";
+import { WarnIcon } from "../components/Icons";
 import { linkProps, navigate, takeReturnAfterSignIn } from "../lib/router";
 import { Landing, SignInShell } from "../site/Landing";
 import type { Theme } from "../lib/theme";
@@ -72,15 +72,7 @@ function SignInPanel() {
 	const info = platform.info;
 	const accounts = !!info && (info.github || info.googleLogin);
 	return (
-		<SignInShell
-			foot={
-				client.kind === "mock" ? (
-					<>
-						<InfoIcon size={13} /> Mock backend: nothing leaves this browser.
-					</>
-				) : undefined
-			}
-		>
+		<SignInShell>
 			{signedOutReason ? (
 				<p className="callout callout-warn" role="status">
 					<WarnIcon />
@@ -144,12 +136,6 @@ function SignInPanel() {
 				<p className="lp-signin-note" role="status">
 					Finishing sign-in…
 				</p>
-			)}
-			{info?.github && (
-				<details className="lp-signin-help">
-					<summary>GitHub rejected the callback URL?</summary>
-					Add {location.origin}/signin to the GitHub App's callback URLs.
-				</details>
 			)}
 			{error ? (
 				<p className="callout callout-bad" role="alert">

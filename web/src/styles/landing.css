@@ -3556,3 +3556,872 @@
 		transform: translateY(0);
 	}
 }
+
+/* ---- v2: the factory pitch ------------------------------------------------------------------------- */
+
+.lp-mark-accent {
+	color: var(--accent-text);
+}
+.lp-bar-gh {
+	color: var(--ink-dim);
+}
+.lp-bar-gh:hover {
+	color: var(--ink);
+}
+
+/* Under the sign-in panel: three quiet facts. */
+.lp-hero-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 18px;
+	margin: 16px 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+}
+.lp-hero-facts li {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+}
+.lp-hero-facts li::before {
+	content: "";
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--accent-text);
+}
+.lp-hero-facts a {
+	color: var(--ink-dim);
+	text-decoration: underline;
+	text-decoration-color: var(--line-strong);
+	text-underline-offset: 3px;
+}
+
+/* "Takes work from" and "Runs": each mark beside its name. */
+.lp-works {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 18px 40px;
+	margin-top: 40px;
+	padding: 18px 0;
+	border-top: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
+}
+.lp-works-group {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px 22px;
+}
+.lp-works-label {
+	color: var(--ink-faint);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+.lp-works ul {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px 22px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.lp-works li {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--ink-dim);
+	font-size: var(--text-14);
+	font-weight: var(--weight-medium);
+}
+
+/* The proof strip. */
+.lp-proof {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 28px;
+	margin: 26px 0 0;
+	padding: 0;
+	list-style: none;
+}
+.lp-proof-item {
+	display: flex;
+	gap: 12px;
+}
+.lp-proof-icon {
+	display: inline-grid;
+	flex: none;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border-radius: 8px;
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	color: var(--accent-text);
+}
+.lp-proof-item p {
+	margin: 2px 0 0;
+	color: var(--ink-faint);
+	font-size: var(--text-14);
+	line-height: 1.55;
+}
+.lp-proof-item b {
+	color: var(--ink);
+	font-weight: var(--weight-medium);
+}
+
+/* 01: the eight steps, four to a row, on a line. */
+.lp-pipe {
+	position: relative;
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 14px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	counter-reset: pipe;
+}
+.lp-pipe-step {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-height: 150px;
+	padding: 16px 16px 18px;
+	border-radius: var(--r-box);
+	background: var(--bg-raised);
+	box-shadow: inset 0 0 0 1px var(--line);
+}
+.lp-pipe-step::after {
+	content: "";
+	position: absolute;
+	top: 26px;
+	right: -14px;
+	width: 14px;
+	height: 1px;
+	background: var(--line-strong);
+}
+.lp-pipe-step:nth-child(4n)::after,
+.lp-pipe-step:last-child::after {
+	display: none;
+}
+.lp-pipe-n {
+	color: var(--accent-text);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+}
+.lp-pipe-step h3 {
+	margin: 0;
+	font-size: var(--text-16);
+	font-weight: var(--weight-strong);
+	letter-spacing: var(--tracking-tight);
+}
+.lp-pipe-step p {
+	margin: 0;
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+	line-height: 1.5;
+}
+.lp-pipe-end {
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.lp-pipe-marks {
+	display: flex;
+	gap: 8px;
+	margin-top: auto;
+	padding-top: 8px;
+}
+.lp-pipe-check {
+	display: inline-flex;
+	align-self: flex-start;
+	align-items: center;
+	gap: 6px;
+	margin-top: auto;
+	padding: 3px 8px;
+	border-radius: 6px;
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	color: var(--ink);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+}
+.lp-pipe-check svg {
+	color: var(--ok);
+}
+
+/* 02: GitHub's checks, drawn. */
+.lp-checks-fig {
+	margin: 0;
+}
+.lp-checks {
+	padding: 0 22px 18px;
+}
+.lp-checks-pr {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	font-weight: var(--weight-medium);
+}
+.lp-checks-pr svg {
+	color: var(--ok);
+}
+.lp-checks-rows {
+	display: grid;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.lp-checks-rows li {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 38px;
+	padding: 0 10px;
+	border-radius: 8px;
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+}
+.lp-checks-rows b {
+	color: var(--ink);
+	font-family: var(--font-mono);
+	font-size: var(--text-13);
+	font-weight: var(--weight-medium);
+}
+.lp-checks-main {
+	background: var(--bg-hover);
+	box-shadow: inset 0 0 0 1px var(--line);
+}
+.lp-checks-ok {
+	display: inline-grid;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--ok) 18%, transparent);
+	color: var(--ok);
+}
+.lp-checks-sum {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.lp-checks-req {
+	padding: 1px 7px;
+	border-radius: 999px;
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	color: var(--ink-dim);
+	font-size: var(--text-11);
+}
+.lp-checks-summary {
+	margin-top: 14px;
+	padding: 14px 16px;
+	border-radius: 10px;
+	background: var(--bg);
+	box-shadow: inset 0 0 0 1px var(--line);
+}
+.lp-checks-title {
+	margin: 0 0 8px;
+	color: var(--ink-faint);
+	font-family: var(--font-mono);
+	font-size: var(--text-11);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+.lp-checks-summary ul {
+	display: grid;
+	gap: 7px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	color: var(--ink-dim);
+	font-size: var(--text-13);
+	line-height: 1.45;
+}
+.lp-checks-summary li {
+	display: flex;
+	gap: 8px;
+}
+.lp-checks-summary li svg {
+	flex: none;
+	margin-top: 3px;
+	color: var(--ok);
+}
+
+/* 03: three cards. */
+.lp-cards3 {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 14px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.lp-card3 {
+	padding: 22px;
+}
+.lp-card3-icon {
+	display: inline-grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	border-radius: 9px;
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+	color: var(--accent-text);
+}
+.lp-card3 h3 {
+	margin: 16px 0 6px;
+	font-size: var(--text-16);
+	font-weight: var(--weight-strong);
+	letter-spacing: var(--tracking-tight);
+}
+.lp-card3 p {
+	margin: 0;
+	color: var(--ink-faint);
+	font-size: var(--text-14);
+	line-height: 1.55;
+}
+.lp-small {
+	margin: 16px 0 0;
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+	line-height: 1.5;
+}
+.lp-small a {
+	color: var(--ink-dim);
+	text-decoration: underline;
+	text-decoration-color: var(--line-strong);
+	text-underline-offset: 3px;
+}
+
+/* 04: who runs where. */
+.lp-grid-card {
+	overflow: hidden;
+}
+.lp-grid {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--text-14);
+}
+.lp-grid th,
+.lp-grid td {
+	padding: 14px 20px;
+	border-bottom: 1px solid var(--line);
+	text-align: left;
+	vertical-align: middle;
+}
+.lp-grid thead th {
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+	font-weight: var(--weight-medium);
+}
+.lp-grid thead th svg {
+	vertical-align: -2px;
+	margin-right: 6px;
+}
+.lp-grid td {
+	color: var(--ink-dim);
+}
+.lp-grid-agent {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--ink);
+	font-weight: var(--weight-medium);
+}
+.lp-grid-ok {
+	vertical-align: -2px;
+	margin-right: 6px;
+	color: var(--ok);
+}
+.lp-keys {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px 22px;
+	padding: 14px 20px;
+}
+.lp-keys-marks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px 20px;
+}
+.lp-keys-marks span {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--ink-dim);
+	font-size: var(--text-14);
+}
+
+/* 05: the setup card. */
+.lp-bullets {
+	display: grid;
+	gap: 10px;
+	margin: 26px 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--ink-faint);
+	font-size: var(--text-15);
+	line-height: 1.55;
+}
+.lp-bullets b {
+	color: var(--ink);
+	font-weight: var(--weight-medium);
+}
+.lp-setup-fig {
+	margin: 0;
+}
+.lp-setup {
+	padding: 0 22px 18px;
+}
+.lp-setup-score {
+	margin-left: auto;
+	color: var(--ink-dim);
+	font-family: var(--font-mono);
+	font-size: var(--text-12);
+}
+.lp-setup ul {
+	display: grid;
+	gap: 9px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: var(--text-13);
+}
+.lp-setup li {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	color: var(--ink-dim);
+}
+.lp-setup-dot {
+	display: inline-grid;
+	flex: none;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+}
+.lp-setup-ok .lp-setup-dot {
+	background: color-mix(in srgb, var(--ok) 18%, transparent);
+	color: var(--ok);
+}
+.lp-setup-todo .lp-setup-dot {
+	box-shadow: inset 0 0 0 1.5px var(--needs-fill, var(--warn));
+}
+.lp-setup-todo {
+	color: var(--ink);
+}
+.lp-setup-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+	margin-top: 16px;
+	padding-top: 14px;
+	border-top: 1px solid var(--line);
+	font-size: var(--text-12);
+}
+
+/* 07: plans. */
+.lp-plans {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 14px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.lp-plan {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding: 24px;
+}
+.lp-plan-accent {
+	box-shadow:
+		0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+		0 24px 60px -30px rgb(0 0 0 / 0.6);
+}
+.lp-plan h3 {
+	margin: 0;
+	font-size: var(--text-15);
+	font-weight: var(--weight-strong);
+}
+.lp-plan-price {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 10px;
+	margin: 0;
+}
+.lp-plan-price b {
+	font-size: 2.25rem;
+	font-weight: var(--weight-strong);
+	letter-spacing: -0.04em;
+}
+.lp-plan-price span {
+	color: var(--ink-faint);
+	font-size: var(--text-13);
+}
+.lp-plan ul {
+	display: grid;
+	flex: 1;
+	align-content: start;
+	gap: 9px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	color: var(--ink-dim);
+	font-size: var(--text-14);
+	line-height: 1.45;
+}
+.lp-plan li {
+	display: flex;
+	gap: 8px;
+}
+.lp-plan li svg {
+	flex: none;
+	margin-top: 3px;
+	color: var(--accent-text);
+}
+.lp-plan .lp-btn {
+	align-self: flex-start;
+}
+
+/* The plan gate's board, in ink rather than green. */
+.iso .iso-board-lines {
+	stroke: var(--ink-faint);
+}
+
+@media (max-width: 1100px) {
+	.lp-pipe {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.lp-pipe-step:nth-child(2n)::after {
+		display: none;
+	}
+}
+@media (max-width: 900px) {
+	.lp-proof,
+	.lp-cards3,
+	.lp-plans {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.lp-works {
+		flex-direction: column;
+	}
+}
+@media (max-width: 600px) {
+	.lp-pipe {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.lp-pipe-step {
+		min-height: 0;
+	}
+	.lp-pipe-step::after {
+		display: none;
+	}
+	.lp-grid th,
+	.lp-grid td {
+		padding: 12px;
+		font-size: var(--text-13);
+	}
+	.lp-bar-gh {
+		display: none;
+	}
+}
+.lp-head + .lp-pipe,
+.lp-head + .lp-cards3,
+.lp-head + .lp-plans,
+.lp-head + .lp-grid-card {
+	margin-top: 44px;
+}
+.lp-hero-top .lp-h1 {
+	font-size: clamp(2.3rem, 1.1rem + 2.9vw, 3.5rem);
+}
+
+/* ---- v2 motion: the hero arrives, the windlass builds itself, sections reveal on scroll ---------------
+   Everything here is CSS: the static page ships no script. The scroll reveals use scroll-driven
+   animations (animation-timeline: view()); a browser without them, or anyone asking for less motion,
+   gets every section drawn in place. */
+
+.lp-card3,
+.lp-plan,
+.lp-pipe-step {
+	transition:
+		translate 220ms var(--ease-out),
+		box-shadow 220ms var(--ease-out);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	/* The hero: copy in a stagger, the headline's second line a beat after the first. */
+	.lp-hero-copy > :nth-child(5) {
+		animation-delay: 240ms;
+	}
+	.lp-h1 .lp-dim {
+		display: inline-block;
+		animation: lp-arrive 800ms var(--ease-out) 160ms both;
+	}
+	.lp-hero-top .lp-h1 .lp-dim {
+		display: block;
+	}
+	.lp-works li,
+	.lp-works-label,
+	.lp-proof-item {
+		animation: lp-arrive 600ms var(--ease-out) both;
+		animation-delay: calc(900ms + var(--n, 0) * 50ms);
+	}
+	.lp-works li:nth-child(2),
+	.lp-proof-item:nth-child(2) {
+		--n: 1;
+	}
+	.lp-works li:nth-child(3),
+	.lp-proof-item:nth-child(3) {
+		--n: 2;
+	}
+	.lp-works li:nth-child(4) {
+		--n: 3;
+	}
+	.lp-works li:nth-child(5) {
+		--n: 4;
+	}
+	.lp-works-group + .lp-works-group li,
+	.lp-works-group + .lp-works-group .lp-works-label {
+		animation-delay: calc(1150ms + var(--n, 0) * 50ms);
+	}
+	.lp-proof-item {
+		animation-delay: calc(1300ms + var(--n, 0) * 80ms);
+	}
+
+	/* The windlass builds itself: the deck, each gate from the near end, the drum, then the line and its items. */
+	.iso-in {
+		animation: iso-build 700ms var(--ease-out) both;
+		animation-delay: calc(250ms + var(--i, 0) * 160ms);
+	}
+	.iso-in-fade {
+		animation: iso-fade 600ms var(--ease-out) both;
+		animation-delay: calc(250ms + var(--i, 0) * 160ms);
+	}
+
+	/* Hover: cards lift a little. */
+	.lp-card3:hover,
+	.lp-plan:hover,
+	.lp-pipe-step:hover {
+		translate: 0 -3px;
+	}
+	.lp-pipe-step:hover {
+		box-shadow: inset 0 0 0 1px var(--line-field);
+	}
+}
+@keyframes iso-build {
+	from {
+		opacity: 0;
+		transform: translateY(-18px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+@keyframes iso-fade {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@supports (animation-timeline: view()) {
+	@media (prefers-reduced-motion: no-preference) {
+		/* A section's head, and each block after it, rises in as it enters the view. */
+		.lp-section .lp-head,
+		.lp-checks-fig,
+		.lp-setup-fig,
+		.lp-steer,
+		.lp-grid-card,
+		.lp-small,
+		.lp-bullets li,
+		.lp-faq-item,
+		.lp-closing-card {
+			animation: lp-reveal linear both;
+			animation-timeline: view();
+			animation-range: entry 0% cover 24%;
+		}
+		.lp-bullets li:nth-child(2),
+		.lp-faq-item:nth-child(2) {
+			animation-range: entry 6% cover 28%;
+		}
+		.lp-bullets li:nth-child(3),
+		.lp-faq-item:nth-child(3) {
+			animation-range: entry 12% cover 32%;
+		}
+
+		/* Rows of cards come in one after another, timed on their row. */
+		.lp-pipe,
+		.lp-cards3,
+		.lp-plans {
+			view-timeline: --lp-row block;
+		}
+		.lp-pipe-step,
+		.lp-card3,
+		.lp-plan {
+			animation: lp-reveal linear both;
+			animation-timeline: --lp-row;
+			animation-range: entry calc(var(--n, 0) * 7%) cover calc(22% + var(--n, 0) * 7%);
+		}
+		.lp-pipe-step:nth-child(2),
+		.lp-card3:nth-child(2),
+		.lp-plan:nth-child(2) {
+			--n: 1;
+		}
+		.lp-pipe-step:nth-child(3),
+		.lp-card3:nth-child(3),
+		.lp-plan:nth-child(3) {
+			--n: 2;
+		}
+		.lp-pipe-step:nth-child(4) {
+			--n: 3;
+		}
+		.lp-pipe-step:nth-child(5) {
+			--n: 4;
+		}
+		.lp-pipe-step:nth-child(6) {
+			--n: 5;
+		}
+		.lp-pipe-step:nth-child(7) {
+			--n: 6;
+		}
+		.lp-pipe-step:nth-child(8) {
+			--n: 7;
+		}
+		/* Each step's number lights as its turn comes, like the gates in the hero. */
+		.lp-pipe-n {
+			animation: lp-light linear both;
+			animation-timeline: --lp-row;
+			animation-range: entry calc(10% + var(--n, 0) * 7%) cover calc(30% + var(--n, 0) * 7%);
+		}
+
+		/* The checks tick in, one row at a time, then what was observed. */
+		.lp-checks {
+			view-timeline: --lp-checks block;
+		}
+		.lp-checks-rows li,
+		.lp-checks-summary li {
+			animation: lp-tick linear both;
+			animation-timeline: --lp-checks;
+			animation-range: entry calc(30% + var(--n, 0) * 9%) cover calc(40% + var(--n, 0) * 9%);
+		}
+		.lp-checks-rows li:nth-child(1) {
+			--n: 3;
+		}
+		.lp-checks-rows li:nth-child(2) {
+			--n: 0;
+		}
+		.lp-checks-rows li:nth-child(3) {
+			--n: 1;
+		}
+		.lp-checks-rows li:nth-child(4) {
+			--n: 2;
+		}
+		.lp-checks-summary li:nth-child(1) {
+			--n: 4;
+		}
+		.lp-checks-summary li:nth-child(2) {
+			--n: 5;
+		}
+		.lp-checks-summary li:nth-child(3) {
+			--n: 6;
+		}
+
+		/* The setup checks pop in down the list. */
+		.lp-setup {
+			view-timeline: --lp-setup block;
+		}
+		.lp-setup li {
+			animation: lp-tick linear both;
+			animation-timeline: --lp-setup;
+			animation-range: entry calc(25% + var(--n, 0) * 5%) cover calc(35% + var(--n, 0) * 5%);
+		}
+		.lp-setup li:nth-child(2) {
+			--n: 1;
+		}
+		.lp-setup li:nth-child(3) {
+			--n: 2;
+		}
+		.lp-setup li:nth-child(4) {
+			--n: 3;
+		}
+		.lp-setup li:nth-child(5) {
+			--n: 4;
+		}
+		.lp-setup li:nth-child(6) {
+			--n: 5;
+		}
+		.lp-setup li:nth-child(7) {
+			--n: 6;
+		}
+		.lp-setup li:nth-child(8) {
+			--n: 7;
+		}
+
+		/* The agent table fills row by row. */
+		.lp-grid-card {
+			view-timeline: --lp-grid block;
+		}
+		.lp-grid tbody tr,
+		.lp-keys {
+			animation: lp-tick linear both;
+			animation-timeline: --lp-grid;
+			animation-range: entry calc(20% + var(--n, 0) * 8%) cover calc(32% + var(--n, 0) * 8%);
+		}
+		.lp-grid tbody tr:nth-child(2) {
+			--n: 1;
+		}
+		.lp-grid tbody tr:nth-child(3) {
+			--n: 2;
+		}
+		.lp-grid tbody tr:nth-child(4) {
+			--n: 3;
+		}
+		.lp-keys {
+			--n: 4;
+		}
+	}
+}
+@keyframes lp-reveal {
+	from {
+		opacity: 0;
+		transform: translateY(28px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+@keyframes lp-tick {
+	from {
+		opacity: 0;
+		transform: translateX(-10px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+@keyframes lp-light {
+	from {
+		color: var(--ink-faint);
+	}
+	to {
+		color: var(--accent-text);
+	}
+}

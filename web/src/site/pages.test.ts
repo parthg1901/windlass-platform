@@ -96,11 +96,12 @@ describe("the landing page", () => {
 		}
 	});
 
-	it("keeps sign-in reachable and promises no dates, prices or numbers of users", () => {
+	it("keeps sign-in reachable and promises no dates or numbers of users", () => {
 		expect(body).toContain('href="/signin"');
 		// The words people read: an agent's logo is drawn with numbers of its own, which are no promise.
 		expect(body.replace(/<svg\b[\s\S]*?<\/svg>/g, "")).not.toMatch(
-			/\$\d|per month|\/mo\b|coming (soon|in)|20\d\d|customers|trusted by/i,
+			// Prices are the billing plans' own (content.ts PLANS, from server/src/billing/plans.ts).
+			/coming (soon|in)|20\d\d|customers|trusted by/i,
 		);
 	});
 
