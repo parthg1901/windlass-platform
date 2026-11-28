@@ -1,4 +1,6 @@
 import type { AuthResult } from "@contract";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionState, PlatformError } from "./client";
 import type { Connection, ConnectionSource } from "./connection";
@@ -13,6 +15,8 @@ const rivet = vi.hoisted(() => ({
 	/** What each action call does, in order; the last one repeats. */
 	script: [] as Array<() => unknown>,
 	calls: [] as string[],
+	/** How each actor was opened: `get` or `getOrCreate`, and its name. */
+	opened: [] as string[],
 	connects: 0,
 	disposed: 0,
 	status: "connected",
@@ -59,12 +63,16 @@ vi.mock("rivetkit/client", () => {
 	return {
 		createClient: (config: Record<string, unknown>) => {
 			rivet.made.push(config);
-			return { getOrCreate: handle, get: handle, dispose: async () => undefined };
+			return {
+				getOrCreate: (name: string) => (rivet.opened.push(`getOrCreate ${name}`), handle()),
+				get: (name: string) => (rivet.opened.push(`get ${name}`), handle()),
+				dispose: async () => undefined,
+			};
 		},
 	};
 });
 
-const { createRivetClient } = await import("./rivet");
+const { ACTOR, createRivetClient } = await import("./rivet");
 
 const AUTH: AuthResult = {
 	token: "platform-token",
@@ -94,6 +102,7 @@ beforeEach(() => {
 	rivet.made.length = 0;
 	rivet.script.length = 0;
 	rivet.calls.length = 0;
+	rivet.opened.length = 0;
 	rivet.connects = 0;
 	rivet.disposed = 0;
 	rivet.status = "connected";
@@ -133,6 +142,51 @@ describe("the RivetKit client", () => {
 		await client.user(AUTH).listSessions();
 		await client.session(AUTH, "s1").stop();
 		expect(rivet.made.length).toBe(1);
+	});
+});
+
+describe("the GitLab settings actor", () => {
+	const client = () =>
+		createRivetClient(
+			"http://localhost:6420",
+			"http://platform.test",
+			source({ endpoint: "https://engine.test", namespace: "default", tokens: true }).source,
+		);
+
+	it("is created by the server and only looked up by the browser, whose engine token cannot create actors", async () => {
+		rivet.script.push(
+			() => true,
+			() => ({ state: "disconnected" }),
+		);
+		const api = client().user(AUTH);
+		expect(await api.gitlab()).toEqual({ state: "disconnected" });
+		await api.gitlabProjects("");
+		expect(rivet.calls).toEqual(["openGitlab", "gitlab", "gitlabProjects"]);
+		expect(rivet.opened).toEqual(["get user", "get userGitlab"]);
+	});
+
+	it("is not opened when the deployment has no GitLab", async () => {
+		rivet.script.push(() => false);
+		const api = client().user(AUTH);
+		expect(await api.gitlab()).toEqual({ state: "off" });
+		await expect(api.gitlabDisconnect()).rejects.toMatchObject({ code: "user", reason: "gitlab_off" });
+		expect(rivet.calls).toEqual(["openGitlab"]);
+		expect(rivet.opened).toEqual(["get user"]);
+	});
+});
+
+describe("the example tunnel", () => {
+	const example = readFileSync(
+		fileURLToPath(new URL("../../../deploy/selfhost/tunnel.example.yml", import.meta.url)),
+		"utf8",
+	);
+	const engine = /hostname: engine\.example\.com\s+path: '([^']+)'/.exec(example)?.[1];
+
+	it.each(Object.values(ACTOR))("lets the browser reach the %s actor's actions and connection", name => {
+		expect(engine).toBeDefined();
+		const allowed = new RegExp(engine!);
+		expect(allowed.test(`/gateway/${name}/action/me`)).toBe(true);
+		expect(allowed.test(`/gateway/${name}/connect`)).toBe(true);
 	});
 });
 

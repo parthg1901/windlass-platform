@@ -67,8 +67,12 @@ type Untyped = any;
 type Handle = ActorHandle<Untyped>;
 type Conn = ActorConn<Untyped>;
 
-/** The actor names, as the server's registry is expected to register them. ASSUMPTION 1. */
-const ACTOR = { user: "user", userGitlab: "userGitlab", agentSession: "agentSession" } as const;
+/**
+ * The actor names, as the server's registry is expected to register them. ASSUMPTION 1. Each is reached
+ * through the engine's gateway, so a tunnel in front of it must let its paths through
+ * (deploy/selfhost/tunnel.example.yml).
+ */
+export const ACTOR = { user: "user", userGitlab: "userGitlab", agentSession: "agentSession" } as const;
 
 /**
  * How long an action may take. RivetKit retries an endpoint that does not answer for as long as it
@@ -443,13 +447,20 @@ export function createRivetClient(
 
 	function userApi(auth: AuthResult): UserApi {
 		const handle = userHandle(auth);
-		const gitlabHandle = lazy(async () =>
-			(await connect()).getOrCreate<Untyped>(ACTOR.userGitlab, [auth.profile.uid], { params: { token: auth.token } }),
-		);
-		const gitlab = <K extends keyof GitlabActions>(name: K, ...args: Parameters<GitlabActions[K]>) =>
-			call<GitlabActions, K>(gitlabHandle(), name, ...(args as never));
 		const act = <K extends keyof UserActions & string>(name: K, ...args: Parameters<UserActions[K]>) =>
 			call<UserActions, K>(handle(), name, ...(args as never));
+		// ASSUMPTION 3: like a session's, the GitLab actor is created on the server, since the browser's engine
+		// token may only look actors up. `openGitlab` creates it when the deployment has GitLab, and says whether it does.
+		const gitlabHandle = lazy(async () =>
+			(await act("openGitlab"))
+				? (await connect()).get<Untyped>(ACTOR.userGitlab, [auth.profile.uid], { params: { token: auth.token } })
+				: null,
+		);
+		const gitlab = async <K extends keyof GitlabActions>(name: K, ...args: Parameters<GitlabActions[K]>) => {
+			const found = await gitlabHandle();
+			if (!found) throw new PlatformError("user", "GitLab is not configured.", { reason: "gitlab_off" });
+			return call<GitlabActions, K>(found, name, ...(args as never));
+		};
 		return {
 			me: () => act("me"),
 			signOutEverywhere: (...args) => act("signOutEverywhere", ...args),
@@ -465,7 +476,7 @@ export function createRivetClient(
 			continueSession: input => act("continueSession", input),
 			renameSession: (id, title) => act("renameSession", id, title),
 			deleteSession: id => act("deleteSession", id),
-			gitlab: () => gitlab("gitlab"),
+			gitlab: async () => ((await gitlabHandle()) ? gitlab("gitlab") : { state: "off" }),
 			gitlabConnect: input => gitlab("gitlabConnect", input),
 			gitlabComplete: ticket => gitlab("gitlabComplete", ticket),
 			gitlabProjects: query => gitlab("gitlabProjects", query),
@@ -750,12 +761,14 @@ export function createRivetClient(
 /*
  * ASSUMPTIONS to check against the running backend
  *
- * 1. The browser opens user and agentSession actors by [uid] and [uid, sessionId].
+ * 1. The browser opens user, userGitlab and agentSession actors by [uid], [uid] and [uid, sessionId].
  * 2. Parameters. `{ params: { token } }` given to `get` reaches the actor's
  *    `onBeforeConnect(c, params)` both for `.connect()` and for a stateless `handle.action(...)`.
  * 3. Creation. The login HTTP service creates the user. An
  *    `agentSession` is created by the server in `user.createSession`; the client uses `get`, and an
- *    unknown session fails with group "actor", code "not_found".
+ *    unknown session fails with group "actor", code "not_found". `userGitlab` is created by the server
+ *    in `user.openGitlab`, which the client calls before it looks that actor up. The browser's engine
+ *    token cannot create actors (server/src/connection-tokens.ts), so no browser handle uses `getOrCreate`.
  * 4. Events. `c.broadcast("item", item)` (one argument) arrives as `conn.on("item", (item) => ...)`;
  *    `on` returns the function that unsubscribes; the names are "sessions" (user) and "item",
  *    "delta", "summary", "question", "machine" (agentSession). Subscriptions survive a reconnect (RivetKit resends them).
