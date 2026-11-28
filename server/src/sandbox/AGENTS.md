@@ -9,6 +9,7 @@ Run one command from the repository root.
 - `cd server && npx tsx ../scripts/model-relay-route-check.ts` exercises the hosted relay route.
 - `cd server && npx tsx --test ../scripts/plan-relay-check.ts` runs the in-sandbox plan relay against a recording upstream.
 - `cd server && npx tsx ../scripts/harness-check.ts` checks the harness capability records and platform tool reach.
+- `cd server && npx tsx --test src/sandbox/availability.test.ts` holds `availability` to its committed matrix and to the rules the server applies today. `UPDATE_GOLDEN=1` rewrites the matrix.
 - `cd server && npx tsx ../scripts/e2b-provider-test.ts` exercises E2B with an in-memory client; see the [E2B guide](./e2b/AGENTS.md).
 - `cd server && npx tsx ../scripts/daytona-provider-test.ts` exercises Daytona without credentials.
 - For a single section with CI's base image, use `cd server && WLP_CHECK_SECTIONS=profiles npx tsx ../scripts/sandbox-check.ts`.
@@ -28,6 +29,7 @@ Turns and harnesses
 - `./turn.ts` holds `SandboxWindlass`, the provider-independent Windlass turn over ACP: prompts, host tools, approvals, redaction, credential revocation and sweep.
 - `./harness.ts` defines the `Harness` interface, `WindlassHarness` and the per-session choice of harness.
 - `./harnesses.ts` holds `HarnessCapabilities`, `WINDLASS_CAPABILITIES`, the `AcpProfile` records `CLAUDE`, `OPENCODE`, `CODEX`, plus `keyProviders`, `usesAccountModels`, `capabilitiesOf` and the item and sign-in problem sentences.
+- `./availability.ts` answers whether an agent can do a kind of work at a place (`availability`, `availableProfiles`): one rule per refusal, with a code, one sentence and a fix. `./availability.golden.md` is its matrix.
 - `./acp-harness.ts` runs a Claude Code, OpenCode or Codex turn over ACP and refuses inputs its record lacks (`unsupported`). Each agent's protocol quirks are in its `QUIRKS` table.
 - `./acp.ts` is one end of a JSON-RPC 2.0 ACP connection, independent of Docker and sessions.
 - `./acp-options.ts` reads model, effort and mode choices out of ACP config options.
@@ -77,7 +79,7 @@ Credentials, network and data
 - Decide by `HarnessCapabilities` flags (`capabilitiesOf(id)`), `keyProviders(id)` and `usesAccountModels(id)`, never by comparing a harness id to a literal. A new agent should be one more `AcpProfile`.
 - ACP agents start from `ACP_BASE` and override with `acpCapabilities`; `WINDLASS_CAPABILITIES` is Windlass's record.
 - `MCP_PLATFORM_TOOLS` must stay equal to the tools `server/src/platform-tools.ts` lets the sandbox serve; `scripts/harness-check.ts` holds them equal.
-- Web imports `./harnesses.ts`, `./codex-modes.ts` and `./profiles.ts` at runtime, so keep them browser-safe: import only contract modules, each other and `./hosted-network.ts`, never Node built-ins.
+- Web imports `./harnesses.ts`, `./codex-modes.ts` and `./profiles.ts` at runtime, so keep them and `./availability.ts` browser-safe: import only contract modules, each other, `./hosted-network.ts` and `../pay-with.ts`, never Node built-ins.
 
 ## Non-obvious patterns
 
