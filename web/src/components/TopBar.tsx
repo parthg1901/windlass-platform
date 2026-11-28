@@ -223,7 +223,11 @@ export function ListTabs({ current, asking = 0 }: { current?: Section | null; as
 	// Until the platform says which places it offers, the tabs hold their room unseen, so none pops in beside the others.
 	const pending = platform.info === null;
 	return (
-		<nav className={`topbar-tabs${pending ? " topbar-tabs-pending" : ""}`} aria-label="Main" aria-busy={pending || undefined}>
+		<nav
+			className={`topbar-tabs${pending ? " topbar-tabs-pending" : ""}`}
+			aria-label="Main"
+			aria-busy={pending || undefined}
+		>
 			<a
 				className="topbar-tab"
 				aria-current={current === "agents" ? "page" : undefined}

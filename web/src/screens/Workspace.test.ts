@@ -74,7 +74,9 @@ const owners = () =>
 	[...rail().querySelectorAll(".ws-rail-group")].map(group => ({
 		owner: group.querySelector(".ws-rail-owner-name")?.textContent ?? "",
 		// A folded owner keeps its rows mounted (they fold away), inert.
-		names: [...group.querySelectorAll(".ws-rail-name")].filter(name => !name.closest("[inert]")).map(name => name.textContent),
+		names: [...group.querySelectorAll(".ws-rail-name")]
+			.filter(name => !name.closest("[inert]"))
+			.map(name => name.textContent),
 	}));
 const ownerRow = (owner: string) =>
 	[...rail().querySelectorAll<HTMLButtonElement>(".ws-rail-owner-row")].find(
