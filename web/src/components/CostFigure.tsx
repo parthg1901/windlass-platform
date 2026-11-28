@@ -1,6 +1,6 @@
 /**
- * A cost said in words ("$3.03 + 2 turns on your plan"): its dollar figure large, what else it holds quieter after it.
- * Words without a dollar figure ("On your Claude plan") stay one size. The text reads the same either way.
+ * A cost said in words ("$3.03 on your keys + ≈ $1.20 included in your plans"): its dollar figure large, what else it
+ * holds quieter after it. Words without a dollar figure first ("Included in your plans") stay one size. The text reads the same either way.
  */
 export function CostFigure({ words }: { words: string }) {
 	const [figure, ...rest] = words.split(" + ");

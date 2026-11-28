@@ -23,7 +23,7 @@ import { Inline, PlacementQuestion, PlanQuestion, PlanSection } from "./FeatureP
 import { usePlanReview, type PlanActing as Acting } from "./usePlanReview";
 import { CostByModel, ItemCost } from "../components/ItemCost";
 import { ItemSpend } from "../components/ItemSpend";
-import { budgetNote, figureWords, heldFigures, tokenDetail } from "../lib/budget";
+import { figureWords, heldFigures, tokenDetail } from "../lib/budget";
 import { costWords, summaryCost } from "../lib/cost";
 import { agentFacts, agentLine, subscriptionSpend } from "../lib/item-agent";
 import { Menu, type MenuItem } from "../components/ui/Menu";
@@ -620,27 +620,11 @@ const BUDGET_FIELDS: Array<{
 }> = [
 	{
 		key: "usd",
-		label: "Dollars",
+		label: "Work, at API prices",
 		unit: "USD",
 		toInput: value => String(Number(value.toFixed(2))),
 		fromInput: text => Math.round(Number(text) * 100) / 100,
 		spelled: value => figureWords("usd", value, false),
-	},
-	{
-		key: "planPct",
-		label: "Plan's 5-hour window",
-		unit: "%",
-		toInput: value => String(Number(value.toFixed(1))),
-		fromInput: text => Math.round(Number(text) * 10) / 10,
-		spelled: value => figureWords("planPct", value, false),
-	},
-	{
-		key: "planWeekPct",
-		label: "Plan's weekly window",
-		unit: "%",
-		toInput: value => String(Number(value.toFixed(1))),
-		fromInput: text => Math.round(Number(text) * 10) / 10,
-		spelled: value => figureWords("planWeekPct", value, false),
 	},
 	{
 		key: "tokens",
@@ -1167,7 +1151,7 @@ function Cost({ view, now }: { view: ItemView; now: number }) {
 			? [
 					{
 						label: `${plural(subscribed.length, "part")} on a subscription`,
-						value: `${subscriptionSpend({ turns: subscribed.reduce((n, child) => n + child.spent.turns, 0), activeSeconds: subscribed.reduce((n, child) => n + child.spent.activeSeconds, 0) })}, not counted: your subscription`,
+						value: `${subscriptionSpend({ turns: subscribed.reduce((n, child) => n + child.spent.turns, 0), activeSeconds: subscribed.reduce((n, child) => n + child.spent.activeSeconds, 0) })}, included in your subscription`,
 					},
 				]
 			: []),
@@ -1192,7 +1176,6 @@ function Cost({ view, now }: { view: ItemView; now: number }) {
 			<div className="usage-card item-cost-card">
 				<ItemCost view={view} rates={rates} />
 				<ItemSpend spent={view.spent} budget={view.budget} fields={rows} agent={view.agent} />
-				{budgetNote(view.spent) ? <p className="usage-note">{budgetNote(view.spent)}</p> : null}
 				{facts.length > 0 ? (
 					<dl className="item-cost-foot">
 						{facts.map(fact => (
@@ -1208,12 +1191,12 @@ function Cost({ view, now }: { view: ItemView; now: number }) {
 				<summary>How this is counted</summary>
 				<CostByModel view={view} rates={rates} />
 				<p>
-					The budget is in dollars where an API key pays, and a share of the plan's 5-hour and weekly windows where a
-					plan pays: how far the plan's use rose while the item's turns ran. Each window the plan reports holds the
-					item, and the first used up stops it.
+					The budget is in dollars of work: every turn at API prices, whoever pays. A turn on an API key counts what it
+					cost; a turn your Claude or ChatGPT plan carried counts what it would have cost on a key, though the plan
+					charges nothing more for it.
 				</p>
 				<p>
-					{tokenDetail(view.budget, view.spent)} Tokens count toward the budget only where neither can be measured;
+					{tokenDetail(view.budget, view.spent)} Tokens count toward the budget only while a turn could not be priced;
 					cached input counts at a tenth.
 				</p>
 				<p>

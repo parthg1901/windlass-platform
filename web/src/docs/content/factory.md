@@ -183,7 +183,7 @@ What changes with Claude Code or OpenCode:
 - **Step limit.** A builder turn may make 400 tool calls (40 for a reviewer). When the agent starts one more, the platform records the limit on the timeline and the item can continue in a new turn within its budget.
 - **Review.** The second reviewer runs in its own sandbox on the builder’s machine with the same agent, model and profile. Its setup receives the same setup-scope secrets as the builder’s setup. Its commands have the same network access as the builder’s commands.
 - **Publishing.** The platform commits what the agent left, pushes and opens the pull request, as it does for Windlass. The agent's own `git push` fails, because the sandbox holds no GitHub credential. The pull request's description is the item's.
-- **Cost.** Turns count against the item's budget in the units of what pays for them (see [When the budget is used](#when-the-budget-is-used)). On a plan, Claude Code reports its 5-hour window only when it warns that the window is nearly used; until then the page says **Not reported**, and its turns are bounded only by the factory's backstop on an item's turns. Where an agent reports no tokens, the page says **Not reported**, never 0. A turn that reports no tokens where tokens hold the budget stops the item: it asks you, and you can give up or hand over a pull request CI has read.
+- **Cost.** Turns count against the item's dollar budget at API prices, whoever pays (see [When the budget is used](#when-the-budget-is-used)). Where an agent reports no tokens, the page says **Not reported**, never 0. A turn that reports no tokens where tokens hold the budget stops the item: it asks you, and you can give up or hand over a pull request CI has read.
 
 From the API, send `"harness": "claude"` or `"harness": "opencode"` with `"place"` naming the machine and `"mode": "single"`, and optionally `"model"`, for example `"sonnet"`, and `"effort"`, for example `"high"`. The machine's model list is on the **Machines** page. Issue filings use the saved work-item placement and agent. The planner always runs Windlass.
 
@@ -193,7 +193,7 @@ A Codex item runs the way a Claude Code or OpenCode item does above, with these 
 
 - **Where.** Hosted Codex uses hardened Docker or the E2B microVM-only profile. On your machine, choose one of two sandboxes. **Docker + Windlass sandbox** is the default: Codex runs every command in its own sandbox without network, and may change files only in the workspace (not `.git`, `.agents`, `.codex` or `.aws`) and the temporary directories. The machine offers it once its runner's check of Codex's sandbox passed. **Docker, hardened** runs only when you choose it: commands run in the container without asking, with the machine's network, as Claude Code's do.
 - **Leaving the sandbox.** On **Docker + Windlass sandbox**, Codex asks before a command outside its sandbox or an edit outside the paths it may write, and every such request is refused. Most are refused inside Codex, which is told and goes on. One that reaches the platform ends the step: the timeline notes the request, and the item asks you to file the work again on **Docker, hardened**, or to give up. Work that needs the network in its commands, such as adding a package or running tests against a service, suits **Docker, hardened** better. The repository's setup command runs before the turns, with network, so dependencies it installs are there.
-- **Tokens.** **Connections → Pay with** decides what pays for each turn. A ChatGPT plan is a subscription, so the tokens Codex reports on it are shown, not counted. Turns your OpenAI key pays count toward the item's budget.
+- **Tokens.** **Connections → Pay with** decides what pays for each turn. Turns on your ChatGPT plan and turns your OpenAI key pays both count toward the item's budget at API prices.
 - **Checks.** On **Docker, hardened** the platform runs your repository's checks for Codex as for the other agents. On **Docker + Windlass sandbox** it runs none: a check would run what Codex changed outside Codex's sandbox, with the network Codex has no access to there. Each check that applies is recorded as not started, with that reason, and CI decides.
 - **Asking and reporting.** Codex gets `report`, `ask_person`, `push` and `fetch_base` like the other agents (see [When the agent asks you](#when-the-agent-asks-you)), and calls them without asking on both profiles.
 
@@ -341,46 +341,47 @@ The choices depend on the item. Only the item that owns the pull request can han
 
 ### When the budget is used
 
-An item's budget is in the units of what pays for its turns, and on this platform 2 hours of hosted sandbox time:
+An item's budget is in dollars of work, $5 by default, and on this platform 2 hours of hosted sandbox time. Every turn counts at API prices, whoever pays for it:
 
-- **An API key pays**: dollars, $5 by default, priced as **What an item cost** prices them, when each turn ends.
-- **A plan pays** (your Claude or ChatGPT plan, or a machine's Claude Code subscription): a share of each of the plan's windows that the plan reports, 20% of its 5-hour window and 3% of its weekly window by default (a 5-hour stretch is about 3% of a week). A turn's share is how far the plan's use rose while it ran, as the plan reported it. Where the plan reports both windows, both hold the item, and it stops at whichever share runs out first; a plan with no 5-hour limit that reports only its weekly window is held to that share alone. Turns running at the same time on the same plan each see the whole rise, so a share is an upper bound.
-- **Nothing can be measured** (a model the price catalog does not list, a plan or agent that reports no window): tokens, 2,000,000 by default, counted cost-weighted (an input token read from the prompt cache counts as a tenth). Where a plan paid but reports no window, the page says so: "Counted in tokens: your plan doesn't report its usage." Tokens are otherwise shown only under **How this is counted**.
+- **A turn on an API key** (a Settings key, or the machine's own key) counts what it cost, priced as **What an item cost** prices it, when the turn ends.
+- **A turn on your Claude or ChatGPT plan** (or a machine's own Claude Code sign-in) counts what the same tokens would have cost on a key. The plan charges nothing more for it: the figure is the work's value, so one budget means the same whatever pays. A plan's "% used" is never the measure, because it covers your whole account, your own use elsewhere included.
+- **A turn that cannot be priced** (a model the price catalog does not list, a turn that reported nothing): while any turn of the item is unpriced, tokens hold the item too, 2,000,000 by default, counted cost-weighted (an input token read from the prompt cache counts as a tenth). Tokens are otherwise shown only under **How this is counted**.
 
-Before a turn has said what pays, the page shows both the dollars and the plan shares the item may use. Once it has, **Cost so far** shows each window that applies, for example "4% of 20% of your 5-hour window · 1% of 3% of your weekly window".
+**Cost so far** shows the figure, for example "$0.40 of work of $5".
 
-When the budget is used, the item pauses and asks, for example "Used $4.20 of its $4 budget. Give it more to continue.", "Used its 5% of your 5-hour window. Give it more to continue." or "Used its 3% of your weekly window. Give it more to continue."
+When the budget is used, the item pauses and asks, for example "Used $5.10 of work of its $5 budget. Give it more to continue."
 
-- **Give it $1 more** (a quarter of the dollar budget, at least $1) or **Give it 5% more** (that window's share again, so **Give it 3% more** for the weekly window) goes on in the same session and sandbox, with the work as it is. Where tokens hold, **Give it 2M more tokens** gives what the item started with. **Another amount…** sets a figure of your own.
+- **Give it $2 more** (a quarter of the dollar budget, at least $1) goes on in the same session and sandbox, with the work as it is. Where tokens hold, **Give it 2M more tokens** gives what the item started with. **Another amount…** sets a figure of your own.
 - **Hand it over as it is** pushes what the sandbox holds, when nothing of the run is pushed yet, and hands it over once CI has been read.
 - **Give up** ends the item.
 
-A subtask asks the same way, without **Hand it over as it is**. A subtask's dollars and plan shares are an item's in proportion to the tokens its plan gives it; the plan card shows each part's expected share, and the parts' together. What you give a subtask in tokens adds to its feature's budget.
+A subtask asks the same way, without **Hand it over as it is**. A subtask's dollars are an item's in proportion to the tokens its plan gives it; the plan card shows each part's expected dollars, and the parts' together. What you give a subtask in tokens adds to its feature's budget.
 
-The budget is also watched while a turn runs. When the turn has used what was left, and a little more (5% of the budget), the platform stops it as **Stop** would: the agent's work so far stays in the sandbox and its conversation is kept, the timeline says the turn was stopped at the budget, and the item asks as above. **Give it more** goes on from where the turn stopped. A turn is stopped only on what is known while it runs: Windlass's dollars or tokens after each model request, the cost Claude Code reports on a key, and a plan's 5-hour and weekly windows as the plan reports them (read every 30 seconds; the turn stops at the first share it uses up). Where that is not known during the turn, for example an agent's tokens that come only at its end, the budget is checked after the turn instead, so such a turn can still go past it. Your own sessions have no budget and are never stopped. A feature's page shows one cost figure, the same under **Cost so far** and in the **Subtasks** box.
+The budget is also watched while a turn runs, on a plan as on a key. When the turn has used what was left, and a little more (5% of the budget), the platform stops it as **Stop** would: the agent's work so far stays in the sandbox and its conversation is kept, the timeline says the turn was stopped at the budget, and the item asks as above. **Give it more** goes on from where the turn stopped. A turn is stopped only on what is known while it runs: Windlass's dollars or tokens after each model request, and the cost Claude Code reports as it works. Where that is not known during the turn, for example an agent's tokens that come only at its end, the budget is checked after the turn instead, so such a turn can still go past it. Your own sessions have no budget and are never stopped. A feature's page shows one cost figure, the same under **Cost so far** and in the **Subtasks** box.
 
 **When every hosted sandbox you may keep is in use.** A hosted item's next turn may need a sandbox of its own, for instance its second reviewer's. When all the places are taken, the item waits and names what holds them: your agents by their titles, an item's builder or reviewer by its item. Free one on **Usage** and the turn starts by itself, choose **Keep waiting**, or **Give up**. An item counts as one place: its reviewer shares the place of its builder's sandbox, and the reviewer's sandbox is removed after each review. Sandboxes on your own machines are not counted.
 
 ### What an item cost
 
-Each item shows what it cost in dollars: on its page (the total, the models' and the sandbox's shares, each part of a feature, and by model who paid), as one figure on its Factory card, and in the **Work items** table on **Usage**, with the total of the items listed there. A feature's cost includes all its parts, and parts that ran again.
+Each item shows what it cost, split by who carried it: on its page (the total, each plan and key, hosted time, each part of a feature, and by model who paid), as one figure on its Factory card, and in the **Work items** table on **Usage**, with the total of the items listed there. A feature's cost includes all its parts, and parts that ran again.
 
-- **An API key's tokens** (a Settings key, or the machine's own key) are priced by model. Where Claude Code runs on an API key, its own reported cost for the turn is used. Otherwise the tokens are priced from the public [models.dev](https://models.dev) catalog, which the platform reads once a day; cached input is priced at the catalog's cached price.
-- **A turn on your Claude or ChatGPT plan** has no dollar figure: it shows as "on your Claude plan" or "on your ChatGPT plan", and a machine's own subscription sign-in as "on your machine's plan". The plan's usage windows are what such turns use, not dollars.
-- **Hosted sandbox time** is priced at the deployment's rate for its size. A sandbox on your own machine costs nothing here.
+- **The figure** is what the item added to your bills: what your API keys paid, and extra hosted time, for example "$1.20 extra". Where it added nothing, it says "Included in your plans".
+- **Included in your Claude plan** (or ChatGPT plan, or your machine's plan) gives the turns the plan carried and what they are worth at API prices, for example "3 turns · ≈ $1.20 at API prices". You pay nothing more for them.
+- **Paid with your Anthropic key** (or OpenAI key, or your machine's key) gives real dollars. Where Claude Code reports its own cost for a turn, that is used. Otherwise the tokens are priced from the public [models.dev](https://models.dev) catalog, which the platform reads once a day; cached input is priced at the catalog's cached price. A plan's turns are priced the same way.
+- **Hosted time**, where the platform has plans, is split as Windlass billing counted it: **Included in your Windlass plan**, in hosted minutes, and **Extra hosted time**, the minutes past your plan's monthly allowance with what they cost up to your spend cap (see [Plans and billing](/docs/settings#plans-and-billing)). Each stretch of sandbox time is split when it is counted, by whether your allowance was used up by then, and stays as it was. Free and yearly Pro have no extra time. Where the platform has no plans, hosted time is shown as an estimate at the deployment's rate for its size, for example "≈ $0.29 hosted for 1 h, estimated". A sandbox on your own machine costs nothing here.
 
-Where a part cannot be priced, for example a model the catalog does not list, or a turn on a key that reported no tokens, it says "cost unknown" next to what is known, and never guesses. Prices are estimates: the catalog's base price is used even where a provider charges more for a very long context, and writing to the prompt cache is priced as input. Token counts stay as details under **By model**.
+Where a part cannot be priced, for example a model the catalog does not list, or a turn that reported no tokens, it says "cost unknown" next to what is known, and never guesses. Prices are estimates: the catalog's base price is used even where a provider charges more for a very long context, and writing to the prompt cache is priced as input. Token counts stay as details under **By model**.
 
 ### What finished work costs
 
-The **Summary** tab on **Usage** looks back over the items that ended in the last 7, 30 or 90 days. Its two tables group the done items, one by size and one by type. Each row gives how many items are in the group, the median and p90 cost (the cost that 9 in 10 of them stayed under), the median and p90 time from an item's first start to its end, and the group's dollars split into API keys and hosted sandbox time.
+The **Summary** tab on **Usage** looks back over the items that ended in the last 7, 30 or 90 days. Its two tables group the done items, one by size and one by type. Each row gives how many items are in the group, the median and p90 cost (the cost that 9 in 10 of them stayed under), the median and p90 time from an item's first start to its end, and **Extra**, what the group added to your bills: API keys and extra hosted time. Cost is an item's model work at API prices, whoever paid.
 
 - **Size.** Small is one item. Medium is a feature of up to 3 parts, the most an automatically approved plan may have. Large is a feature of 4 parts or more. A part that a revised plan filed again counts once.
 - **Type.** The type comes from the files the item's work changed, as git lists them at its latest turn with changes. Docs means only documentation files (`.md`, `.mdx`, `.rst`). Tests means only test files. Dependencies means only package manifests and lockfiles. Features and fixes means any other source code changed. Other is the rest: config, CI, assets, docs together with tests, or no change at all. A feature takes its parts' type where they agree. If any part changed source code, the feature counts as Features and fixes. Otherwise it counts as Other.
 
-Above the tables, **Retries** is what was spent after a failed attempt: turns in a run you started again with **Retry**, turns fixing a failed CI, and a feature's parts that ran again for either reason. It counts model turns; the sandbox time of a retried run stays in the item's total. **Not finished** is everything that items cancelled, given up or failed used. **On your plan** counts the turns that ran on a Claude or ChatGPT plan.
+Above the tables, **Retries** is what was spent after a failed attempt: turns in a run you started again with **Retry**, turns fixing a failed CI, and a feature's parts that ran again for either reason. It counts model turns; the sandbox time of a retried run stays in the item's total. **Not finished** is everything that items cancelled, given up or failed used. Both say the work at API prices and what of it was extra. **Included in your plans** gives what the turns on a Claude or ChatGPT plan are worth at API prices, and how many there were.
 
-Turns on a plan are never given dollars. An item with any such turns is counted as "on your plan" and left out of the median and p90, and so is an item with a part that could not be priced. The figures are worked out with today's prices, as each item's cost is.
+An item with a part that could not be priced is left out of the median and p90. The figures are worked out with today's prices, as each item's cost is.
 
 ### When a check can't run
 
@@ -555,7 +556,7 @@ A subtask on Claude Code or OpenCode runs in the machine's hardened container, o
 
 **Works without asking.** Claude Code and OpenCode work without asking: they run every command and edit in their sandbox without asking you. Wherever such a subtask is shown, it says **works without asking**. The planner reads the item's text, which may come from an issue anyone could file. An inherited agent needs the same confirmation as one the planner chose: the approval card lists each such subtask under **Agents that work without asking**, and **Approve version N** stays unavailable until you tick every one. An approval sent any other way that does not name each one is refused. To run one on Windlass instead, choose **Windlass** for it and save.
 
-**Budgets per agent.** A subtask's budget counts in the units of what pays for its turns, as an item's does (see [When the budget is used](#when-the-budget-is-used)).
+**Budgets per agent.** A subtask's budget counts its turns at API prices whatever pays for them, as an item's does (see [When the budget is used](#when-the-budget-is-used)).
 
 **Usage limits.** A subtask waits only for its own agent's usage limits. When Claude Code is at its limit on the preferred machine and overflow is allowed, the subtask can run on an approved alternative whose Claude Code account is not.
 
@@ -666,7 +667,8 @@ When a Factory turn reaches a limit of this platform, the item waits and shows t
 | Limit | Default |
 | --- | --- |
 | Hosted sandboxes running at once, items and your own agents together | 3 |
-| Tokens per item, cost-weighted | 2,000,000 |
+| Work per item, at API prices | $5 |
+| Tokens per item, cost-weighted, while a turn can't be priced | 2,000,000 |
 | Hosted sandbox time per item | 2 hours |
 | A feature | its subtasks' budgets and one item's for itself |
 | Items filed from GitHub, Linear, Jira and Slack together per UTC day, drafts among them | 20 |

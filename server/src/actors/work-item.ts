@@ -29,7 +29,7 @@ import {
 	MOST_MS,
 } from "../factory/feedback.js";
 import { isAddressed } from "../github/events.js";
-import type { FeedbackBatch, FeedbackEntry } from "../contract.js";
+import type { FeedbackBatch, FeedbackEntry, HostedSplit } from "../contract.js";
 import { GithubProblem } from "../github/repos.js";
 import { verdictWords } from "../factory/verdict.js";
 import { mergeCandidate, requiredCiBranches } from "../factory/autonomy.js";
@@ -103,7 +103,7 @@ import {
 	type WorkType,
 } from "../contract.js";
 import { itemAgent, ledgerSeconds, retryAt } from "../factory/budget.js";
-import { mergeUsage } from "../factory/cost.js";
+import { addHosted, mergeUsage } from "../factory/cost.js";
 import { partsRetryUsage } from "../factory/usage-summary.js";
 import type { ReviewDelivery } from "./session-inbox.js";
 import { actor, UserError } from "rivetkit";
@@ -224,9 +224,10 @@ export interface ItemMeta {
 	verdict: ItemSummary["verdict"];
 	/**
 	 * The hosted sandbox seconds of the item's session over its whole life, and the ledger's holds already
-	 * in it: the ledger keeps only its last days, so the item adds each hold once as it sees it.
+	 * in it: the ledger keeps only its last days, so the item adds each hold once as it sees it. `hosted` is what
+	 * billing made of those seconds as each was first seen (usage.ts `hostedSplit`); absent where no plan applied.
 	 */
-	ledger: { seconds: number; holds: string[] };
+	ledger: { seconds: number; holds: string[]; hosted?: HostedSplit };
 }
 
 /** What `user` passes when it creates a `workItem`. */
@@ -791,8 +792,10 @@ async function takeSessionFact(c: Ctx, stored: Stored, fact: Fact): Promise<void
 				tokens: fact.spend?.tokens ?? 0,
 				...(fact.spend?.rawTokens !== undefined && { rawTokens: fact.spend.rawTokens }),
 				hostedSeconds,
+				...(stored.meta.ledger.hosted && { hosted: stored.meta.ledger.hosted }),
 				...(fact.spend?.agent && { agent: fact.spend.agent }),
 				...(fact.spend?.meter && { meter: fact.spend.meter }),
+				...(fact.spend?.usd !== undefined && { usd: fact.spend.usd }),
 			},
 		});
 	} else {
@@ -2298,9 +2301,12 @@ function lifetimeSeconds(meta: ItemMeta, facts: ItemFacts): number {
 	const fresh = facts.entries.filter(entry => !seen.has(entry.hold));
 	// Every hold ever counted is kept: an older answer that comes back after a newer one would otherwise drop a hold, which the
 	// next answer would count again. An item's life holds few of them (its hosted budget, in holds of minutes).
+	let hosted = meta.ledger.hosted;
+	for (const entry of fresh) if (entry.hosted) hosted = addHosted(hosted, entry.hosted);
 	meta.ledger = {
 		seconds: meta.ledger.seconds + ledgerSeconds(fresh, sessionsOf(meta)),
 		holds: [...meta.ledger.holds, ...fresh.map(entry => entry.hold)],
+		...(hosted && { hosted }),
 	};
 	return meta.ledger.seconds;
 }
@@ -2311,8 +2317,9 @@ async function factsOf(c: Ctx, meta: ItemMeta): Promise<ItemFacts> {
 	const stored = c.vars.stored;
 	if (stored?.item.place.kind === "hosted") {
 		const seconds = lifetimeSeconds(stored.meta, facts) + childSeconds(stored.item);
+		const { hosted } = stored.meta.ledger;
 		if (seconds > stored.item.spent.hostedSeconds)
-			await take(c, { kind: "spent", at: Date.now(), hostedSeconds: seconds });
+			await take(c, { kind: "spent", at: Date.now(), hostedSeconds: seconds, ...(hosted && { hosted }) });
 	}
 	return facts;
 }
@@ -4281,8 +4288,6 @@ const MAX_RAISE = {
 	tokens: 1_000_000_000,
 	hostedSeconds: 7 * 86_400,
 	usd: 100_000,
-	planPct: 1000,
-	planWeekPct: 1000,
 } as const;
 
 /** The fact of a person's action, checked; throws a UserError for one that cannot be taken. */

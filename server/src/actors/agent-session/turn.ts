@@ -424,15 +424,6 @@ function prompted(c: Ctx, t: TurnScope) {
 	void persist(c);
 }
 
-/** A plan's window snapshot (5-hour, weekly), null where it could not be read. */
-export async function planWindows(c: Ctx, uid: string, provider: import("../../contract.js").ModelProvider) {
-	if (provider !== "anthropic" && provider !== "openai") return null;
-	return userActor(c, uid)
-		.internalPlanStatus(provider)
-		.then(plan => plan?.windows ?? null)
-		.catch(() => null);
-}
-
 async function observe(c: Ctx, t: TurnScope, observation: UsageObservation) {
 	if (t.generation !== null)
 		await userActor(c, t.meta.uid)
@@ -760,9 +751,6 @@ export async function takeCredential(
 	const { key } = credential;
 	t.itemSignIn = credential.itemSignIn ?? meta.origin?.signIn;
 	t.credential = credential;
-	// An item's budget on a plan is its share of the plan's windows: the snapshot it starts from (best effort).
-	if (active.item && key?.plan && active.item.planAtStart === undefined)
-		active.item.planAtStart = await planWindows(c, meta.uid, key.provider);
 	// The blueprint's budget for this turn: its spend is watched from here, to stop it there (#100a).
 	const budget = active.item?.row.budget;
 	if (budget && active.item && !t.watch)
@@ -772,8 +760,6 @@ export async function takeCredential(
 			credential,
 			itemSignIn: t.itemSignIn,
 			earlier: run?.usage ?? null,
-			planAtStart: active.item.planAtStart,
-			planWindows: () => (key?.plan ? planWindows(c, meta.uid, key.provider) : Promise.resolve(null)),
 			onOver: (running, figure) => stopAtBudget(c, t, running, figure),
 		});
 	if (run) {

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/** The item page's dollars: the total, models and sandbox, each part of a feature, and by model who paid. */
+/** The item page's dollars: what it added to your bills, who carried each part, each part of a feature, and by model who paid. */
 import type { CostRates, ItemSummary, ItemView, SpendUsage } from "@contract";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
@@ -62,20 +62,40 @@ const facts = (host: HTMLElement) =>
 		]),
 	);
 
+const plan = { provider: "anthropic", generation: "g", plan: true } as const;
+
 describe("the item page's dollars", () => {
-	it("splits a key's tokens from the hosted sandbox's time", () => {
-		expect(facts(render(view({})))).toEqual({ Total: "$3.18", Models: "$3.00", Sandbox: "$0.18 for 1 h" });
+	it("says a key's real dollars as extra, and hosted time as an estimate where billing is off", () => {
+		const host = render(view({}));
+		expect(facts(host)).toEqual({
+			Total: "$3.00 extra",
+			"Paid with your Anthropic key": "$3.00",
+			Sandbox: "≈ $0.18 hosted for 1 h, estimated",
+		});
+		expect(host.querySelector(".item-dollars-models td")?.textContent).toBe("your Anthropic key");
 	});
-	it("says a plan's turns are on the plan, and a machine's sandbox costs nothing", () => {
+	it("values a plan's turns at API prices, and splits hosted time into included and extra", () => {
+		const usage = used({ key: plan }, 2400);
+		usage.hosted = { includedSeconds: 1800, extraSeconds: 600, extraUsd: 0.06 };
+		expect(facts(render(view({ spent: spent(usage) })))).toEqual({
+			Total: "$0.06 extra",
+			"Included in your Claude plan": "1 turn · ≈ $3.00 at API prices",
+			"Included in your Windlass plan": "30 hosted min",
+			"Extra hosted time": "10 hosted min · $0.06",
+		});
+	});
+	it("says a machine's plan carried it all, and a machine's sandbox costs nothing", () => {
 		const host = render(
 			view({
 				place: { kind: "machine", machineId: "m1" },
-				spent: spent(used({ harness: "claude", model: "opus", key: undefined, signIn: "subscription", size: null })),
+				spent: spent(
+					used({ harness: "claude", model: "claude-sonnet-4-5", key: undefined, signIn: "subscription", size: null }),
+				),
 			}),
 		);
 		expect(facts(host)).toEqual({
-			Total: "On your machine's plan",
-			Models: "On your machine's plan",
+			Total: "Included in your plans",
+			"Included in your machine's plan": "1 turn · ≈ $3.00 at API prices",
 			Sandbox: "$0.00: your machine",
 		});
 		expect(host.querySelector(".item-dollars-models td")?.textContent).toBe("your machine's plan");
@@ -83,7 +103,7 @@ describe("the item page's dollars", () => {
 	it("gives each part of a feature its cost, retries in its sum, and the feature's own turns apart", () => {
 		const part = (id: string, title: string, usage: SpendUsage) => ({ id, title, spent: spent(usage) }) as ItemSummary;
 		const parser = part("i_1", "Parse the manifest", used({}));
-		const writer = part("i_2", "Write the CSV", used({ key: { provider: "anthropic", generation: "g", plan: true } }));
+		const writer = part("i_2", "Write the CSV", used({ key: plan }));
 		const host = render(
 			view({
 				spent: spent(used({}, 0)),
@@ -95,15 +115,15 @@ describe("the item page's dollars", () => {
 			[...row.children].map(cell => cell.textContent),
 		);
 		expect(rows).toEqual([
-			["Planning, review and summary", "$3.00"],
-			["Parse the manifest", "$3.00"],
-			["Write the CSV", "On your Claude plan"],
+			["Planning, review and summary", "$3.00 extra"],
+			["Parse the manifest", "$3.00 extra"],
+			["Write the CSV", "Included in your plans"],
 		]);
-		expect(facts(host).Total).toBe("$6.00");
+		expect(facts(host).Total).toBe("$6.00 extra");
 	});
 	it("says an unpriced model is unknown, and waits for prices before saying anything", () => {
 		const host = render(view({ spent: spent(used({ model: "anthropic/claude-new" }, 3600)) }));
-		expect(facts(host)).toMatchObject({ Total: "$0.18 + some cost unknown", Models: "Cost unknown" });
+		expect(facts(host)).toMatchObject({ Total: "Cost unknown", "Paid with your Anthropic key": "Cost unknown" });
 		expect(render(view({}), null).textContent).toBe("Reading prices…");
 	});
 });

@@ -290,8 +290,6 @@ export interface ActiveTurn {
 		refused?: string | null;
 		untrustedRefusal?: UntrustedRefusal;
 		providerRefusal?: ItemProviderRefusal;
-		/** A plan-paid turn's plan windows when it started: its share of the plan is the difference at its end (budget.ts `windowShare`). */
-		planAtStart?: import("../../contract.js").UsageWindow[] | null;
 		/** Stopped at the delivery's budget while it ran (budget-watch.ts): the item asks its budget question. */
 		budgetStopped?: boolean;
 		escaped?: string;

@@ -5,10 +5,10 @@ import type { HostedSize } from "./hosted-sizes.js";
 /**
  * Who paid for a turn's model requests (factory/cost.ts `turnPayer`):
  *
- *   key           a Settings API key: billed by token, so priced
- *   machine-key   the machine's own API key: billed by token too, so priced
- *   plan          a connected subscription plan (Claude or ChatGPT): no dollars, its share of the plan's windows
- *   machine-plan  the machine's own subscription sign-in: no dollars either
+ *   key           a Settings API key: billed by token
+ *   machine-key   the machine's own API key: billed by token too
+ *   plan          a connected subscription plan (Claude or ChatGPT): included in it, valued at API prices
+ *   machine-plan  the machine's own subscription sign-in: the same
  */
 export type CostPayer = "key" | "machine-key" | "plan" | "machine-plan";
 
@@ -45,10 +45,23 @@ export interface SandboxUse {
 	seconds: number;
 }
 
+/**
+ * An item's hosted time as Windlass billing metered it, in hosted seconds (weighted by size, billing/meter.ts): what the
+ * plan's monthly allowance included, and what came past it (`extra`), with what the extra cost under the spend cap.
+ * Split when each ledger entry is first counted for the item (usage.ts `hostedSplit`), so it stays as it was.
+ */
+export interface HostedSplit {
+	includedSeconds: number;
+	extraSeconds: number;
+	extraUsd: number;
+}
+
 /** What an item's own turns used (`ItemSpend.usage`). A feature's parts keep theirs (`ItemSummary.partsUsage`). */
 export interface SpendUsage {
 	models: ModelUse[];
 	sandbox: SandboxUse[];
+	/** Absent where billing is off or the account is exempt: the sandbox time is then only estimated at the rate card. */
+	hosted?: HostedSplit;
 	/** The size of the sandbox the latest turn ran in: hosted time counted between turns is taken at it. */
 	size?: HostedSize;
 }

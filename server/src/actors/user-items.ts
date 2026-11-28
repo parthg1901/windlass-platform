@@ -59,7 +59,7 @@ import {
 	type PlacementRoute,
 } from "../factory/placement.js";
 import { plannerMachines } from "../machines/details.js";
-import type { ChildPlacement, HostedSize, ItemFeed, PlanSubtask, SpendUsage } from "../contract.js";
+import type { ChildPlacement, HostedSize, HostedSplit, ItemFeed, PlanSubtask, SpendUsage } from "../contract.js";
 import { mergeUsage, modelUsageSince } from "../factory/cost.js";
 import { hostedCredentials } from "../credentials/index.js";
 import { itemHarnessProblem, knownHarness, subtaskHarnessProblem } from "../sandbox/harnesses.js";
@@ -357,7 +357,8 @@ export async function loadItems(db: RawAccess): Promise<ItemsState> {
  * items not done, failed or cancelled.
  */
 export interface ItemFacts {
-	entries: Array<{ hold: string; session: string; seconds: number }>;
+	/** `hosted`: what billing made of the entry (usage.ts `hostedSplit`); absent where no plan applies. */
+	entries: Array<{ hold: string; session: string; seconds: number; hosted?: HostedSplit }>;
 	openItems: number;
 }
 
@@ -2443,7 +2444,10 @@ export const itemActions = {
 		const entries = Array.from({ length: USAGE_HISTORY_DAYS }, (_, back) => c.vars.usage.entriesOn(today - back))
 			.flat()
 			.filter(entry => sessionIds.includes(entry.session))
-			.map(({ hold, session, seconds }) => ({ hold, session, seconds }));
+			.map(entry => {
+				const hosted = c.vars.usage.hostedSplit(entry);
+				return { hold: entry.hold, session: entry.session, seconds: entry.seconds, ...(hosted && { hosted }) };
+			});
 		const openItems = [...c.vars.items.items.values()].filter(
 			item => item.state !== "done" && item.state !== "failed" && item.state !== "cancelled",
 		).length;

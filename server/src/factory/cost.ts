@@ -1,5 +1,5 @@
 /**
- * What an item cost, in dollars: model tokens priced by model and provider, plus hosted sandbox time priced by size.
+ * What an item cost, in dollars: model tokens priced by model and provider, plus its hosted sandbox time.
  *
  * Pure and browser-safe: the work item records what each turn used (`addTurn`, `addSandbox`) and the web prices it
  * (`itemCost`) with the rates of the moment (`CostRates`, server/src/model-prices.ts), so a refreshed price list
@@ -7,8 +7,9 @@
  *
  * A turn's model dollars are, in order: what its agent reported, where its harness record says that is the turn's
  * (`AcpProfile.reportedCost`); its tokens at the catalog's price for the model; otherwise unknown, never a guess.
- * A turn paid by a subscription plan has no dollars: it shows as "on your plan", its tokens only as details.
- * A machine's sandboxes cost nothing here.
+ * A turn a subscription plan carried is priced the same way: what it would have cost on a key, its value, never a
+ * charge. Hosted time is what Windlass billing made of it (`SpendUsage.hosted`: included in the plan, or extra), or,
+ * where billing is off, an estimate at the rate card. A machine's sandboxes cost nothing here.
  */
 
 import {
@@ -17,6 +18,7 @@ import {
 	type CostRates,
 	type CredentialRef,
 	type HarnessId,
+	type HostedSplit,
 	type HostedSize,
 	type ModelPrice,
 	type ModelProvider,
@@ -136,6 +138,13 @@ export function addSandbox(usage: SpendUsage, size: HostedSize, seconds: number)
 	else usage.sandbox.push({ size, seconds });
 }
 
+/** Two hosted splits as one. */
+export const addHosted = (a: HostedSplit | undefined, b: HostedSplit): HostedSplit => ({
+	includedSeconds: (a?.includedSeconds ?? 0) + b.includedSeconds,
+	extraSeconds: (a?.extraSeconds ?? 0) + b.extraSeconds,
+	extraUsd: (a?.extraUsd ?? 0) + b.extraUsd,
+});
+
 export const sandboxSeconds = (usage: SpendUsage | undefined): number =>
 	(usage?.sandbox ?? []).reduce((sum, entry) => sum + entry.seconds, 0);
 
@@ -152,6 +161,7 @@ export function mergeUsage(usages: ReadonlyArray<SpendUsage | undefined>): Spend
 			addTokens(into.priced, line.priced);
 		}
 		for (const entry of usage?.sandbox ?? []) addSandbox(merged, entry.size, entry.seconds);
+		if (usage?.hosted) merged.hosted = addHosted(merged.hosted, usage.hosted);
 	}
 	return merged;
 }
@@ -209,77 +219,112 @@ export function tokensUsd(tokens: UsageTokens, price: ModelPrice): number {
 
 export const PAID_BY_TOKEN: ReadonlySet<CostPayer> = new Set(["key", "machine-key"]);
 
-/** One model and payer of an item, priced. */
+/** One model and payer of an item, priced at API prices whoever paid. */
 export interface CostLine extends Pick<ModelUse, "harness" | "model" | "provider" | "payer" | "turns"> {
 	tokens: UsageTokens;
-	/** Dollars: null where a plan paid, or where some of it could not be priced (`unknown`). */
+	/** Dollars: null where some of it could not be priced (`unknown`). */
 	usd: number | null;
 	/** Dollars of what could be priced, where some could not. */
 	knownUsd: number;
 	unknown: boolean;
 }
 
-export interface ItemCost {
-	/** The dollars known: priced model turns and hosted sandbox time. */
+/** Who carried some of an item's model turns: one plan or key of a provider, its turns and their dollars. */
+export interface PayerCost {
+	payer: CostPayer;
+	provider: ModelProvider | null;
+	turns: number;
+	/** What a key paid, or what a plan's turns are worth at API prices; the known part where `unknown`. */
 	usd: number;
-	models: { usd: number; unknown: boolean };
-	sandbox: { usd: number; seconds: number; unknown: boolean };
-	/** Some part could not be priced: the total is at least `usd`. */
 	unknown: boolean;
-	/** The plans that paid for turns: no dollars for those. */
-	plans: { payer: "plan" | "machine-plan"; provider: ModelProvider | null; turns: number }[];
+}
+
+export interface ItemCost {
+	/** What the item added to the person's bills: model turns a key paid for, and extra hosted time. */
+	extraUsd: number;
+	/** All its model work at API prices, whoever paid: what its dollar budget counts. */
+	workUsd: number;
+	/** By who carried them, plans before keys. */
+	payers: PayerCost[];
+	/**
+	 * Its hosted time: where billing split it, the hosted seconds the plan included and the extra ones with what they
+	 * cost; otherwise (`billed` false) an estimate at the rate card, null where hosted time is not billed by time here.
+	 */
+	sandbox: {
+		seconds: number;
+		billed: boolean;
+		includedSeconds: number;
+		extraSeconds: number;
+		extraUsd: number;
+		estimateUsd: number | null;
+		unknown: boolean;
+	};
+	/** Some part could not be priced: the figures are at least what they say. */
+	unknown: boolean;
 	lines: CostLine[];
 }
+
+export const onPlan = (payer: Pick<PayerCost, "payer">): boolean => !PAID_BY_TOKEN.has(payer.payer);
 
 /** Prices what an item used at the given rates. */
 export function itemCost(usage: SpendUsage | undefined, rates: CostRates): ItemCost {
 	const lines: CostLine[] = [];
-	const plans: ItemCost["plans"] = [];
+	const payers: PayerCost[] = [];
 	for (const line of usage?.models ?? []) {
-		const tokens = {
-			inputTokens: line.inputTokens,
-			cachedInputTokens: line.cachedInputTokens,
-			outputTokens: line.outputTokens,
-		};
-		const base = {
+		const pricing = line.priced.inputTokens + line.priced.outputTokens > 0;
+		const price = pricing ? modelPrice(rates.models, line.provider, line.model) : null;
+		const knownUsd = line.agentUsd + (price ? tokensUsd(line.priced, price) : 0);
+		const unknown = line.unreported > 0 || (pricing && !price);
+		lines.push({
 			harness: line.harness,
 			model: line.model,
 			provider: line.provider,
 			payer: line.payer,
 			turns: line.turns,
-			tokens,
-		};
-		if (!PAID_BY_TOKEN.has(line.payer)) {
-			const payer = line.payer as "plan" | "machine-plan";
-			const plan = plans.find(plan => plan.payer === payer && plan.provider === line.provider);
-			if (plan) plan.turns += line.turns;
-			else plans.push({ payer, provider: line.provider, turns: line.turns });
-			lines.push({ ...base, usd: null, knownUsd: 0, unknown: false });
-			continue;
-		}
-		const pricing = line.priced.inputTokens + line.priced.outputTokens > 0;
-		const price = pricing ? modelPrice(rates.models, line.provider, line.model) : null;
-		const knownUsd = line.agentUsd + (price ? tokensUsd(line.priced, price) : 0);
-		const unknown = line.unreported > 0 || (pricing && !price);
-		lines.push({ ...base, usd: unknown ? null : knownUsd, knownUsd, unknown });
+			tokens: {
+				inputTokens: line.inputTokens,
+				cachedInputTokens: line.cachedInputTokens,
+				outputTokens: line.outputTokens,
+			},
+			usd: unknown ? null : knownUsd,
+			knownUsd,
+			unknown,
+		});
+		const payer = payers.find(one => one.payer === line.payer && one.provider === line.provider);
+		if (payer) {
+			payer.turns += line.turns;
+			payer.usd += knownUsd;
+			payer.unknown ||= unknown;
+		} else payers.push({ payer: line.payer, provider: line.provider, turns: line.turns, usd: knownUsd, unknown });
 	}
-	let sandboxUsd = 0;
+	payers.sort((a, b) => Number(onPlan(b)) - Number(onPlan(a)));
+	const hosted = usage?.hosted;
+	let estimateUsd: number | null = rates.sandbox === null ? null : 0;
 	let sandboxUnknown = false;
-	for (const entry of usage?.sandbox ?? []) {
-		// Null rates: hosted time is not billed by the second here (a local Docker layer).
-		if (rates.sandbox === null) continue;
-		const perHour = rates.sandbox[entry.size];
-		if (typeof perHour === "number") sandboxUsd += (entry.seconds / 3600) * perHour;
-		else sandboxUnknown = true;
+	// Null rates: hosted time is not billed by the second here (a local Docker layer).
+	if (!hosted && rates.sandbox !== null) {
+		for (const entry of usage?.sandbox ?? []) {
+			const perHour = rates.sandbox[entry.size];
+			if (typeof perHour === "number") estimateUsd! += (entry.seconds / 3600) * perHour;
+			else sandboxUnknown = true;
+		}
 	}
-	const modelUsd = lines.reduce((sum, line) => sum + line.knownUsd, 0);
-	const modelsUnknown = lines.some(line => line.unknown);
+	const sandbox = {
+		seconds: sandboxSeconds(usage),
+		billed: !!hosted,
+		includedSeconds: hosted?.includedSeconds ?? 0,
+		extraSeconds: hosted?.extraSeconds ?? 0,
+		extraUsd: hosted?.extraUsd ?? 0,
+		estimateUsd: hosted ? null : estimateUsd,
+		unknown: sandboxUnknown,
+	};
+	const keyUsd = payers.reduce((sum, payer) => (onPlan(payer) ? sum : sum + payer.usd), 0);
 	return {
-		usd: modelUsd + sandboxUsd,
-		models: { usd: modelUsd, unknown: modelsUnknown },
-		sandbox: { usd: sandboxUsd, seconds: sandboxSeconds(usage), unknown: sandboxUnknown },
-		unknown: modelsUnknown || sandboxUnknown,
-		plans,
+		extraUsd: keyUsd + sandbox.extraUsd,
+		workUsd: payers.reduce((sum, payer) => sum + payer.usd, 0),
+		payers,
+		sandbox,
+		unknown: lines.some(line => line.unknown) || sandboxUnknown,
 		lines,
 	};
 }

@@ -3698,17 +3698,14 @@ async function memoryChecks(): Promise<void> {
 			startsRun: true,
 		};
 		await receive(db as never, { ...delivery, key: "with", budget: { figure: "usd", stopAt: 1.2 } }, T);
-		const both = { figure: "planPct", stopAt: 2.25, also: { figure: "planWeekPct", stopAt: 0.5 } } as const;
-		await receive(db as never, { ...delivery, key: "both", budget: both }, T);
 		await receive(db as never, { ...delivery, key: "without" }, T);
 		await receive(db as never, { ...delivery, key: "bad", budget: { figure: "euros", stopAt: 1 } as never }, T);
-		const [withBudget, withBoth, without, bad] = await Promise.all(
-			["with", "both", "without", "bad"].map(key => inboxRow(db as never, key)),
+		const [withBudget, without, bad] = await Promise.all(
+			["with", "without", "bad"].map(key => inboxRow(db as never, key)),
 		);
 		raw.close();
 		assert(
 			JSON.stringify(withBudget?.budget) === JSON.stringify({ figure: "usd", stopAt: 1.2 }) &&
-				JSON.stringify(withBoth?.budget) === JSON.stringify(both) &&
 				without?.budget === null &&
 				bad?.budget === null,
 			`rows: ${JSON.stringify([withBudget?.budget, without?.budget, bad?.budget])}`,
@@ -3727,8 +3724,8 @@ async function memoryChecks(): Promise<void> {
 				outputTokens,
 				reasoningTokens: 0,
 			});
-			type Stop = { figure: "usd" | "planPct" | "planWeekPct" | "tokens"; stopAt: number };
-			const watch = (budget: Stop & { also?: Stop }, more: object = {}) => {
+			type Stop = { figure: "usd" | "tokens"; stopAt: number };
+			const watch = (budget: Stop, more: object = {}) => {
 				const over: number[] = [];
 				const figures: string[] = [];
 				const watcher = new BudgetWatch({
@@ -3736,7 +3733,6 @@ async function memoryChecks(): Promise<void> {
 					harness: "windlass",
 					credential: { model: "openai/gpt-5", key: { provider: "openai", generation: "k1" } },
 					earlier: null,
-					planWindows: async () => null,
 					prices,
 					onOver: (running, figure) => {
 						over.push(running);
@@ -3769,61 +3765,30 @@ async function memoryChecks(): Promise<void> {
 			const acp = watch({ figure: "tokens", stopAt: 1 }, { harness: "claude" });
 			acp.watcher.used(step(5_000, 5_000));
 			acp.watcher.close();
-			// A plan turn: its rise in the 5-hour window, as the plan's windows are read again.
-			const w = (usedPct: number) => [
-				{ kind: "5h" as const, usedPct, resetsAt: T + 3600_000, observedAt: T, source: "header" as const },
-			];
-			let now = w(30);
+			// A plan-paid turn: the same tokens at the same prices, its value in dollars of work.
 			const plan = watch(
-				{ figure: "planPct", stopAt: 2.25 },
-				{
-					credential: { model: "gpt-5", key: { provider: "openai", generation: "p1", plan: true } },
-					planAtStart: w(30),
-					planWindows: async () => now,
-				},
+				{ figure: "usd", stopAt: 1.2 },
+				{ credential: { model: "openai/gpt-5", key: { provider: "openai", generation: "p1", plan: true } } },
 			);
-			now = w(31.5);
-			await plan.watcher.readPlan();
+			await sleep(0);
+			plan.watcher.used(step(400_000, 20_000));
 			const planBelow = plan.over.length;
-			now = w(32.5);
-			await plan.watcher.readPlan();
+			plan.watcher.used(step(400_000, 30_000));
+			plan.watcher.used(step(10_000, 1_000));
 			plan.watcher.close();
-			// A plan with both windows: the turn stops at whichever it crosses first, here its week.
-			const ww = (fiveHour: number, week: number) => [
-				...w(fiveHour),
-				{ kind: "7d" as const, usedPct: week, resetsAt: T + 86_400_000, observedAt: T, source: "header" as const },
-			];
-			let both = ww(30, 10);
-			const twoWindows = watch(
-				{ figure: "planPct", stopAt: 2.25, also: { figure: "planWeekPct", stopAt: 0.5 } },
+			// Claude Code on a Claude plan: the cost it reports for the turn, at API prices.
+			const claude = watch(
+				{ figure: "usd", stopAt: 1 },
 				{
-					credential: { model: "gpt-5", key: { provider: "openai", generation: "p1", plan: true } },
-					planAtStart: ww(30, 10),
-					planWindows: async () => both,
+					harness: "claude",
+					credential: { model: "default", key: { provider: "anthropic", generation: "p2", plan: true } },
 				},
 			);
-			both = ww(31, 10.3);
-			await twoWindows.watcher.readPlan();
-			const twoBelow = twoWindows.over.length;
-			both = ww(31.5, 10.6);
-			await twoWindows.watcher.readPlan();
-			twoWindows.watcher.close();
-			// A weekly-only plan: its week holds the turn, and a 5-hour window it never reports changes nothing.
-			const weekOnly = (week: number) => [
-				{ kind: "7d" as const, usedPct: week, resetsAt: T + 86_400_000, observedAt: T, source: "header" as const },
-			];
-			let weekNow = weekOnly(10);
-			const weekly = watch(
-				{ figure: "planWeekPct", stopAt: 1 },
-				{
-					credential: { model: "gpt-5", key: { provider: "openai", generation: "p1", plan: true } },
-					planAtStart: weekOnly(10),
-					planWindows: async () => weekNow,
-				},
-			);
-			weekNow = weekOnly(11.25);
-			await weekly.watcher.readPlan();
-			weekly.watcher.close();
+			await sleep(0);
+			claude.watcher.reported({ amount: 0.8, currency: "USD" });
+			const claudeBelow = claude.over.length;
+			claude.watcher.reported({ amount: 1.1, currency: "USD" });
+			claude.watcher.close();
 			assert(
 				below === 0 &&
 					key.over.length === 1 &&
@@ -3833,20 +3798,16 @@ async function memoryChecks(): Promise<void> {
 					JSON.stringify(tokens.over) === "[1100]" &&
 					acp.over.length === 0 &&
 					planBelow === 0 &&
-					JSON.stringify(plan.over) === "[2.5]" &&
-					JSON.stringify(plan.figures) === '["planPct"]' &&
-					twoBelow === 0 &&
-					twoWindows.over.length === 1 &&
-					Math.abs(twoWindows.over[0]! - 0.6) < 1e-9 &&
-					JSON.stringify(twoWindows.figures) === '["planWeekPct"]' &&
-					JSON.stringify(weekly.over) === "[1.25]" &&
-					JSON.stringify(weekly.figures) === '["planWeekPct"]',
-				`stops: ${JSON.stringify({ below, key: key.over, unknown: unknown.over, tokensBelow, tokens: tokens.over, acp: acp.over, planBelow, plan: plan.over, twoBelow, two: twoWindows.over, twoFigures: twoWindows.figures, weekly: weekly.over })}`,
+					plan.over.length === 1 &&
+					Math.abs(plan.over[0]! - 1.5) < 1e-9 &&
+					JSON.stringify(plan.figures) === '["usd"]' &&
+					claudeBelow === 0 &&
+					JSON.stringify(claude.over) === "[1.1]",
+				`stops: ${JSON.stringify({ below, key: key.over, unknown: unknown.over, tokensBelow, tokens: tokens.over, acp: acp.over, planBelow, plan: plan.over, claudeBelow, claude: claude.over })}`,
 			);
-			return "stopped once past $1.20 at $1.50, past 1,000 tokens, past 2.25 points of the 5-hour window, at the first crossed of two windows, and on a weekly-only plan's week; never below or unknown";
+			return "stopped once past $1.20 at $1.50 on a key and on a plan, at Claude Code's reported $1.10 on a plan, past 1,000 tokens; never below or unknown";
 		},
 	);
-
 	await check("memory: a claim winning the withdrawal update stays started", async () => {
 		const { raw, db } = memoryDb();
 		for (const table of INBOX_TABLES) await db.execute(table);

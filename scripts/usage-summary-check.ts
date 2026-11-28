@@ -31,7 +31,7 @@ const tokens = (input: number): TurnUsage => ({
 	reasoningTokens: 0,
 });
 
-/** A turn of a million input tokens on a Settings key ($3), or on the Claude plan (no dollars). */
+/** A turn of a million input tokens on a Settings key ($3), or on the Claude plan (worth $3, added to no bill). */
 const meter = (plan = false, model = "anthropic/claude-sonnet-4-5"): TurnMeter =>
 	turnMeter({
 		harness: "windlass",
@@ -195,7 +195,7 @@ function finished(more: Partial<FinishedItem>): FinishedItem {
 	};
 }
 
-test("the summary: done items grouped, plan items not priced, retries and abandoned items apart", () => {
+test("the summary: done items grouped, plan turns at their value, retries and abandoned items apart", () => {
 	const result = summarize(
 		[
 			finished({ usage: usage(meter()), seconds: 600 }),
@@ -217,28 +217,29 @@ test("the summary: done items grouped, plan items not priced, retries and abando
 	const [docs, feature] = result.byType;
 	assert.equal(feature?.key, "feature");
 	assert.equal(feature?.count, 3);
-	assert.equal(feature?.priced, 2);
-	assert.equal(feature?.onPlan, 1);
-	close(feature?.usd?.median ?? null, 6);
-	close(feature?.usd?.p90 ?? null, 8.4);
+	// Work at API prices, whoever paid: $3, $9 and the plan's $3.
+	assert.equal(feature?.priced, 3);
+	close(feature?.work?.median ?? null, 3);
+	close(feature?.work?.p90 ?? null, 7.8);
 	assert.deepEqual(feature?.seconds, { median: 1200, p90: 1680 });
-	close(feature?.modelsUsd ?? null, 12);
+	// Only the keys' turns were added to the bills.
+	close(feature?.extraUsd ?? null, 12);
 	assert.equal(docs?.key, "docs");
-	assert.equal(docs?.usd, null);
+	assert.equal(docs?.work, null);
 	assert.equal(docs?.unknown, 1);
-	close(result.retries.usd, 3);
+	close(result.retries.workUsd, 6);
+	close(result.retries.extraUsd, 3);
 	assert.equal(result.retries.items, 2);
-	assert.equal(result.retries.planTurns, 1);
-	close(result.abandoned.usd, 6);
+	close(result.abandoned.workUsd, 9);
+	close(result.abandoned.extraUsd, 6);
 	assert.deepEqual([result.abandoned.cancelled, result.abandoned.failed], [1, 1]);
-	assert.equal(result.abandoned.planTurns, 1);
-	assert.deepEqual(result.plan, { items: 2, turns: 2 });
+	assert.deepEqual(result.plan, { items: 2, turns: 2, usd: 6 });
 });
 
 test("nothing ended: empty groups and nothing spent", () => {
 	const result = summarize([], RATES);
 	assert.deepEqual(result.bySize, []);
 	assert.deepEqual(result.byType, []);
-	assert.equal(result.retries.usd, 0);
+	assert.equal(result.retries.workUsd, 0);
 	assert.equal(result.abandoned.items, 0);
 });

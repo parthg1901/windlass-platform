@@ -1,44 +1,30 @@
 import type { CostRates, ItemSummary, ItemView } from "@contract";
-import type { ItemCost as Cost } from "../../../server/src/factory/cost.js";
 import { HARNESS_NAMES } from "../lib/acp";
 import { CostFigure } from "./CostFigure";
-import { costWords, lineWords, payerWords, summaryCost, usd } from "../lib/cost";
-import { compact, plural, sandboxTime } from "../lib/format";
+import { costWords, lineWords, payerAmount, payerLabel, payerName, sandboxRows, summaryCost } from "../lib/cost";
+import { compact, plural } from "../lib/format";
 import { modelWords } from "../lib/models";
 import { linkProps } from "../lib/router";
 import { itemCost } from "../../../server/src/factory/cost.js";
 
-/** The models' share of a cost in words, as `costWords` says the whole. */
-function modelsWords(cost: Cost): string {
-	return (
-		costWords({
-			...cost,
-			usd: cost.models.usd,
-			unknown: cost.models.unknown,
-			sandbox: { usd: 0, seconds: 0, unknown: false },
-		}) ?? "None yet"
-	);
-}
-
-function sandboxWords(cost: Cost, view: Pick<ItemView, "place">, rates: CostRates): string {
-	if (view.place.kind === "machine") return "$0.00: your machine";
-	if (cost.sandbox.seconds === 0) return "None yet";
-	if (rates.sandbox === null) return `${sandboxTime(cost.sandbox.seconds)}, not billed by time here`;
-	const amount = cost.sandbox.unknown ? "cost unknown" : usd(cost.sandbox.usd);
-	return `${amount} for ${sandboxTime(cost.sandbox.seconds)}`;
-}
-
 const modelName = (model: string) => (model === "default" ? "agent's default" : modelWords(model));
 
 /**
- * An item's cost in dollars: the total, the models' and the sandbox's shares, and each part's for a feature. Plans'
- * turns say so instead of a dollar figure (lib/cost.ts); the tokens behind it are in `CostByModel`.
+ * An item's cost, split by who carried it: the headline is what it added to your bills, then each plan's turns (and
+ * their value at API prices), each key's dollars, and hosted time included in the Windlass plan or extra (lib/cost.ts).
+ * The tokens behind it are in `CostByModel`.
  */
 export function ItemCost({ view, rates }: { view: ItemView; rates: CostRates | null }) {
 	if (!rates) return <p className="usage-note item-dollars-wait">Reading prices…</p>;
 	const total = summaryCost(view, rates);
 	const own = itemCost(view.spent.usage, rates);
 	const parts: ItemSummary[] = view.children ?? [];
+	const rows = [
+		...(total.payers.length
+			? total.payers.map(payer => ({ label: payerLabel(payer), value: payerAmount(payer) }))
+			: [{ label: "Models", value: "None yet" }]),
+		...sandboxRows(total, view.place.kind, rates),
+	];
 	return (
 		<div className="item-dollars">
 			<dl className="usage-facts item-facts item-cost">
@@ -48,14 +34,12 @@ export function ItemCost({ view, rates }: { view: ItemView; rates: CostRates | n
 						<CostFigure words={costWords(total) ?? "Nothing yet"} />
 					</dd>
 				</div>
-				<div>
-					<dt>Models</dt>
-					<dd className="usage-number">{modelsWords(total)}</dd>
-				</div>
-				<div>
-					<dt>Sandbox</dt>
-					<dd className="usage-number">{sandboxWords(total, view, rates)}</dd>
-				</div>
+				{rows.map(row => (
+					<div key={row.label}>
+						<dt>{row.label}</dt>
+						<dd className="usage-number">{row.value}</dd>
+					</div>
+				))}
 			</dl>
 			{parts.length > 0 ? (
 				<table className="usage-table item-dollars-table">
@@ -117,7 +101,7 @@ export function CostByModel({ view, rates }: { view: ItemView; rates: CostRates 
 									<th scope="row">
 										{HARNESS_NAMES[line.harness] ?? line.harness} · {modelName(line.model)}
 									</th>
-									<td>{payerWords(line)}</td>
+									<td>{payerName(line)}</td>
 									<td className="usage-number tone-dim">
 										{compact(line.tokens.inputTokens)} in ({compact(line.tokens.cachedInputTokens)} cached),{" "}
 										{compact(line.tokens.outputTokens)} out · {plural(line.turns, "turn")}
@@ -130,7 +114,8 @@ export function CostByModel({ view, rates }: { view: ItemView; rates: CostRates 
 					{rates.source ? (
 						<p>
 							Token prices from {rates.source.name}, read {new Date(rates.source.fetchedAt).toISOString().slice(0, 10)}.
-							Claude Code's own cost is used where it runs on an API key.
+							Claude Code's own reported cost is used where it gives one. Turns a plan carried are valued the same way,
+							at API prices: the plan charges nothing more for them.
 						</p>
 					) : (
 						<p>Token prices could not be read, so only what an agent reported of its own cost is counted.</p>

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/** The Usage summary: the size and type tables, the retries and unfinished callouts, plan items, the empty period. */
+/** The Usage summary: the size and type tables, the retries and unfinished callouts, plan turns, the empty period. */
 import type { CostRates, FinishedItem, FinishedItems, SpendUsage } from "@contract";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
@@ -16,7 +16,7 @@ const RATES: CostRates = {
 	sandbox: { standard: 0.36 },
 };
 
-/** Turns of a million input tokens each: $3 on a key, nothing in dollars on the Claude plan. */
+/** Turns of a million input tokens each: $3 on a key, worth $3 at API prices on the Claude plan. */
 function used(turns: number, plan = false): SpendUsage {
 	const usage = noUsage();
 	for (let n = 0; n < turns; n++)
@@ -80,8 +80,8 @@ describe("the Usage summary", () => {
 			item({ size: "medium", parts: 2, type: "docs", usage: used(2), seconds: 3600 }),
 		]);
 		expect(rows(host, "By size")).toEqual([
-			["Smallone item", "2", "$6.00", "$8.40", "20 min", "28 min", "$12.00 + $0.00"],
-			["Mediuma feature of up to 3 parts", "1", "$6.00", "$6.00", "1 h", "1 h", "$6.00 + $0.00"],
+			["Smallone item", "2", "$6.00", "$8.40", "20 min", "28 min", "$12.00"],
+			["Mediuma feature of up to 3 parts", "1", "$6.00", "$6.00", "1 h", "1 h", "$6.00"],
 		]);
 		expect(rows(host, "By type").map(row => row[0])).toEqual([
 			"Docsonly documentation",
@@ -97,21 +97,28 @@ describe("the Usage summary", () => {
 		]);
 		expect(facts(host)).toMatchObject({
 			Ended: "3",
-			Retries: "$3.00",
-			"Not finished": "$6.00 + 1 turn on your plan",
+			Retries: "$3.00 of work + $3.00 extra",
+			"Not finished": "$9.00 of work + $6.00 extra",
 		});
 		expect(host.textContent).toContain("1 cancelled, 1 given up or failed");
 	});
 
-	it("never gives a plan's items dollars: on your plan, left out of the percentiles", () => {
+	it("values a plan's items at API prices in the percentiles, adding nothing extra for them", () => {
 		const host = render([item({ usage: used(2, true) }), item({ usage: used(1) })]);
 		const [small] = rows(host, "By size");
-		expect(small?.[0]).toBe("Smallone item1 priced · 1 on your plan");
-		expect(small?.[1]).toBe("2");
-		expect(small?.[2]).toBe("$3.00");
-		const onlyPlan = render([item({ usage: used(2, true) })]);
-		expect(rows(onlyPlan, "By size")[0]?.slice(2, 4)).toEqual(["On your plan", "On your plan"]);
-		expect(facts(onlyPlan)["On your plan"]).toBe("2 turns");
+		expect(small?.[0]).toBe("Smallone item");
+		expect(small?.slice(1, 4)).toEqual(["2", "$4.50", "$5.70"]);
+		expect(small?.[6]).toBe("$3.00");
+		expect(facts(host)["Included in your plans"]).toBe("≈ $6.00 at API prices");
+		expect(host.textContent).toContain("2 turns in 1 item on your Claude or ChatGPT plan");
+	});
+
+	it("leaves an item that could not be priced out of the percentiles, and says so", () => {
+		const unpriced = used(1);
+		unpriced.models[0]!.model = "anthropic/claude-new";
+		const [small] = rows(render([item({ usage: unpriced }), item({ usage: used(1) })]), "By size");
+		expect(small?.[0]).toBe("Smallone item1 priced · 1 unknown");
+		expect(small?.slice(2, 4)).toEqual(["$3.00", "$3.00"]);
 	});
 
 	it("says so when nothing ended in the period, and when nothing was done", () => {

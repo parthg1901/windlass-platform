@@ -270,7 +270,7 @@ An agent asks before it starts an MCP server that the repository names: **Start 
 
 ## Usage
 
-The **Usage** page shows your effective limits, hosted sandbox time, what your work items' model turns cost today and kept sandboxes. **Models today** prices the day's turns as an item's cost is priced: dollars where an API key paid, "+ on your Claude plan" or "+ on your ChatGPT plan" where a plan carried turns. Model tokens are under **Details**. The deployment operator sets account limits.
+The **Usage** page shows your effective limits, hosted sandbox time, what your work items' model turns cost today and kept sandboxes. **Models today** prices the day's turns as an item's cost is priced: what your API keys paid, and, where a plan carried turns, what they are worth at API prices, for example "$1.20 on your keys + ≈ $3.40 included in your plans". Model tokens are under **Details**. The deployment operator sets account limits.
 
 ### Daily model tokens
 

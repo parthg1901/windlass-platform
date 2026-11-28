@@ -76,7 +76,7 @@ import { setupProjectOf } from "../setup-command.js";
 import { Attempts, type Submission, SubmissionProblem, isRepeat, submissionOf } from "../submissions.js";
 import { VerificationLog } from "../verified.js";
 import { serverSealer } from "../signin/seal.js";
-import { agentTurn, turnUsd, windowShare } from "../factory/budget.js";
+import { agentTurn, turnUsd } from "../factory/budget.js";
 import { modelPrices } from "../model-prices.js";
 import { turnMeter } from "../factory/cost.js";
 import { cutTurnUsage, cutTurnUsageNote, usesPlatformModel, freedNote, hostedLimitsApply } from "../usage.js";
@@ -234,7 +234,6 @@ import {
 	endSegment,
 	closeTurn,
 	settleAfterTurn,
-	planWindows,
 	type ItemTurnEnd,
 	type OfferedHarness,
 	type TurnHooks,
@@ -1829,20 +1828,13 @@ async function itemTurnEnded(
 			cost: ended.acp?.usage?.cost,
 			size: meta.place.kind === "hosted" ? (meta.hostedSize ?? SESSION_HOSTED_SIZE) : null,
 		});
-	// The item's budget in real units (factory/budget.ts): a key's dollars at today's prices, a plan's share of its windows.
+	// The item's budget (factory/budget.ts): the turn's dollars of work at today's prices, whoever paid.
 	if (fact.spend.meter) {
 		const models = await modelPrices()
 			.then(rates => rates.models)
 			.catch(() => null);
 		const usd = turnUsd(fact.spend.meter, models);
 		if (usd !== undefined) fact.spend.usd = usd;
-	}
-	const key = ended.credential?.key;
-	if (key?.plan && item.planAtStart !== undefined) {
-		const end = await planWindows(c, meta.uid, key.provider);
-		const fiveHour = windowShare(item.planAtStart, end, "5h");
-		const week = windowShare(item.planAtStart, end, "7d");
-		if (fiveHour !== null || week !== null) fact.spend.plan = { fiveHour, week };
 	}
 	if (
 		fact.kind === "turn_ended" &&

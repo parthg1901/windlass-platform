@@ -33,7 +33,6 @@ import {
 	itemCost,
 	mergeUsage,
 	noUsage,
-	PAID_BY_TOKEN,
 	tokensUsd,
 	turnMeter,
 } from "../../../server/src/factory/cost.js";
@@ -865,8 +864,8 @@ function seeds(state: MockItemsState, at: number, machines: MachineSummary[] | n
 			pr: 12,
 			question: {
 				kind: "budget",
-				text: "Used its 20% of your 5-hour window. Give it more to continue.",
-				choices: budgetChoices("20% more"),
+				text: "Used $5.10 of work of its $5 budget. Give it more to continue.",
+				choices: budgetChoices("$2 more"),
 				asked: 130,
 			},
 			run: {
@@ -886,12 +885,12 @@ function seeds(state: MockItemsState, at: number, machines: MachineSummary[] | n
 				[220, "The checks passed.", [1, 6, "gate"]],
 				[219, `Pushed ${short(hex(23))} to pull request #12.`, [1, 7, "publish"]],
 				[180, "CI failed: docs.", [1, 8, "ci", 6]],
-				[130, "Asked: Used its 20% of your 5-hour window. Give it more to continue.", [1, 9, "ci_fix"]],
+				[130, "Asked: Used $5.10 of work of its $5 budget. Give it more to continue.", [1, 9, "ci_fix"]],
 			],
 			spent: {
 				tokens: 2_100_000,
 				rawTokens: 19_300_000,
-				planPct: 20,
+				usd: 5.1,
 				turns: 3,
 				activeSeconds: 3 * 3600 + 10 * 60,
 				hostedSeconds: 1.5 * 3600,
@@ -4184,10 +4183,10 @@ function withSeededUsage(items: readonly ItemView[]): void {
 	items.forEach((item, index) => {
 		const parts = (item.children ?? []).flatMap(child => byId.get(child.id) ?? []);
 		item.spent.usage ??= seededUsage(item, index, parts);
-		// Its budget's dollars are its key-paid turns' model dollars, as a turn's end prices them (budget.ts `turnUsd`).
+		// Its budget's dollars are its turns' work at API prices, whoever paid, as a turn's end prices them (budget.ts `turnUsd`).
 		const cost = itemCost(item.spent.usage, { models: MOCK_MODEL_PRICES.models, source: null, sandbox: null });
-		if (item.budget.usd !== undefined && cost.lines.some(line => PAID_BY_TOKEN.has(line.payer)))
-			item.spent.usd ??= Math.round(cost.models.usd * 10_000) / 10_000;
+		if (item.budget.usd !== undefined && cost.lines.length > 0)
+			item.spent.usd ??= Math.round(cost.workUsd * 10_000) / 10_000;
 		if (item.mode !== "orchestrate") item.workType ??= seededWorkType(item.title);
 	});
 	for (const item of items) {

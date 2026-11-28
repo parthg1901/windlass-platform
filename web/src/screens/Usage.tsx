@@ -601,7 +601,7 @@ export function Usage() {
 						<p className="usage-summary-figure">
 							<strong>{rates ? <CostFigure words={todayCostWords(view.modelsToday, rates)} /> : "…"}</strong>
 						</p>
-						<p className="usage-summary-sub">Work items' turns, at today's prices</p>
+						<p className="usage-summary-sub">Work items' turns, at today's API prices</p>
 					</div>
 					{price && todayUsd !== null ? (
 						<div className="usage-summary-cell">

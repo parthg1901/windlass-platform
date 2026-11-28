@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CostRates, SpendUsage, TurnUsage } from "../server/src/contract.js";
+import { UsageBook, type UsageEntry, type UsageLimits } from "../server/src/usage.js";
 import { FACTORY_DEFAULTS } from "../server/src/factory/budget.js";
 import { createItem } from "../server/src/factory/blueprint.js";
 import { chargeTurn, noteHostedTime } from "../server/src/factory/change.js";
@@ -60,9 +61,13 @@ test("a Settings key's tokens are priced from the catalog, cached input at its o
 	charge(into, meter);
 	const cost = itemCost(into.spent.usage, RATES);
 	// 200k fresh input at $3, 800k cached at $0.30, 100k output at $15 per million.
-	close(cost.models.usd, 0.6 + 0.24 + 1.5);
+	close(cost.workUsd, 0.6 + 0.24 + 1.5);
+	close(cost.extraUsd, 0.6 + 0.24 + 1.5);
 	assert.equal(cost.unknown, false);
-	assert.deepEqual(cost.plans, []);
+	assert.deepEqual(
+		cost.payers.map(p => [p.payer, p.provider, p.turns]),
+		[["key", "anthropic", 1]],
+	);
 });
 
 test("a catalog without a cached price prices cached input as input", () => {
@@ -80,7 +85,7 @@ test("a catalog without a cached price prices cached input as input", () => {
 		}),
 	);
 	assert.equal(into.spent.usage.models[0]?.payer, "machine-key");
-	close(itemCost(into.spent.usage, RATES).usd, 1.75);
+	close(itemCost(into.spent.usage, RATES).extraUsd, 1.75);
 });
 
 test("the agent's own cost is preferred where its record says it is the turn's", () => {
@@ -97,8 +102,8 @@ test("the agent's own cost is preferred where its record says it is the turn's",
 		}),
 	);
 	const cost = itemCost(into.spent.usage, RATES);
-	close(cost.models.usd, 0.42);
-	assert.equal(cost.models.unknown, false);
+	close(cost.workUsd, 0.42);
+	assert.equal(cost.unknown, false);
 	// OpenCode's reported cost covers its whole conversation, so its tokens are priced instead.
 	const opencode = turnMeter({
 		harness: "opencode",
@@ -117,7 +122,7 @@ test("the agent's own cost is preferred where its record says it is the turn's",
 	);
 });
 
-test("a plan's turns have no dollars, whatever the agent reported", () => {
+test("a plan's turns are worth what they would cost on a key, and add nothing to the bills", () => {
 	const into = item();
 	charge(
 		into,
@@ -137,14 +142,19 @@ test("a plan's turns have no dollars, whatever the agent reported", () => {
 		turnMeter({ harness: "claude", model: "default", signIn: "subscription", usage: tokens(10, 0, 1), size: null }),
 	);
 	const cost = itemCost(into.spent.usage, RATES);
-	assert.equal(cost.models.usd, 0);
-	assert.equal(cost.unknown, false);
-	assert.deepEqual(cost.plans, [
-		{ payer: "plan", provider: "anthropic", turns: 1 },
-		{ payer: "plan", provider: "openai", turns: 1 },
-		{ payer: "machine-plan", provider: "anthropic", turns: 1 },
-	]);
-	assert.ok(cost.lines.every(line => line.usd === null));
+	assert.equal(cost.extraUsd, 0);
+	// Claude Code's own $3.10 for the first; "default" has no catalog price, so the other two are unknown.
+	assert.equal(cost.unknown, true);
+	assert.deepEqual(
+		cost.payers.map(p => [p.payer, p.provider, p.turns, p.unknown]),
+		[
+			["plan", "anthropic", 1, false],
+			["plan", "openai", 1, true],
+			["machine-plan", "anthropic", 1, true],
+		],
+	);
+	close(cost.payers[0]!.usd, 3.1);
+	close(cost.workUsd, 3.1);
 	assert.equal(cost.lines[0]?.tokens.inputTokens, 2_000_000, "tokens stay as details");
 });
 
@@ -155,18 +165,23 @@ test("hosted time is priced at its size; a machine's sandbox costs nothing", () 
 	hosted.spent.hostedSeconds = 3600;
 	noteHostedTime(hosted);
 	assert.deepEqual(hosted.spent.usage?.sandbox, [{ size: "standard", seconds: 3600 }]);
-	close(itemCost(hosted.spent.usage, RATES).sandbox.usd, 0.1656);
+	// Billing off: the rate card, as an estimate, and nothing extra.
+	const estimate = itemCost(hosted.spent.usage, RATES);
+	close(estimate.sandbox.estimateUsd!, 0.1656);
+	assert.equal(estimate.sandbox.billed, false);
+	assert.equal(estimate.extraUsd, 0);
 
 	const machine = item({ kind: "machine", machineId: "m1" });
 	machine.spent.hostedSeconds = 900;
 	charge(machine, turnMeter({ harness: "claude", model: "default", signIn: "api-key", usage: null, size: null }));
 	assert.deepEqual(machine.spent.usage?.sandbox, []);
-	assert.equal(itemCost(machine.spent.usage, RATES).sandbox.usd, 0);
+	assert.equal(itemCost(machine.spent.usage, RATES).sandbox.estimateUsd, 0);
 
 	// A size without a known rate is unknown; a deployment that does not bill by time charges nothing.
 	const large: SpendUsage = { models: [], sandbox: [{ size: "large", seconds: 60 }] };
 	assert.equal(itemCost(large, RATES).sandbox.unknown, true);
 	assert.equal(itemCost(large, { ...RATES, sandbox: null }).unknown, false);
+	assert.equal(itemCost(large, { ...RATES, sandbox: null }).sandbox.estimateUsd, null);
 });
 
 test("an unknown model, or a key turn that reported nothing, is unknown, never guessed", () => {
@@ -184,7 +199,7 @@ test("an unknown model, or a key turn that reported nothing, is unknown, never g
 	let cost = itemCost(into.spent.usage, RATES);
 	assert.equal(cost.unknown, true);
 	assert.equal(cost.lines[0]?.usd, null);
-	assert.equal(cost.models.usd, 0);
+	assert.equal(cost.workUsd, 0);
 	// Prices not read yet: the same.
 	assert.equal(itemCost(into.spent.usage, { ...RATES, models: null }).unknown, true);
 
@@ -233,8 +248,89 @@ test("a feature sums its parts, retries among them, apart from its own turns", (
 	const parts = mergeUsage(feature.jobs.map(job => job.spent.usage));
 	assert.equal(parts.models[0]?.turns, 3);
 	const total = itemCost(mergeUsage([feature.spent.usage, parts]), RATES);
-	close(total.models.usd, (4_000_000 + 500_000) * 3e-6);
-	close(total.sandbox.usd, (2700 / 3600) * 0.1656);
+	close(total.workUsd, (4_000_000 + 500_000) * 3e-6);
+	close(total.sandbox.estimateUsd!, (2700 / 3600) * 0.1656);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Hosted time under Windlass billing
+// ---------------------------------------------------------------------------------------------
+
+const DAY = 86_400_000;
+const START = Date.UTC(2026, 10, 1);
+const entry = (session: string, seconds: number, weight = 1, day = 0): UsageEntry => ({
+	day: START / DAY + day,
+	session,
+	hold: `${session}-${seconds}-${day}`,
+	kind: "used",
+	seconds,
+	weight,
+	startedAt: START + day * DAY,
+	at: START + day * DAY,
+	note: null,
+});
+/** Monthly Pro: 30 included minutes, and $1.20 of cap at $0.006 a minute pays for 200 more. */
+const PRO = {
+	dailySeconds: null,
+	maxKept: null,
+	holdSeconds: 900,
+	plan: "pro" as const,
+	includedSeconds: 1800,
+	monthlySeconds: 1800 + 200 * 60,
+	subscription: { period: "month" as const, periodStart: START, periodEnd: START + 30 * DAY },
+};
+const splits = (limits: UsageLimits, entries: UsageEntry[]) => {
+	const book = new UsageBook(limits, { entries });
+	return entries.map(one => book.hostedSplit(one));
+};
+
+test("hosted time is included until the plan's minutes are used, then extra at the overage price", () => {
+	const [before, crossing, after] = splits(PRO, [
+		entry("other", 1200),
+		entry("item", 1200, 1, 1),
+		entry("item", 600, 2, 2),
+	]);
+	// Another session's 20 minutes leave 10 included; this item's 20 cross the line; the next 10 large count 20, all extra.
+	assert.deepEqual(before, { includedSeconds: 1200, extraSeconds: 0, extraUsd: 0 });
+	assert.equal(crossing?.includedSeconds, 600);
+	assert.equal(crossing?.extraSeconds, 600);
+	close(crossing!.extraUsd, 10 * 0.006);
+	assert.equal(after?.includedSeconds, 0);
+	assert.equal(after?.extraSeconds, 1200);
+	close(after!.extraUsd, 20 * 0.006);
+});
+
+test("extra hosted time past the spend cap is not billed", () => {
+	const [, over] = splits(PRO, [entry("other", 1800 + 190 * 60), entry("item", 1200, 1, 1)]);
+	// 10 of the cap's minutes are left: 20 extra, 10 billed.
+	assert.equal(over?.extraSeconds, 1200);
+	close(over!.extraUsd, 10 * 0.006);
+});
+
+test("Free and yearly Pro have no overage, and billing off or an exempt account has no split", () => {
+	const free = { ...PRO, plan: "free" as const, subscription: null, monthlySeconds: 1800 };
+	assert.deepEqual(splits(free, [entry("other", 1800), entry("item", 600, 1, 1)])[1], {
+		includedSeconds: 600,
+		extraSeconds: 0,
+		extraUsd: 0,
+	});
+	const yearly = { ...PRO, subscription: { ...PRO.subscription, period: "year" as const } };
+	assert.equal(splits(yearly, [entry("other", 1800), entry("item", 600, 1, 1)])[1]?.extraSeconds, 0);
+	const off = { ...PRO, plan: null, includedSeconds: null, monthlySeconds: null, subscription: null };
+	assert.equal(splits(off, [entry("item", 600)])[0], null);
+});
+
+test("an item's hosted split is kept as billing made it, summed over a feature, and its extra is on the bills", () => {
+	const into = item();
+	charge(into, turnMeter({ harness: "windlass", model: "default", usage: tokens(1, 0, 1), size: "standard" }), 600);
+	noteHostedTime(into, { includedSeconds: 300, extraSeconds: 300, extraUsd: 0.03 });
+	const part: SpendUsage = { models: [], sandbox: [], hosted: { includedSeconds: 60, extraSeconds: 0, extraUsd: 0 } };
+	const cost = itemCost(mergeUsage([into.spent.usage, part]), RATES);
+	assert.equal(cost.sandbox.billed, true);
+	assert.equal(cost.sandbox.includedSeconds, 360);
+	assert.equal(cost.sandbox.extraSeconds, 300);
+	assert.equal(cost.sandbox.estimateUsd, null);
+	close(cost.extraUsd, 0.03);
 });
 
 // ---------------------------------------------------------------------------------------------

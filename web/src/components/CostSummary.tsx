@@ -14,21 +14,15 @@ import { useCostRates, useFinishedItems } from "../state/hooks";
 
 type Words = Record<string, { name: string; what: string }>;
 
-/** A group's median or p90 dollars, or why there are none: all on a plan, or not priced. */
+/** A group's median or p90 work at API prices, or "Unknown" where none of its items could be priced whole. */
 function costCell(group: SummaryGroup<string>, pick: keyof Spread): string {
-	if (group.usd) return usd(group.usd[pick]);
-	return group.onPlan > 0 ? "On your plan" : "Unknown";
+	return group.work ? usd(group.work[pick]) : "Unknown";
 }
 
-/** "9 priced · 3 on your plan · 1 unknown" where not every item of the group is in its dollar figures. */
+/** "9 priced · 1 unknown" where not every item of the group is in its percentiles. */
 function pricedNote(group: SummaryGroup<string>): string | null {
-	if (group.priced === group.count) return null;
-	const parts = [
-		...(group.priced ? [`${count(group.priced)} priced`] : []),
-		...(group.onPlan ? [`${count(group.onPlan)} on your plan`] : []),
-		...(group.unknown ? [`${count(group.unknown)} unknown`] : []),
-	];
-	return parts.join(" · ");
+	if (group.unknown === 0) return null;
+	return [...(group.priced ? [`${count(group.priced)} priced`] : []), `${count(group.unknown)} unknown`].join(" · ");
 }
 
 function GroupTable({
@@ -68,7 +62,7 @@ function GroupTable({
 							p90 time
 						</th>
 						<th scope="col" className="usage-number">
-							Keys + sandbox
+							Extra
 						</th>
 					</tr>
 				</thead>
@@ -91,9 +85,7 @@ function GroupTable({
 								<td className="usage-number usage-wide tone-dim">
 									{group.seconds ? sandboxTime(group.seconds.p90) : "–"}
 								</td>
-								<td className="usage-number">
-									{usd(group.modelsUsd)} + {usd(group.sandboxUsd)}
-								</td>
+								<td className="usage-number">{usd(group.extraUsd)}</td>
 							</tr>
 						);
 					})}
@@ -103,27 +95,25 @@ function GroupTable({
 	);
 }
 
-/** Dollars spent on some items, with "+ N turns on your plan" and "some unknown" where they apply. */
+/** What some items used: "$1.20 of work + $0.40 extra", with "some unknown" where it applies. */
 function spentWords(spent: SpentOn): string {
-	const parts = [usd(spent.usd)];
-	if (spent.planTurns) parts.push(`${plural(spent.planTurns, "turn")} on your plan`);
+	const parts = [`${usd(spent.workUsd)} of work`, `${usd(spent.extraUsd)} extra`];
 	if (spent.unknown) parts.push("some unknown");
 	return parts.join(" + ");
 }
 
-/**
- * The plan's share: the items that ran turns on a subscription plan, in turns, never in dollars. What share of the
- * plan's windows they took goes here once the platform reads it.
- */
+/** What the plans carried: the turns of items that ran on a Claude or ChatGPT plan, and what they are worth at API prices. */
 function PlanShare({ plan }: { plan: UsageSummary["plan"] }) {
 	return (
 		<div>
-			<dt>On your plan</dt>
+			<dt>Included in your plans</dt>
 			<dd className="usage-number">
-				<CostFigure words={plural(plan.turns, "turn")} />
+				<CostFigure words={`≈ ${usd(plan.usd)} at API prices`} />
 			</dd>
 			<dd className="usage-gloss">
-				{plan.items ? `in ${plural(plan.items, "item")}, paid by your Claude or ChatGPT plan` : "No item ran on a plan"}
+				{plan.items
+					? `${plural(plan.turns, "turn")} in ${plural(plan.items, "item")} on your Claude or ChatGPT plan`
+					: "No item ran on a plan"}
 			</dd>
 		</div>
 	);
@@ -178,9 +168,10 @@ export function SummaryBody({ read, rates }: { read: FinishedItems; rates: CostR
 				<p className="usage-empty">None of them was done, so there is nothing to group yet.</p>
 			)}
 			<p className="usage-note">
-				Dollars are what your API keys paid for models plus hosted sandbox time, at today's prices. Medians and p90s
-				leave out items with turns on a plan rather than guess a figure. Time runs from an item's first start to its
-				end.
+				Cost is an item's model work at today's API prices, whoever paid: a turn your plan carried counts what it would
+				have cost on a key. Extra is what items added to your bills: API keys, and hosted time past your plan's minutes.
+				Medians and p90s leave out items with a cost that could not be priced. Time runs from an item's first start to
+				its end.
 			</p>
 		</>
 	);

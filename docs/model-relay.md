@@ -253,7 +253,7 @@ Connections page know whether the plan is usable, at its limit, or no longer acc
   names none, and none is inferred: the plan is probed again after 15 minutes, doubling up to 5 hours. A 429 that asks
   for a retry in under a minute is a burst the agent retries itself. Two provider 401s in a row make it `invalid`
   (the relay's own `relay_lease_ended` 401 does not count) until it is connected again. The 5-hour and weekly windows
-  (% used, reset) are kept as last seen, for budgets in shares of the plan.
+  (% used, reset) are kept as last seen, for Connections. Item budgets never use them: a window is the whole account's.
 - **Where it is kept.** On the plan's `model_plan` row (`health`, JSON), only while the plan is at the generation the
   answer was for; a new connection starts healthy. A plan's limit is its own account (`plan/<provider>/<generation>`
   in `server/src/actors/provider-accounts.ts`), apart from the key of the same provider: a limited key does not

@@ -19,18 +19,10 @@ import { subtaskMinimum, approvalText, planRecovery } from "./feature-plan.js";
 import { crossRepo, plannerText } from "./cross-repo.js";
 import { MAX_PROVIDER_WAIT, MINUTE, providerWait, usageRefusal } from "../provider-usage.js";
 import { PLATFORM_TOOLS, refusalMessage } from "../provider-refusal.js";
-import {
-	budgetStop,
-	itemAgent,
-	noteAgentTurn,
-	spellPct,
-	spellTokens,
-	spellUsd,
-	turnBudget,
-	type TurnBudget,
-} from "./budget.js";
-import { addSandbox, addTurn, noUsage, PAID_BY_TOKEN, sandboxSeconds } from "./cost.js";
+import { budgetStop, itemAgent, noteAgentTurn, spellTokens, spellUsd, turnBudget, type TurnBudget } from "./budget.js";
+import { addSandbox, addTurn, noUsage, sandboxSeconds } from "./cost.js";
 import { ITEM_HOSTED_SIZE } from "../contract/hosted-sizes.js";
+import type { HostedSplit } from "../contract.js";
 import { environmentFailure } from "./check-environment.js";
 import type {
 	ChoiceId,
@@ -789,35 +781,24 @@ export function chargeTurn(item: FactoryItem, spend: TurnSpend): void {
 		if (item.run?.retry || item.run?.step.kind === "ci_fix")
 			addTurn((item.spent.retryUsage ??= noUsage()), spend.meter);
 	}
-	// Dollars where a key paid and the turn was priced; a turn that could not be priced leaves tokens holding too.
+	// The turn's dollars of work, whoever paid; a turn that could not be priced leaves tokens holding too.
 	if (spend.usd === null) item.spent.usdUnknown = true;
 	else if (spend.usd !== undefined) item.spent.usd = roundCents((item.spent.usd ?? 0) + spend.usd);
-	const plan = spend.plan ?? agentWindow(spend);
-	if (plan?.fiveHour != null) item.spent.planPct = roundPoints((item.spent.planPct ?? 0) + plan.fiveHour);
-	if (plan?.week != null) item.spent.planWeekPct = roundPoints((item.spent.planWeekPct ?? 0) + plan.week);
-	// A connected plan that reported neither window: tokens hold, and the item says why.
-	if (spend.meter?.payer === "plan" && plan?.fiveHour == null && plan?.week == null) item.spent.planUnreported = true;
 	item.spent.turns += 1;
 	if (item.place.kind === "hosted") item.spent.hostedSeconds = Math.max(item.spent.hostedSeconds, spend.hostedSeconds);
-	noteHostedTime(item);
+	noteHostedTime(item, spend.hosted);
 }
 
 const roundCents = (usd: number) => Math.round(usd * 10_000) / 10_000;
-const roundPoints = (pct: number) => Math.round(pct * 100) / 100;
-
-/** Where no plan snapshot was taken, the 5-hour window its agent reported (Claude Code) for a turn no key paid. */
-function agentWindow(spend: TurnSpend): TurnSpend["plan"] {
-	const window = spend.agent?.fiveHour;
-	if (!window || !spend.meter || PAID_BY_TOKEN.has(spend.meter.payer)) return undefined;
-	return { fiveHour: window.end >= window.start ? window.end - window.start : window.end, week: null };
-}
 
 /**
  * Puts the item's own hosted seconds not yet in its usage there, at the size its latest turn ran: what its
  * sandbox time costs. A feature's parts keep their own, so theirs are left out of its own.
  */
-export function noteHostedTime(item: FactoryItem): void {
+export function noteHostedTime(item: FactoryItem, hosted?: HostedSplit): void {
 	if (item.place.kind !== "hosted") return;
+	// What billing made of the item's own hosted time so far: a lifetime total, so the latest replaces it.
+	if (hosted) (item.spent.usage ??= noUsage()).hosted = hosted;
 	const parts = (item.jobs ?? []).reduce((sum, job) => sum + job.spent.hostedSeconds, 0);
 	const fresh = item.spent.hostedSeconds - parts - sandboxSeconds(item.spent.usage);
 	if (fresh <= 0) return;
@@ -1146,7 +1127,6 @@ export function stop(c: Change, cause: StopCause, sentence: string, resume: Turn
 export function extraOf(item: FactoryItem, cause: keyof ItemBudget): number {
 	const budget = item.budget[cause] ?? (item.singleBudget ?? item.budget)[cause] ?? 1;
 	if (cause === "usd") return Math.max(1, Math.ceil(budget / 4));
-	if (cause === "planPct" || cause === "planWeekPct") return Math.max(1, budget);
 	return Math.max(1, (item.singleBudget ?? item.budget)[cause] ?? 1);
 }
 
@@ -1154,8 +1134,6 @@ const EXTRA_WORDS: Record<keyof ItemBudget, (n: number) => string> = {
 	tokens: n => `${spellTokens(n)} more tokens`,
 	hostedSeconds: n => `${spellSeconds(n)} more hosted time`,
 	usd: n => `${spellUsd(n)} more`,
-	planPct: n => `${spellPct(n)} more`,
-	planWeekPct: n => `${spellPct(n)} more`,
 };
 const spellExtra = (cause: keyof ItemBudget, n: number) => EXTRA_WORDS[cause](n);
 

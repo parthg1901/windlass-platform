@@ -13,8 +13,6 @@ const ranges = {
 	"item.tokens": [1, 1_000_000_000],
 	"item.hostedSeconds": [1, 7 * 86400],
 	"item.usd": [1, 100_000],
-	"item.planPct": [1, 1000],
-	"item.planWeekPct": [1, 1000],
 	"attachments.bytes": [1, ATTACHMENT_LIMITS.bytes],
 	"attachments.perItem": [1, 1_000_000],
 	"attachments.accountBytes": [1, Number.MAX_SAFE_INTEGER],
@@ -49,7 +47,7 @@ export function effectiveUserLimits(overrides: Overrides, billing: BillingState 
 	for (const key of Object.keys(attachments) as (keyof typeof attachments)[])
 		attachments[key] = value(`attachments.${key}`, attachments[key]);
 	// Overrides of limits that are gone (the turn caps, the review cap, the feature multiplier, GitHub drafts, the item's
-	// turns and working time) may still be stored: they are read past. Only the figures below are kept.
+	// turns and working time, its plan-window shares) may still be stored: they are read past. Only the figures below are kept.
 	const factory: FactoryLimits = {
 		hostedRunning: value("hostedRunning", plan?.hostedRunning ?? defaults.hostedRunning),
 		dailyTokens: overrides.dailyTokens === undefined ? defaults.dailyTokens : overrides.dailyTokens,

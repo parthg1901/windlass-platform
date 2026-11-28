@@ -483,10 +483,10 @@ export interface TurnSpend {
 	agent?: AgentTurn;
 	/** The turn's model, payer, tokens and sandbox size, for its cost (cost.ts). Absent from the platform's own spend facts. */
 	meter?: import("./cost.js").TurnMeter;
-	/** A key-paid turn's model dollars, priced when it ended (budget.ts `turnUsd`); null where they could not be priced. */
+	/** The turn's model dollars at API prices, whoever paid (budget.ts `turnUsd`); null where they could not be priced. */
 	usd?: number | null;
-	/** A plan-paid turn's share of the plan's windows, in percentage points (budget.ts `windowShare`); null where unseen. */
-	plan?: { fiveHour: number | null; week: number | null };
+	/** What billing made of the item's own hosted seconds so far, a lifetime total like `hostedSeconds`; absent with billing off. */
+	hosted?: import("../contract.js").HostedSplit;
 }
 
 /** What a machine harness (Claude Code, OpenCode) reported of one turn. */
@@ -627,7 +627,7 @@ export type Fact =
 	  }
 	| { kind: "ci_rerun_result"; repo?: string; at: number; head: string; accepted: string[]; said: string }
 	/** The ledger has counted more hosted sandbox time for the item's session (it settles after a turn ends, and then while nothing else happens). */
-	| { kind: "spent"; at: number; hostedSeconds: number }
+	| { kind: "spent"; at: number; hostedSeconds: number; hosted?: import("../contract.js").HostedSplit }
 	/**
 	 * The draft feature PR's ready-for-review step after handover: `refused` is GitHub's reason when it kept refusing (the
 	 * person is asked to mark it ready), null once the PR is ready.

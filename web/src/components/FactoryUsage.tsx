@@ -18,15 +18,19 @@ function Of({ spent, budget, spell }: { spent: number; budget: number; spell(val
 	);
 }
 
-/** The listed items' dollars together, and whether some cost is unknown or carried by a plan. */
-function listedTotal(list: readonly ItemSummary[], rates: CostRates): string {
+/** What the listed items added to your bills together, and what their model work is worth at API prices. */
+function ListedTotal({ list, rates }: { list: readonly ItemSummary[]; rates: CostRates }) {
 	const costs = list.map(item => summaryCost(item, rates));
-	const total = costs.reduce((sum, cost) => sum + cost.usd, 0);
-	const notes = [
-		...(costs.some(cost => cost.plans.length) ? ["plus what your plans carried"] : []),
-		...(costs.some(cost => cost.unknown) ? ["some cost unknown"] : []),
-	];
-	return `${usd(total)}${notes.length ? `, ${notes.join(", ")}` : ""}`;
+	const extra = costs.reduce((total, cost) => total + cost.extraUsd, 0);
+	const work = costs.reduce((total, cost) => total + cost.workUsd, 0);
+	return (
+		<p className="usage-note factory-cost-total">
+			The items listed here cost <strong>{usd(extra)} extra</strong>: what your API keys paid and hosted time past your
+			plan's minutes. Their model work is worth {usd(work)} at API prices
+			{costs.some(cost => cost.unknown) ? ", some cost unknown" : ""}; turns on a Claude or ChatGPT plan are included in
+			it.
+		</p>
+	);
 }
 
 export function FactoryUsage({ value }: { value: FactoryLimits }) {
@@ -37,8 +41,8 @@ export function FactoryUsage({ value }: { value: FactoryLimits }) {
 	return (
 		<>
 			<p className="usage-lede">
-				Each item may spend {spendWords(value.item, null)} and {sandboxTime(value.item.hostedSeconds)} of hosted time,
-				then it asks you for more.
+				Each item may spend {spendWords(value.item, null)}, every turn at API prices whoever pays, and{" "}
+				{sandboxTime(value.item.hostedSeconds)} of hosted time, then it asks you for more.
 			</p>
 			<details className="usage-note factory-limits-fold">
 				<summary>All limits</summary>
@@ -89,12 +93,7 @@ export function FactoryUsage({ value }: { value: FactoryLimits }) {
 				</div>
 			) : (
 				<>
-					{rates ? (
-						<p className="usage-note factory-cost-total">
-							Cost of the items listed here: <strong>{listedTotal(list, rates)}</strong>. Model tokens on an API key and
-							hosted sandbox time are priced; turns on a Claude or ChatGPT plan are part of your plan.
-						</p>
-					) : null}
+					{rates ? <ListedTotal list={list} rates={rates} /> : null}
 					<FoldRows items={list} shown={10}>
 						{(rows, id) => (
 							<table className="usage-table factory-cost" id={id}>

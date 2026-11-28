@@ -162,20 +162,16 @@ export interface ItemTask {
 	base: string;
 }
 
-/** Token budgets use cost-weighted input. The time limit applies to hosted sandboxes only. */
 /**
- * An item's budget, in the units of what pays for its turns (factory/budget.ts `budgetStop`): dollars where an API key
- * pays (`usd`), percentage points of the plan's windows where a plan pays: its 5-hour window (`planPct`) and its weekly
- * window (`planWeekPct`), each held where the plan reports it. `tokens` (cost-weighted) is the fallback where none can
- * be measured: a turn whose price is unknown, a plan or agent that reports no window.
- * Items filed before the dollar and plan figures were kept have only tokens and hosted time.
+ * An item's budget (factory/budget.ts `budgetStop`): `usd` is the value of its model work at API prices, whoever pays
+ * (a key's turns at what they cost, a plan's at what the same tokens would cost on a key). `tokens` (cost-weighted) holds
+ * only while some turn could not be priced. The time limit applies to hosted sandboxes only.
+ * Items filed before the dollar figure was kept have only tokens and hosted time.
  */
 export interface ItemBudget {
 	tokens: number;
 	hostedSeconds: number;
 	usd?: number;
-	planPct?: number;
-	planWeekPct?: number;
 }
 
 /** Raw tokens count cached input at full weight; use tokens when rawTokens is absent. Active time excludes waits. */
@@ -183,9 +179,7 @@ export interface ItemSpend extends ItemBudget {
 	rawTokens?: number;
 	turns: number;
 	activeSeconds: number;
-	/** A plan-paid turn ended without the plan reporting any window: unless another turn saw one, tokens hold. */
-	planUnreported?: boolean;
-	/** A key-paid turn could not be priced: its dollars are not in `usd`, so the token budget holds too. */
+	/** A turn could not be priced: its dollars are not in `usd`, so the token budget holds too. */
 	usdUnknown?: boolean;
 	/** What the item's own turns used, by model, payer and sandbox size: what its cost is priced from (factory/cost.ts). */
 	usage?: import("./cost.js").SpendUsage;

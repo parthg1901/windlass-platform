@@ -4,12 +4,13 @@
  *
  * Pure and browser-safe. The server lists the ended items with what each used (`finishedItems`); the browser prices
  * them with the rates of the moment (`summarize`, through cost.ts `itemCost`), so refreshed prices reprice it too.
- * A plan's turns get no dollars: an item with any counts as "on your plan" and stays out of the dollar percentiles.
+ * Each item's cost is its model work at API prices, whoever paid (`workUsd`), beside what it added to the person's bills
+ * (`extraUsd`: key-paid turns and extra hosted time).
  */
 
 import type { CostRates, FinishedItem, ItemSize, ItemSpend, ItemSummary, SpendUsage, WorkType } from "../contract.js";
 import { isCodePath } from "../verified.js";
-import { type ItemCost, itemCost, mergeUsage } from "./cost.js";
+import { type ItemCost, itemCost, mergeUsage, onPlan } from "./cost.js";
 import { SMALL_PLAN_LIMIT } from "./feature-plan.js";
 import { taskKind } from "./readiness-track.js";
 
@@ -118,25 +119,22 @@ function spread(values: readonly number[]): Spread | null {
 export interface SummaryGroup<K extends string> {
 	key: K;
 	count: number;
-	/** Median and p90 dollars of the items priced whole (`priced`): none on a plan, none partly unknown. */
-	usd: Spread | null;
+	/** Median and p90 of the model work at API prices, whoever paid, of the items priced whole (`priced`). */
+	work: Spread | null;
 	priced: number;
-	/** The group's known dollars: model tokens on API keys, and hosted sandbox time. */
-	modelsUsd: number;
-	sandboxUsd: number;
-	/** Items with turns on a subscription plan: no dollars for those. */
-	onPlan: number;
-	/** Items not on a plan some of whose cost could not be priced. */
+	/** What the group added to the person's bills: model turns on API keys, and extra hosted time. */
+	extraUsd: number;
+	/** Items some of whose cost could not be priced. */
 	unknown: number;
 	seconds: Spread | null;
 }
 
-/** Dollars spent on some items, with what a plan carried of it in turns. */
+/** What some items used: their model work at API prices, and what they added to the person's bills. */
 export interface SpentOn {
 	items: number;
-	usd: number;
+	workUsd: number;
+	extraUsd: number;
 	unknown: boolean;
-	planTurns: number;
 }
 
 export interface UsageSummary {
@@ -149,11 +147,11 @@ export interface UsageSummary {
 	retries: SpentOn;
 	/** Items cancelled, given up or failed: everything they used. */
 	abandoned: SpentOn & { cancelled: number; failed: number };
-	/** Items that ran turns on a subscription plan, and those turns. Their share of the plan's windows is not here yet. */
-	plan: { items: number; turns: number };
+	/** Items that ran turns on a subscription plan, those turns, and what they are worth at API prices. */
+	plan: { items: number; turns: number; usd: number };
 }
 
-const planTurns = (cost: ItemCost): number => cost.plans.reduce((sum, plan) => sum + plan.turns, 0);
+const planOf = (cost: ItemCost) => cost.payers.filter(onPlan);
 const used = (usage: SpendUsage): boolean => usage.models.some(line => line.turns > 0) || usage.sandbox.length > 0;
 
 interface Priced {
@@ -162,16 +160,14 @@ interface Priced {
 }
 
 function group<K extends string>(key: K, members: readonly Priced[]): SummaryGroup<K> {
-	const whole = members.filter(({ cost }) => cost.plans.length === 0 && !cost.unknown);
+	const whole = members.filter(({ cost }) => !cost.unknown);
 	return {
 		key,
 		count: members.length,
-		usd: spread(whole.map(({ cost }) => cost.usd)),
+		work: spread(whole.map(({ cost }) => cost.workUsd)),
 		priced: whole.length,
-		modelsUsd: members.reduce((sum, { cost }) => sum + cost.models.usd, 0),
-		sandboxUsd: members.reduce((sum, { cost }) => sum + cost.sandbox.usd, 0),
-		onPlan: members.filter(({ cost }) => cost.plans.length > 0).length,
-		unknown: members.filter(({ cost }) => cost.plans.length === 0 && cost.unknown).length,
+		extraUsd: members.reduce((sum, { cost }) => sum + cost.extraUsd, 0),
+		unknown: members.length - whole.length,
 		seconds: spread(members.map(({ item }) => item.seconds)),
 	};
 }
@@ -179,9 +175,9 @@ function group<K extends string>(key: K, members: readonly Priced[]): SummaryGro
 function spentOn(costs: readonly ItemCost[]): SpentOn {
 	return {
 		items: costs.length,
-		usd: costs.reduce((sum, cost) => sum + cost.usd, 0),
+		workUsd: costs.reduce((sum, cost) => sum + cost.workUsd, 0),
+		extraUsd: costs.reduce((sum, cost) => sum + cost.extraUsd, 0),
 		unknown: costs.some(cost => cost.unknown),
-		planTurns: costs.reduce((sum, cost) => sum + planTurns(cost), 0),
 	};
 }
 
@@ -195,7 +191,7 @@ export function summarize(items: readonly FinishedItem[], rates: CostRates): Usa
 			const members = done.filter(({ item }) => of(item) === key);
 			return members.length ? [group(key, members)] : [];
 		});
-	const onPlan = priced.filter(({ cost }) => cost.plans.length > 0);
+	const plans = priced.map(({ cost }) => planOf(cost)).filter(plans => plans.length > 0);
 	return {
 		ended: items.length,
 		done: done.length,
@@ -207,6 +203,10 @@ export function summarize(items: readonly FinishedItem[], rates: CostRates): Usa
 			cancelled: abandoned.filter(({ item }) => item.state === "cancelled").length,
 			failed: abandoned.filter(({ item }) => item.state === "failed").length,
 		},
-		plan: { items: onPlan.length, turns: onPlan.reduce((sum, { cost }) => sum + planTurns(cost), 0) },
+		plan: {
+			items: plans.length,
+			turns: plans.flat().reduce((sum, plan) => sum + plan.turns, 0),
+			usd: plans.flat().reduce((sum, plan) => sum + plan.usd, 0),
+		},
 	};
 }
