@@ -5143,7 +5143,7 @@ async function machineChecks(): Promise<void> {
 				assert(message.includes(denied.unavailableReason!), message);
 				const blocked = await user.createItem({ ...task, profile, start: true });
 				const question = (await user.item(blocked.id)).question;
-				assert(question?.text.includes(denied.unavailableReason!), JSON.stringify(question));
+				assert(question?.text.includes("--allow-profile " + profile), JSON.stringify(question));
 				const creates = runner.creates;
 				const session = client.agentSession.get([auth.profile.uid, waiting.id], { params: { token: auth.token } });
 				await session.prompt({ text: "Write the primes" });
