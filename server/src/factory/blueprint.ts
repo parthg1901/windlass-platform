@@ -16,7 +16,7 @@ import { criticPrompt, mergeCandidate, smallPlanProblem } from "./autonomy.js";
 import { MAX_SECRET_REQUESTS, secretRequestLimit } from "../repo-secrets.js";
 import { isDeepStrictEqual } from "node:util";
 import type { FeatureRepository, HarnessId, ItemAgent, Verified, VerifiedCheck } from "../contract.js";
-import { ciPollEvery } from "../github/ci.js";
+import { ciPollEvery } from "../codehost/ci.js";
 import { spellSeconds } from "../usage.js";
 import { contextAtPlace, partRun, resolveRun, runPlace } from "./resolve-run.js";
 import {
@@ -180,6 +180,8 @@ import {
 	PERSON_HANDOVER,
 	prPollKey,
 	prRead,
+	prReadyRead,
+	readyAnswer,
 	readForHandoff,
 	reviewEnded,
 	skippedReview,
@@ -759,6 +761,8 @@ function apply(c: Change, fact: Fact): boolean {
 		case "sandbox_reclaimed":
 			c.say(fact.said);
 			return true;
+		case "pr_ready_read":
+			return prReadyRead(c, fact);
 		case "spent":
 			if (item.place.kind !== "hosted" || !(fact.hostedSeconds > item.spent.hostedSeconds)) return false;
 			item.spent.hostedSeconds = fact.hostedSeconds;
@@ -2116,6 +2120,7 @@ function takeChoice(
 		return true;
 	}
 	if (question.kind === "integration") return integrationAnswer(flow(c), fact.choice, question.text);
+	if (question.kind === "ready_refused") return readyAnswer(c, fact.choice);
 	switch (fact.choice) {
 		case "send_back":
 			if (question.kind === "publish_refused" && resumeWithNote) {

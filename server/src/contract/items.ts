@@ -1,11 +1,12 @@
 /** Work items: lists, runs, budgets, questions, verdicts, plans and actions. */
 
 import type { HarnessId, IdempotencyKey, SandboxPlace, SandboxProfileId } from "../contract.js";
-import type { GithubId, SessionRepository } from "./github.js";
+import type { GithubId, RepoAddress, SessionRepository } from "./github.js";
 import type { HostedSize } from "./hosted-sizes.js";
 import type { CredentialSource } from "./machines.js";
 import type { CheckStatus, Verified, VerifiedFlag } from "./repository.js";
 import type { ItemReport, ItemReview, PartScreenshots, ReviewRecommendation } from "./reviews.js";
+import type { SourceId } from "../sources/types.js";
 
 /** How many work items a page holds when it does not say, and at most (`listItems`). */
 export const ITEM_PAGE_DEFAULT = 25;
@@ -23,7 +24,7 @@ export interface ItemListPage {
 	/** `ITEM_PAGE_DEFAULT` when left out, at most `ITEM_PAGE_MAX`. */
 	limit?: number;
 	ended?: boolean;
-	repository?: GithubId | null;
+	repository?: RepoAddress | null;
 	source?: ItemSource | null;
 }
 
@@ -32,7 +33,7 @@ export const ITEM_FEED_ENDED = 25;
 
 /** Per repository and filing source. Display names come from its newest filed item. */
 export interface ItemCount {
-	repository: GithubId;
+	repository: RepoAddress;
 	owner: string;
 	name: string;
 	source: ItemSource;
@@ -205,11 +206,12 @@ export interface FactoryLimits {
 	item: ItemBudget;
 }
 
-/** "turn_refused": the session or provider refused the turn, in its words. "sandboxes": the hosted cap on kept sandboxes stopped a turn. "check_environment": a check failed because the sandbox could not run it (`ItemQuestion.check`). */
+/** "turn_refused": the session or provider refused the turn, in its words. "sandboxes": the hosted cap on kept sandboxes stopped a turn. "check_environment": a check failed because the sandbox could not run it (`ItemQuestion.check`). "ready_refused": GitHub kept refusing to mark a planned feature's draft pull request ready for review after its hand-over. */
 export type QuestionKind =
 	| "branch_push"
 	| "run_place"
 	| "push_ci"
+	| "ready_refused"
 	| "feature_update"
 	| "sandboxes"
 	| "integration"
@@ -410,8 +412,8 @@ export interface ItemAgent {
 	fiveHour: { first: number; latest: number } | null;
 }
 
-/** How a work item was filed. "github" and "linear" are the two intakes that file from an issue (factory/intake.ts). */
-export type ItemSource = "web" | "api" | "github" | "linear";
+/** How a work item was filed: on the web, through the API, or from a work source (sources/types.ts). */
+export type ItemSource = "web" | "api" | SourceId;
 
 /**
  * Who filed an item from another surface (Slack, Linear, Jira), when that is not the owner at the web, the API or
@@ -426,6 +428,7 @@ export interface ItemFiler {
 
 /** The PR closes this issue in the item's repository. The sender added the label or wrote the command. */
 export interface GithubIssueOrigin {
+	jira?: undefined;
 	issue: { number: number; url: string; author: string; trusted: boolean };
 	sender: string;
 	linear?: undefined;
@@ -434,6 +437,7 @@ export interface GithubIssueOrigin {
 
 /** Linear provenance is separate from the GitHub PR binding. The event sender and issue author may differ. */
 export interface LinearIssueOrigin {
+	jira?: undefined;
 	/** `trusted`: the issue creator's id matches the user who connected the workspace; whoever added the label does not make another person's text trusted. */
 	linear: { id: string; identifier: string; url: string; author: string; trusted: boolean };
 	sender: string;
@@ -441,7 +445,16 @@ export interface LinearIssueOrigin {
 	filer?: ItemFiler;
 }
 
-export type ItemOrigin = GithubIssueOrigin | LinearIssueOrigin;
+/** Jira text is always third-party, even when the consenting account wrote it. */
+export interface JiraIssueOrigin {
+	jira: { id: string; identifier: string; url: string; author: string; trusted: false };
+	sender: string;
+	issue?: undefined;
+	linear?: undefined;
+	filer?: ItemFiler;
+}
+
+export type ItemOrigin = GithubIssueOrigin | LinearIssueOrigin | JiraIssueOrigin;
 
 export interface ItemSummary {
 	resolved?: import("../factory/resolve-run.js").ResolvedRun;
@@ -465,7 +478,7 @@ export interface ItemSummary {
 	place: SandboxPlace;
 	/** How the item was filed. */
 	source: ItemSource;
-	/** The issue it was filed from: null unless `source` is "github" or "linear" (a GitHub issue's origin has `issue`, a Linear issue's has `linear`). */
+	/** The source issue; null for items not filed through issue intake. */
 	origin: ItemOrigin | null;
 	state: ItemState;
 	/** Set exactly when `state` is "waiting". */

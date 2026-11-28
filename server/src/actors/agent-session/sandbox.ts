@@ -185,7 +185,7 @@ async function restorePrepared(
 			c,
 			turn,
 			"warn",
-			`${work} is no longer at GitHub, so the workspace starts from ${repo.branch} again. Work that was only on that branch is not in it.`,
+			`${work} is no longer on the remote, so the workspace starts from ${repo.branch} again. Work that was only on that branch is not in it.`,
 		);
 	}
 	c.vars.unpushed = null;
@@ -582,7 +582,7 @@ export async function openSandbox(
 						return candidate;
 					},
 				}),
-			mirrorRepo: !meta.readiness && meta.repo ? String(meta.repo.id) : undefined,
+			mirrorRepo: !meta.readiness && meta.repo?.provider === "github" ? String(meta.repo.id) : undefined,
 			...connectOptions(meta),
 		});
 		console.log(`[wlp] sandbox.created id=${id} session=${meta.sessionId}`);

@@ -26,14 +26,31 @@ import { apiRoute } from "./api-routes.js";
 import { BILLING_WEBHOOK_PATH, billingWebhookRoute } from "./billing/route.js";
 import { billing } from "./billing/config.js";
 import { RUNNER_PAIR_PATH, RUNNER_PAIR_POLL_PATH, RUNNER_CONNECTION_PATH } from "./runner/control.js";
-import { config, githubConfig, linearConfig, ownEngineEndpoint, snapshotsFor } from "./config.js";
+import {
+	config,
+	githubConfig,
+	gitlabConfig,
+	jiraConfig,
+	linearConfig,
+	ownEngineEndpoint,
+	snapshotsFor,
+} from "./config.js";
 import { DEFAULT_ENDPOINT, PLATFORM_CONNECTION_PATH, PLATFORM_INFO_PATH } from "./contract.js";
 import { webhookRoute } from "./github/webhook.js";
 import { githubApp } from "./github/app.js";
 import { GITHUB_CALLBACK_PATH, githubCallbackResponse } from "./github/connect.js";
+import { JIRA_CALLBACK_PATH, jiraCallbackResponse } from "./jira/connect.js";
+import { JIRA_WEBHOOK_PATH, jiraWebhookRoute } from "./jira/webhook.js";
 import { actorLinearConnectStore, dispatchLinearDelivery } from "./actors/user-linear.js";
+import { GITLAB_WEBHOOK_PATH } from "./gitlab/webhook.js";
+import { receiveGitlabWebhook } from "./actors/gitlab-inbox.js";
+import { actorGitlabConnectStore } from "./actors/user-gitlab.js";
+import { GITLAB_CALLBACK_PATH, gitlabCallbackResponse } from "./gitlab/connect.js";
 import { LINEAR_CALLBACK_PATH, linearCallbackResponse } from "./linear/connect.js";
 import { LINEAR_WEBHOOK_PATH, linearWebhookRoute } from "./linear/webhook.js";
+import { slackCallbackResponse } from "./slack/connect.js";
+import { SLACK_INTERACTIONS_PATH, slackInteractionRoute } from "./slack/interactions.js";
+import { SLACK_COMMANDS_PATH, SLACK_EVENTS_PATH, slackWebhookRoute } from "./slack/webhook.js";
 import { getLayer } from "./layer.js";
 import { connectionTokens, platformConnectionResponse, platformInfoResponse } from "./platform-info.js";
 import { webFiles } from "./web.js";
@@ -197,6 +214,27 @@ try {
 	process.exit(1);
 }
 
+try {
+	const { app, missing } = gitlabConfig();
+	if (missing.length > 0) console.error(`[wlp] WARNING: GitLab is off: missing ${missing.join(", ")}.`);
+	else if (app) console.log(`[wlp] gitlab: owners connect through ${GITLAB_CALLBACK_PATH}`);
+} catch {
+	console.error("[wlp] the GitLab OAuth configuration is not usable: check the base and public URLs.");
+	process.exit(1);
+}
+
+try {
+	const { app, missing } = jiraConfig();
+	if (missing.length) console.warn(`[wlp] WARNING: Jira is off: missing ${missing.join(", ")}.`);
+	else if (app)
+		console.log(
+			`[wlp] jira: owners connect through ${JIRA_CALLBACK_PATH}; dynamic webhooks under ${JIRA_WEBHOOK_PATH}`,
+		);
+} catch {
+	console.error("[wlp] the Jira app configuration is not usable.");
+	process.exit(1);
+}
+
 // Billing (docs/billing.md): read once, so that a setting that is missing stops the server here, with its name.
 try {
 	const settings = billing();
@@ -240,9 +278,16 @@ async function route(request: Request): Promise<Response> {
 	// Where GitHub sends a user's browser back to when they connect: the GitHub App's callback URL.
 	if (pathname === GITHUB_CALLBACK_PATH) return githubCallbackResponse(request);
 	if (pathname === "/github/webhook") return (await webhookRoute(request))!;
+	if (pathname === GITLAB_WEBHOOK_PATH) return receiveGitlabWebhook(request);
+	if (pathname === GITLAB_CALLBACK_PATH) return gitlabCallbackResponse(request, { store: actorGitlabConnectStore });
 	// Linear's: where its authorization sends the owner's browser back to, and its signed webhook deliveries (docs: factory.md). Not found where Linear is off.
 	if (pathname === LINEAR_CALLBACK_PATH) return linearCallbackResponse(request, { store: actorLinearConnectStore });
 	if (pathname === LINEAR_WEBHOOK_PATH) return (await linearWebhooks(request))!;
+	if (pathname === JIRA_CALLBACK_PATH) return jiraCallbackResponse(request);
+	if (pathname === JIRA_WEBHOOK_PATH || pathname.startsWith(`${JIRA_WEBHOOK_PATH}/`)) return jiraWebhookRoute(request);
+	if (pathname === "/slack/callback") return slackCallbackResponse(request);
+	if (pathname === SLACK_EVENTS_PATH || pathname === SLACK_COMMANDS_PATH) return slackWebhookRoute(request);
+	if (pathname === SLACK_INTERACTIONS_PATH) return slackInteractionRoute(request);
 	// The payment provider's webhooks (docs/billing.md); not found where billing is off.
 	if (pathname === BILLING_WEBHOOK_PATH) return billingWebhookRoute(request);
 	// For a load balancer or the host's health check: the node's own view of its connection to the engine.

@@ -33,6 +33,7 @@ import {
 } from "../../contract.js";
 import { billing } from "../../billing/config.js";
 import { GithubError, githubApp, type InstallationToken } from "../../github/app.js";
+import { gitlabApp } from "../../gitlab/connect.js";
 import { changedReviewPaths, checkoutReview, readOnlyReview } from "../../github/git.js";
 import { INPUTS_DIRECTORY } from "../../factory/cross-repo.js";
 import { GithubProblem, problemOf, resolveBoundRepository } from "../../github/repos.js";
@@ -117,7 +118,16 @@ import { runnerLink, layerOf, machineOf } from "./runner.js";
 import { publish } from "./summary.js";
 import { platformNotes, saveBackup, dropWorkspace } from "./workspace.js";
 import { shellQuote } from "../../util.js";
-import { tail, TurnProblem, githubConnection, ReviewRefused, itemPrompt, within, PlanWaitError } from "./common.js";
+import {
+	tail,
+	TurnProblem,
+	githubConnection,
+	ReviewRefused,
+	GitAccessRefused,
+	itemPrompt,
+	within,
+	PlanWaitError,
+} from "./common.js";
 import { BudgetWatch, budgetStopNote } from "./budget-watch.js";
 import { readSecrets } from "./secrets.js";
 import { usesScreenshotImage } from "./setup.js";
@@ -1175,7 +1185,8 @@ export async function turnTools(c: Ctx, t: TurnScope, opened: OpenedTurn): Promi
 				}
 			: undefined;
 	// Repository tools remain bound to this session. MCP calls can originate anywhere in the container.
-	const repoTools = !planner && !reviewer && !!meta.repo && githubApp() !== null;
+	const repoTools =
+		!planner && !reviewer && !!meta.repo && (meta.repo.provider === "gitlab" ? gitlabApp() : githubApp()) !== null;
 	const onPush: RunTurnInput["onPush"] =
 		repoTools && platformTool("push") ? request => tracked(t, agentPush(c, meta, active, sandbox, request)) : undefined;
 	const onFetchBase: RunTurnInput["onFetchBase"] =
@@ -1913,6 +1924,9 @@ export async function recordFailure(c: Ctx, t: TurnScope, error: unknown): Promi
 		const reason = active.secrets?.redactor.text(failure.message) ?? failure.message;
 		active.item.refused = `The reviewer's checkout of ${checkout.head.slice(0, 7)} failed: ${reason}`;
 	}
+	// No scoped Git credential to clone with: retrying cannot help until the owner acts, so the item asks rather than counting it as cut off.
+	if (active.item && !signal.aborted && !active.item.refused && failure instanceof GitAccessRefused)
+		active.item.refused = active.secrets?.redactor.text(failure.message) ?? failure.message;
 	if (active.item && !active.item.started && error instanceof MachineUnreachable)
 		active.item.machineAway = error.reason;
 	if (active.item && error instanceof DeploymentFull) active.item.full = error.limit;

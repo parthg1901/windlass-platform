@@ -641,6 +641,7 @@ type CommentReview = {
 	reason: string | null;
 	owner: string;
 	name: string;
+	gitlabUrl?: string;
 	unfinished?: boolean;
 };
 
@@ -666,7 +667,10 @@ function reviewParagraphs(item: string, review: CommentReview, roundComment = fa
 			const sha = at.side === "base" ? r.base : r.head;
 			const path = at.path.split("/").map(component).join("/");
 			const anchor = at.lines ? `#L${at.lines.start}-L${at.lines.end}` : "";
-			location = `[${commentText(at.path, 300)}${at.lines ? ":" + at.lines.start : ""}](https://github.com/${component(review.owner)}/${component(review.name)}/blob/${sha}/${path}${anchor}) · `;
+			const blob = review.gitlabUrl
+				? `${review.gitlabUrl}/-/blob`
+				: `https://github.com/${component(review.owner)}/${component(review.name)}/blob`;
+			location = `[${commentText(at.path, 300)}${at.lines ? ":" + at.lines.start : ""}](${blob}/${sha}/${path}${anchor}) · `;
 		}
 		if (roundComment) {
 			const literal = (value: string, max: number) => commentText(value.replaceAll("@", "@\u200b"), max);

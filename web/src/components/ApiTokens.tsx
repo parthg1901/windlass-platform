@@ -11,7 +11,8 @@ import { useApp, useAuth } from "../state/app";
 import { useNow } from "../state/hooks";
 import { CopyButton } from "./Copy";
 import { Dialog } from "./Dialog";
-import { WarnIcon } from "./Icons";
+import { ApiIcon, WarnIcon } from "./Icons";
+import { CardHead } from "./IntegrationCard";
 import { Check } from "./ui/Check";
 import { Failure } from "./ui/Failure";
 
@@ -224,64 +225,81 @@ export function ApiTokens() {
 	const full = list !== null && list.length >= MAX_API_TOKENS;
 
 	return (
-		<section className="usage-section repo-saved" aria-labelledby="settings-tokens">
-			<h3 className="usage-title" id="settings-tokens">
-				API tokens
-				{list && list.length > 0 ? <span className="usage-count">{`${list.length} of ${MAX_API_TOKENS}`}</span> : null}
-				<button
-					type="button"
-					className="link secret-add"
-					onClick={() => setMaking(true)}
-					disabled={list === null || full}
-					title={full ? `An account can keep ${MAX_API_TOKENS} tokens: revoke one first` : undefined}
-				>
-					New token…
-				</button>
-			</h3>
-			<p className="usage-lede">For scripts that file work items.</p>
-			{full ? (
-				<p className="usage-note tone-warn">An account can keep {MAX_API_TOKENS} tokens: revoke one to make another.</p>
-			) : null}
-			{list === null ? (
-				state.error ? (
-					<div className="state state-error" role="alert">
-						<WarnIcon size={22} />
-						<h2>Your API tokens could not be loaded</h2>
-						<p>{state.error}</p>
-						<button type="button" className="button button-outline" onClick={reload}>
-							Try again
-						</button>
-					</div>
-				) : (
-					<p className="usage-empty" aria-busy="true">
-						Reading your tokens…
+		<section className="usage-section integration api-tokens" aria-labelledby="settings-tokens">
+			<CardHead
+				titleId="settings-tokens"
+				mark={<ApiIcon size={18} />}
+				name="API tokens"
+				badge={
+					list && list.length > 0 ? <span className="usage-count">{`${list.length} of ${MAX_API_TOKENS}`}</span> : null
+				}
+				what="For scripts that file work items."
+				action={
+					<button
+						type="button"
+						className="button button-outline button-small"
+						onClick={() => setMaking(true)}
+						disabled={list === null || full}
+						title={full ? `An account can keep ${MAX_API_TOKENS} tokens: revoke one first` : undefined}
+					>
+						New token…
+					</button>
+				}
+			/>
+			<div className="integration-body">
+				{full ? (
+					<p className="usage-note tone-warn">
+						An account can keep {MAX_API_TOKENS} tokens: revoke one to make another.
 					</p>
-				)
-			) : list.length === 0 ? (
-				<p className="usage-empty">No API token yet.</p>
-			) : (
-				<ul className="settings-list" aria-label="Your API tokens">
-					{list.map(token => (
-						<li key={token.id} className="usage-kept-row">
-							<div className="usage-kept-main">
-								<span className="usage-kept-title token-name">{token.name}</span>
-								<p className="agent-meta">
-									<span>{scopeWords(token.scopes)}</span>
-									<span>made {day(token.createdAt)}</span>
-								</p>
-							</div>
-							<span className="machine-used" title={token.usedAt === null ? undefined : absoluteTime(token.usedAt)}>
-								{token.usedAt === null ? "never used" : `used ${relativeTime(token.usedAt, now)}`}
-							</span>
-							<button type="button" className="button button-outline button-small" onClick={() => setRevoking(token)}>
-								<span>
-									Revoke<span className="visually-hidden"> {token.name}</span>…
-								</span>
+				) : null}
+				{list === null ? (
+					state.error ? (
+						<div className="state state-error" role="alert">
+							<WarnIcon size={22} />
+							<h2>Your API tokens could not be loaded</h2>
+							<p>{state.error}</p>
+							<button type="button" className="button button-outline" onClick={reload}>
+								Try again
 							</button>
-						</li>
-					))}
-				</ul>
-			)}
+						</div>
+					) : (
+						<p className="usage-empty" aria-busy="true">
+							Reading your tokens…
+						</p>
+					)
+				) : list.length === 0 ? (
+					<p className="usage-empty">No API token yet.</p>
+				) : (
+					<ul className="mapping-list" aria-label="Your API tokens">
+						{list.map(token => (
+							<li key={token.id} className="mapping-row">
+								<div className="mapping-line token-line">
+									<span className="token-main">
+										<span className="mapping-from-name token-name">{token.name}</span>
+										<span className="token-meta">
+											{scopeWords(token.scopes)} · made {day(token.createdAt)}
+										</span>
+									</span>
+									<span className="token-used" title={token.usedAt === null ? undefined : absoluteTime(token.usedAt)}>
+										{token.usedAt === null ? "never used" : `used ${relativeTime(token.usedAt, now)}`}
+									</span>
+									<span className="mapping-actions">
+										<button
+											type="button"
+											className="button button-quiet button-small token-revoke"
+											onClick={() => setRevoking(token)}
+										>
+											<span>
+												Revoke<span className="visually-hidden"> {token.name}</span>…
+											</span>
+										</button>
+									</span>
+								</div>
+							</li>
+						))}
+					</ul>
+				)}
+			</div>
 			{making ? (
 				<NewTokenDialog
 					onClose={() => setMaking(false)}

@@ -31,7 +31,7 @@ import type {
 	Waiting,
 } from "../contract.js";
 import type { PersonDecision, ReviewerTaskInput } from "./reviewer-task.js";
-import type { RerunnableJob, CiReading, CiState } from "../github/ci.js";
+import type { RerunnableJob, CiReading, CiState } from "../codehost/ci.js";
 
 export type {
 	ChoiceId,
@@ -628,6 +628,11 @@ export type Fact =
 	| { kind: "ci_rerun_result"; repo?: string; at: number; head: string; accepted: string[]; said: string }
 	/** The ledger has counted more hosted sandbox time for the item's session (it settles after a turn ends, and then while nothing else happens). */
 	| { kind: "spent"; at: number; hostedSeconds: number }
+	/**
+	 * The draft feature PR's ready-for-review step after handover: `refused` is GitHub's reason when it kept refusing (the
+	 * person is asked to mark it ready), null once the PR is ready.
+	 */
+	| { kind: "pr_ready_read"; at: number; pr: number; refused: string | null }
 	| StepFact;
 
 /** Receipts dispatched against the active step or its own poll or child key. */
@@ -890,6 +895,8 @@ export type Effect =
 	| { kind: "rerun_ci"; repo?: string; key: string; head: string; jobs: RerunnableJob[]; openItems: number }
 	| { kind: "poll_ci"; repo?: string; key: string; head: string; at: number; notBefore?: number }
 	| { kind: "poll_pr"; key: string; pr: number; at: number }
+	/** Mark the draft feature PR ready for review once more, as the person asked; `pr_ready_read` follows. */
+	| { kind: "ready_pr"; key: string; run: number; pr: number }
 	/** Record the question and show it ("Needs you"). */
 	| { kind: "ask"; question: Question }
 	/** Record the verdict, request a review from the item's person, and put the verdict line on the pull request. */
@@ -900,6 +907,8 @@ export type Effect =
 			words: string;
 			continuedIn?: number;
 			reviewDone?: true;
+			/** How often GitHub refused to mark the feature PR ready for review: it is tried again after a wait, then handed to the person. */
+			readyRefusals?: number;
 			/** The run's last review asked for changes (or for the person), and no review was filed for the head handed over. */
 			unfinished?: true;
 	  } & HandoffReview);

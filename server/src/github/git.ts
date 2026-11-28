@@ -50,7 +50,9 @@ const PROXY_ENV = 'http_proxy="$wlp_proxy" https_proxy="$wlp_proxy"';
 /**
  * Use stdin and fd 3 so the token never reaches argv, the exported environment or disk.
  */
-function tokenGit(host: string): string {
+type GitUsername = "oauth2" | "x-access-token";
+
+function tokenGit(host: string, username: GitUsername = "x-access-token"): string {
 	const transportFlags = [
 		'-c http.proxy="$wlp_proxy"',
 		"-c http.sslVerify=true",
@@ -61,7 +63,7 @@ function tokenGit(host: string): string {
 		"-c push.followTags=false",
 		"-c push.recurseSubmodules=no",
 	].join(" ");
-	const helper = `!f() { test "$1" = get || exit 0; echo username=x-access-token; printf password=; cat <&3; echo; }; f`;
+	const helper = `!f() { test "$1" = get || exit 0; echo username=${username}; printf password=; cat <&3; echo; }; f`;
 	return [
 		GIT_PROXY,
 		"wlp_git() {",
@@ -291,6 +293,7 @@ export function cloneScript(
 	work?: string,
 	pinnedBase?: string,
 	mirror?: MirrorAttempt,
+	username?: GitUsername,
 ): string {
 	if (pinnedBase !== undefined && !/^[0-9a-f]{40}$/.test(pinnedBase)) throw new Error("Invalid setup base SHA.");
 	// Review clones need only the base ref. A pinned subtask also restores its feature or published branch.
@@ -299,7 +302,7 @@ export function cloneScript(
 	const lines = [
 		startTransport(id),
 		READ_TOKEN,
-		tokenGit(hostOf(url)),
+		tokenGit(hostOf(url), username),
 		"target=repo",
 		...(mirror
 			? [
@@ -454,6 +457,7 @@ async function fetchRefs(
 	directory: string,
 	refs: Array<{ source: string; destination: string; optional?: boolean }>,
 	signal?: AbortSignal,
+	username?: GitUsername,
 ): Promise<GitOutcome> {
 	const id = randomBytes(16).toString("hex");
 	const stage = shellQuote(handoverDirectory(id));
@@ -475,7 +479,7 @@ async function fetchRefs(
 			startTransport(id),
 			READ_TOKEN,
 			PLAIN_GIT,
-			tokenGit(hostOf(url)),
+			tokenGit(hostOf(url), username),
 			"plain_git init --bare --quiet --template= repo",
 		];
 		for (const ref of refs) {
@@ -667,14 +671,22 @@ export async function changedReviewPaths(
 export function fetchWithToken(
 	sandbox: SandboxHandle,
 	token: string,
-	input: { url: string; base: string; work?: string | null },
+	input: { url: string; base: string; work?: string | null; username?: GitUsername },
 ): Promise<GitOutcome> {
 	const ref = (name: string, optional = false) => ({
 		source: "refs/heads/" + name,
 		destination: "refs/remotes/origin/" + name,
 		optional,
 	});
-	return fetchRefs(sandbox, token, input.url, ".", [ref(input.base), ...(input.work ? [ref(input.work, true)] : [])]);
+	return fetchRefs(
+		sandbox,
+		token,
+		input.url,
+		".",
+		[ref(input.base), ...(input.work ? [ref(input.work, true)] : [])],
+		undefined,
+		input.username,
+	);
 }
 
 /** Workspace-side staging and the exchange pack, separate from the protected scan. */
@@ -805,14 +817,20 @@ const rangeDigest = 'git rev-list --objects --no-object-names "$sha" --not "$@" 
  * since makes GitHub refuse it (`wlp:stale`). The plain push comes first, so that a fast-forward over
  * someone else's commit (one the agent merged) is never taken for a rebase.
  */
-function pushScript(range: PushAttempt, url: string, branch: string, lease: string | null): string {
+function pushScript(
+	range: PushAttempt,
+	url: string,
+	branch: string,
+	lease: string | null,
+	username?: GitUsername,
+): string {
 	if (!range.objects || !/^[0-9a-f]{64}$/.test(range.objects)) throw new Error("Invalid scanned object digest.");
 	if (lease !== null) commitId(lease);
 	const target = shellQuote(`refs/heads/${branch}`);
 	return [
 		"set -eu -o pipefail",
 		READ_TOKEN,
-		tokenGit(hostOf(url)),
+		tokenGit(hostOf(url), username),
 		PLAIN_GIT,
 		`private=${shellQuote(transportDirectory(range.id))}`,
 		'cd -- "$private" || { echo wlp:nohandover; exit 4; }',
@@ -1202,6 +1220,7 @@ export async function cloneWithToken(
 		pinnedBase?: string;
 		signal?: AbortSignal;
 		mirror?: MirrorAttempt;
+		username?: GitUsername;
 	},
 ): Promise<GitOutcome> {
 	const stage = randomBytes(16).toString("hex");
@@ -1209,7 +1228,7 @@ export async function cloneWithToken(
 	try {
 		const cloned = await run(
 			sandbox,
-			cloneScript(input.url, input.branch, stage, input.work, input.pinnedBase, input.mirror),
+			cloneScript(input.url, input.branch, stage, input.work, input.pinnedBase, input.mirror, input.username),
 			{ gitUser: true, stdin: token + "\n", timeoutMs: CLONE_TIMEOUT_MS, signal: input.signal, secrets: [token] },
 		);
 		if (!cloned.ok) {
@@ -1405,7 +1424,7 @@ export function actuallyPushed(sandbox: SandboxHandle, head: string): boolean {
 export async function pushWithToken(
 	sandbox: SandboxHandle,
 	token: string,
-	input: { attempt?: PushAttempt; url: string; branch: string; lease?: string | null },
+	input: { attempt?: PushAttempt; url: string; branch: string; lease?: string | null; username?: GitUsername },
 ): Promise<GitOutcome> {
 	const { attempt } = input;
 	// The in-memory sandbox interpreter has no shell or Git and simulates a push with empty output.
@@ -1413,7 +1432,7 @@ export async function pushWithToken(
 	if (!attempt?.objects) return run(sandbox, "echo wlp:nohandover; exit 4", { stdin: "", timeoutMs: PROBE_TIMEOUT_MS });
 	let result: GitOutcome;
 	try {
-		result = await run(sandbox, pushScript(attempt, input.url, input.branch, input.lease ?? null), {
+		result = await run(sandbox, pushScript(attempt, input.url, input.branch, input.lease ?? null, input.username), {
 			gitUser: true,
 			stdin: token + "\n",
 			timeoutMs: PUSH_TIMEOUT_MS,

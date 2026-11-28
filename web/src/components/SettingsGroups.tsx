@@ -26,6 +26,8 @@ export function SettingsLayout({ label, children }: { label: string; children: (
 	// A link from elsewhere (the account menu) names a section in the address: it opens there.
 	const hash = useHash();
 	useEffect(() => {
+		// OAuth return fragments belong to the connection panel, not to section navigation.
+		if (/^#(?:gitlab|linear)(?:-error)?=/.test(hash)) return;
 		const node = hash.length > 1 ? document.getElementById(decodeURIComponent(hash.slice(1))) : null;
 		if (node?.closest(".settings-frame")) node.scrollIntoView({ block: "start" });
 	}, [hash]);

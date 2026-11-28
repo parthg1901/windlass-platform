@@ -1,4 +1,4 @@
-/** GitHub and Linear connections, repositories, pull requests and publishing. */
+/** GitHub, GitLab, Linear and Jira connections, repositories, pull requests and publishing. */
 
 /** Account, installation and repository IDs are numbers through MAX_SAFE_INTEGER, then decimal strings. */
 export type GithubId = number | string;
@@ -24,6 +24,28 @@ export interface GithubConnection {
 export interface GithubStatus {
 	/** Null when GitHub is not connected. */
 	connection: GithubConnection | null;
+}
+
+/** Public state of the owner’s GitLab connection. Credentials and hook secrets stay server-side. */
+export type GitlabStatus =
+	| { state: "off" }
+	/** `reconnect`: GitLab refused the saved grant (revoked or expired), so it was forgotten. */
+	| { state: "disconnected"; reconnect?: true }
+	| { state: "connected"; baseUrl: string; project: SessionRepository | null };
+
+export interface GitlabProjectList {
+	projects: SessionRepository[];
+	more: boolean;
+}
+
+/** Settings actions on userGitlab[uid]. */
+export interface GitlabActions {
+	gitlab(): Promise<GitlabStatus>;
+	gitlabConnect(input: { origin: string }): Promise<{ url: string }>;
+	gitlabComplete(ticket: string): Promise<GitlabStatus>;
+	gitlabProjects(query: string): Promise<GitlabProjectList>;
+	gitlabPickProject(projectId: string): Promise<GitlabStatus>;
+	gitlabDisconnect(): Promise<GitlabStatus>;
 }
 
 /** Mapped teams file work on their repository through a qualifying label or app assignment. */
@@ -58,6 +80,43 @@ export interface LinearMapping {
 
 export interface LinearTeamList {
 	teams: LinearTeam[];
+}
+
+/** Browser-visible Jira connection metadata. Tokens and hook credentials stay with the service. */
+export interface JiraSite {
+	id: string;
+	name: string;
+	url: string;
+}
+
+export interface JiraConnection {
+	user: { id: string; name: string };
+	sites: JiraSite[];
+	/** Null until the owner chooses an authorized site. */
+	site: JiraSite | null;
+	connectedAt: number;
+}
+
+export type JiraStatus =
+	| { state: "off" }
+	| { state: "disconnected" }
+	| { state: "connected"; connection: JiraConnection };
+
+export interface JiraMapping {
+	siteId: string;
+	projectId: string;
+	repository: { id: GithubId; owner: string; name: string };
+	savedAt: number;
+}
+
+export interface JiraProject {
+	id: string;
+	key: string;
+	name: string;
+	mapping: JiraMapping | null;
+}
+export interface JiraProjectList {
+	projects: JiraProject[];
 }
 
 /** A repository the connection covers and the connected GitHub user can open. */
@@ -97,10 +156,20 @@ export interface GithubBranchList {
 	more: boolean;
 }
 
-/** What a session was launched on, when it was picked from the user's GitHub connection. */
+/** The code hosts a repository can be on. Their issues are work sources too (sources/types.ts). */
+export const HOST_IDS = ["github", "gitlab"] as const;
+export type HostId = (typeof HOST_IDS)[number];
+
+/**
+ * What a link, a filter or a count names a repository by (`repoAddress` in codehost/ref.ts): GitHub's id for one on
+ * the deployment's own GitHub, as links always have, and its key (`gitlab:<id>`) for any other.
+ */
+export type RepoAddress = GithubId | `${HostId}:${string}`;
+
+/** What a session was launched on, when it was picked from the user's code host connection. */
 export interface SessionRepository {
-	provider: "github";
-	/** GitHub's id for the repository. */
+	provider: HostId;
+	/** The provider's id for the repository. */
 	id: GithubId;
 	owner: string;
 	name: string;
@@ -109,6 +178,11 @@ export interface SessionRepository {
 	private: boolean;
 	/** The repository's page: "https://github.com/owner/name". */
 	url: string;
+	/**
+	 * The host's base URL, for a repository on another instance than the deployment's own for its host. Absent for
+	 * the deployment's own instance, which every repository is on today (codehost/ref.ts).
+	 */
+	instance?: string;
 }
 
 /** The pull request of a session, as GitHub last described it to the platform. */

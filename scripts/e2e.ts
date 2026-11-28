@@ -6352,7 +6352,7 @@ async function githubChecks(
 				before.blocked === null && before.changes === true && before.pullRequest === null,
 				`the publish state is ${plain({ ...before, draft: undefined })}`,
 			);
-			assert(/^windlass\/fix-the-harbor-light-[0-9a-f]{6}$/.test(before.branch), `the branch is ${before.branch}`);
+			assert(before.branch === "windlass/fix-the-harbor-light", `the branch is ${before.branch}`);
 			assert(
 				before.draft.title === "Fix the harbor light" && before.draft.body !== "",
 				`the draft is ${plain(before.draft)}`,

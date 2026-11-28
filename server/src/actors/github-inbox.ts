@@ -1,6 +1,8 @@
 /** githubInbox[installationId] and githubHooks["app"]. Only service actions write or read rows.
  * A scheduled action must be fired by the engine. An empty actor has no work and arms no timer.
  */
+import type { GithubCommentHost } from "./github-item.js";
+import { resolveCodeHost } from "../codehost/index.js";
 import { recentSubject } from "../factory/intake.js";
 import { cleanFeedback } from "../factory/feedback.js";
 import type { InstallationChange } from "./user-github.js";
@@ -250,110 +252,106 @@ export async function readFeedback(
 			.internalIssuePermission(installationId, subject.sender)) !== "write"
 	)
 		return denied;
-	const app = githubApp();
-	if (!app) throw new Error("GitHub App unavailable.");
+	const app = githubApp(),
+		host = resolveCodeHost("github");
+	if (!app || !host) throw new Error("GitHub App unavailable.");
 	try {
-		return await app.withToken(
-			installationId,
-			{ repositoryId, permissions: { metadata: "read", pull_requests: "read" } },
-			async token => {
-				const repo = await app.repositoryById(token, repositoryId);
-				if (repo.id !== repositoryId) return null;
-				const entry = (
-					kind: FeedbackEntry["kind"],
-					id: string,
-					body: string,
-					at: number,
-					url: string,
-					author: string,
-				): FeedbackEntry => ({
-					id,
-					author,
-					access: owner ? "owner" : "write",
-					kind,
-					body: cleanFeedback(body).slice(0, 16000),
-					at,
-					url,
-					commit: null,
-					path: null,
-					line: null,
-				});
-				const valid = (r: { author: GithubUser; at: number }) =>
-					r.author.id === subject.sender.id && recentSubject(r.at);
-				if (subject.kind === "issue_comment") {
-					const r = await app.issueCommand(token, repo, pr, subject.id);
-					if (!r || !valid(r)) return null;
-					const note = isAddressed(r.body, app.settings.slug);
-					if (note === null) return null;
-					const url = app.repositoryUrl(repo.owner, repo.name) + "/pull/" + pr + "#issuecomment-" + subject.id;
-					if (itemPull && /^\/windlass\s+review$/i.test(r.body.trim())) {
-						const pull = await app.pull(token, repo.owner, repo.name, pr);
-						if (
-							!["open", "draft"].includes(pull.state) ||
-							![pull.headSha, pull.baseSha].every(sha => /^[a-f0-9]{40}$/.test(sha))
-						)
-							return null;
-						return {
-							...target,
-							repo,
-							addressed: true,
-							entries: [],
-							requestedReview: {
-								id: feedbackId(subject),
-								head: pull.headSha,
-								base: pull.baseSha,
-								owner,
-								sender: r.author.login,
-							},
-						};
-					}
+		return await host.withToken({ installationId, repositoryId }, "pull:read", async token => {
+			const repo = await app.repositoryById(token, repositoryId);
+			if (repo.id !== repositoryId) return null;
+			const entry = (
+				kind: FeedbackEntry["kind"],
+				id: string,
+				body: string,
+				at: number,
+				url: string,
+				author: string,
+			): FeedbackEntry => ({
+				id,
+				author,
+				access: owner ? "owner" : "write",
+				kind,
+				body: cleanFeedback(body).slice(0, 16000),
+				at,
+				url,
+				commit: null,
+				path: null,
+				line: null,
+			});
+			const valid = (r: { author: GithubUser; at: number }) => r.author.id === subject.sender.id && recentSubject(r.at);
+			if (subject.kind === "issue_comment") {
+				const r = await app.issueCommand(token, repo, pr, subject.id);
+				if (!r || !valid(r)) return null;
+				const note = isAddressed(r.body, app.settings.slug);
+				if (note === null) return null;
+				const url = app.repositoryUrl(repo.owner, repo.name) + "/pull/" + pr + "#issuecomment-" + subject.id;
+				if (itemPull && /^\/windlass\s+review$/i.test(r.body.trim())) {
+					const pull = await host.readPull(token, repo.owner, repo.name, pr);
+					if (
+						!["open", "draft"].includes(pull.state) ||
+						![pull.headSha, pull.baseSha].every(sha => /^[a-f0-9]{40}$/.test(sha))
+					)
+						return null;
 					return {
 						...target,
 						repo,
 						addressed: true,
-						entries: [entry("issue_comment", feedbackId(subject), note, r.at, url, r.author.login)],
+						entries: [],
+						requestedReview: {
+							id: feedbackId(subject),
+							head: pull.headSha,
+							base: pull.baseSha,
+							owner,
+							sender: r.author.login,
+						},
 					};
 				}
-				const review = subject.kind === "review";
-				const r = review
-					? await app.review(token, repo, pr, subject.id)
-					: await app.reviewComment(token, repo, pr, subject.id);
-				if (!r || !valid(r)) return null;
-				if (review && r.state === "approved")
-					return { ...target, entries: [], approval: { id: feedbackId(subject), author: r.author.login } };
-				const requested = review && r.state === "changes_requested";
-				if (review && !requested && r.state !== "commented") return null;
-				const address = isAddressed(r.body, app.settings.slug);
-				const body = requested ? r.body : address;
-				if (body === null) return null;
-				const entries = [
-					{
-						...entry(
-							review ? (requested ? "changes_requested" : "commented") : "review_comment",
-							feedbackId(subject),
-							body,
-							r.at,
-							r.url,
-							r.author.login,
-						),
-						commit: r.commit,
-						path: r.path,
-						line: r.line,
-					},
-				];
-				if (review)
-					for (const line of await app.reviewComments(token, repo, pr, r.id)) {
-						if (!valid(line)) continue;
-						entries.push({
-							...entry("review_comment", "review_comment:" + line.id, line.body, line.at, line.url, line.author.login),
-							commit: line.commit,
-							path: line.path,
-							line: line.line,
-						});
-					}
-				return { ...target, repo, entries, addressed: address !== null, ...(review && { reviewNodeId: r.nodeId }) };
-			},
-		);
+				return {
+					...target,
+					repo,
+					addressed: true,
+					entries: [entry("issue_comment", feedbackId(subject), note, r.at, url, r.author.login)],
+				};
+			}
+			const review = subject.kind === "review";
+			const r = review
+				? await app.review(token, repo, pr, subject.id)
+				: await app.reviewComment(token, repo, pr, subject.id);
+			if (!r || !valid(r)) return null;
+			if (review && r.state === "approved")
+				return { ...target, entries: [], approval: { id: feedbackId(subject), author: r.author.login } };
+			const requested = review && r.state === "changes_requested";
+			if (review && !requested && r.state !== "commented") return null;
+			const address = isAddressed(r.body, app.settings.slug);
+			const body = requested ? r.body : address;
+			if (body === null) return null;
+			const entries = [
+				{
+					...entry(
+						review ? (requested ? "changes_requested" : "commented") : "review_comment",
+						feedbackId(subject),
+						body,
+						r.at,
+						r.url,
+						r.author.login,
+					),
+					commit: r.commit,
+					path: r.path,
+					line: r.line,
+				},
+			];
+			if (review)
+				for (const line of await app.reviewComments(token, repo, pr, r.id)) {
+					if (!valid(line)) continue;
+					entries.push({
+						...entry("review_comment", "review_comment:" + line.id, line.body, line.at, line.url, line.author.login),
+						commit: line.commit,
+						path: line.path,
+						line: line.line,
+					});
+				}
+			return { ...target, repo, entries, addressed: address !== null, ...(review && { reviewNodeId: r.nodeId }) };
+		});
 	} catch (e) {
 		if (e instanceof GithubError && [404, 410].includes(e.status)) return null;
 		throw e;
@@ -437,6 +435,8 @@ async function prFeedback(d: Delivery, c: Ctx): Promise<"no item" | void> {
 			return;
 		}
 		if (!notice.addressed) return "no item";
+		const host: GithubCommentHost = resolveCodeHost("github")!;
+		// This reply needs pull-request write access only; pull:write would also request contents.
 		await app.withToken(
 			target.installationId,
 			{ repositoryId: repo.id, permissions: { metadata: "read", pull_requests: "write" } },
@@ -449,7 +449,7 @@ async function prFeedback(d: Delivery, c: Ctx): Promise<"no item" | void> {
 							comment.author.toLowerCase() === app.settings.slug.toLowerCase() + "[bot]" && comment.body === UNLINKED,
 					)
 				)
-					await app.createIssueComment(
+					await host.createComment(
 						token,
 						repo.owner,
 						repo.name,

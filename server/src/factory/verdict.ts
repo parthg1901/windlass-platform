@@ -2,8 +2,8 @@
  * The verdict (Plans "software factory" §8, without the reviewer's `review`): what the work at a pushed
  * head rests on, for a machine to act on and a person to read. It is made from three things only, none
  * of them the agent's words: what the session's gate recorded of its last turn (`Verified`, from
- * Windlass's events: verified.ts), the observations on the changes (`workFlags`), and what GitHub says
- * of CI at the head (github/ci.ts).
+ * Windlass's events: verified.ts), the observations on the changes (`workFlags`), and what the code host says
+ * of CI at the head (codehost/ci.ts).
  *
  * CI decides: its result on the pushed head is what the verdict rests on first. The person's own checks
  * are optional: a loop before the push, whose failure sends the agent back and whose pass can stand in
@@ -35,7 +35,7 @@
 
 import { createHash } from "node:crypto";
 import type { ReviewRecommendation, SandboxPlace, TurnOutcome, Verified } from "../contract.js";
-import type { CiReading } from "../github/ci.js";
+import type { CiReading } from "../codehost/ci.js";
 import { flagWords, verifiedHeadline } from "../verified.js";
 import { environmentFailure } from "./check-environment.js";
 import type { CiProgress, GateEvidence, Verdict } from "./types.js";

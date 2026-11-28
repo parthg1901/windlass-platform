@@ -13,6 +13,10 @@ import { githubInbox, githubHooks } from "./actors/github-inbox.js";
 import { githubRepository } from "./actors/github-repository.js";
 import { billingCustomers } from "./billing/customer-index.js";
 import { accountIdentities } from "./actors/account-identities.js";
+import { gitlabInbox } from "./actors/gitlab-inbox.js";
+import { userGitlab } from "./actors/user-gitlab.js";
+import { jiraSite } from "./actors/jira-site.js";
+import { slackWorkspace } from "./actors/slack-workspace.js";
 import { linearWorkspace } from "./actors/linear-workspace.js";
 import { login } from "./actors/login.js";
 import { user } from "./actors/user.js";
@@ -35,6 +39,10 @@ export const registry = setup({
 		githubRepository,
 		githubHooks,
 		linearWorkspace,
+		userGitlab,
+		gitlabInbox,
+		jiraSite,
+		slackWorkspace,
 	},
 	// The native HTTP listener bounds the body before copying it into a JavaScript Request.
 	serverless: { maxStartPayloadBytes: 3 * 1024 * 1024 },

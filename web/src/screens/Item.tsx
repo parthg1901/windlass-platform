@@ -1,4 +1,4 @@
-import { originIssue } from "../lib/origin";
+import { filingSource, originIssue } from "../lib/origin";
 import {
 	MAX_NOTE_CHARS,
 	type ChoiceId,
@@ -31,6 +31,9 @@ import { Dialog } from "../components/Dialog";
 import { InlineMarkdown, Output } from "../components/Blocks";
 import { LongText } from "../components/Fold";
 import { CheckIcon, ChevronIcon, ExternalIcon, InfoIcon, WarnIcon } from "../components/Icons";
+import { BranchName } from "../components/BranchName";
+import { ProviderIcon, providerOf } from "../components/ProviderIcon";
+import { hostWords, requestNumber, sentenceCase } from "../lib/host";
 import { ReviewBlocks } from "../components/ReviewBlocks";
 import { Screenshots, useScreenshotLinks, type ScreenshotLinks } from "../components/Screenshots";
 import { ItemNetwork } from "../components/ItemNetwork";
@@ -230,8 +233,66 @@ function useActing(
 	return { busy, error, failed, act };
 }
 
+function GitlabMerge({ view, onDone }: { view: ItemView; onDone(view: ItemView): void }) {
+	const { client, explain } = useApp(),
+		auth = useAuth();
+	const [head, setHead] = useState<string | null>(null);
+	const [busy, setBusy] = useState(false),
+		[error, setError] = useState<string | null>(null);
+	const merge = async () => {
+		setBusy(true);
+		try {
+			if (head) onDone(await client.user(auth).mergeGitlabItem(view.id, head));
+			setHead(null);
+		} catch (failure) {
+			setError(explain(failure));
+		} finally {
+			setBusy(false);
+		}
+	};
+	return (
+		<>
+			<button
+				type="button"
+				className="button button-outline button-small"
+				onClick={() => {
+					setHead(view.head);
+					setError(null);
+				}}
+			>
+				Merge…
+			</button>
+			{head && (
+				<Dialog
+					title={`Merge !${view.pullRequest?.number}?`}
+					size="small"
+					dismissable={!busy}
+					onClose={() => setHead(null)}
+					footer={
+						<>
+							<button className="button button-quiet" disabled={busy} onClick={() => setHead(null)}>
+								Cancel
+							</button>
+							<button className="button button-primary" disabled={busy} onClick={merge}>
+								{busy ? "Merging…" : "Merge request"}
+							</button>
+						</>
+					}
+				>
+					<p>
+						Merge commit <code>{head.slice(0, 8)}</code> into <strong>{view.task.base}</strong>. Windlass checks the
+						head, base and pipeline again before merging.
+					</p>
+					<Failure error={error} />
+				</Dialog>
+			)}
+		</>
+	);
+}
+
 function CancelDialog({ view, acting, onClose }: { view: ItemView; acting: Acting; onClose(): void }) {
 	const busy = acting.busy === "cancel";
+	const host = hostWords(view.repository.provider);
 	return (
 		<Dialog
 			title="Cancel this work item?"
@@ -258,8 +319,8 @@ function CancelDialog({ view, acting, onClose }: { view: ItemView; acting: Actin
 				Nothing more is done for <strong>{view.title}</strong>
 				{view.state === "working" ? ", and the turn that runs is stopped" : ""}.{" "}
 				{view.pullRequest
-					? `Pull request #${view.pullRequest.number} stays open on GitHub until you close it there.`
-					: "No pull request was opened for it."}{" "}
+					? `${sentenceCase(host.noun)} ${host.mark}${view.pullRequest.number} stays open on ${host.name} until you close it there.`
+					: `No ${host.noun} was opened for it.`}{" "}
 				Its agent and the log stay.
 			</p>
 			<Failure error={acting.error} />
@@ -385,6 +446,7 @@ const TAKES_NOTES = new Set<ItemSummary["state"]>(["queued", "working", "waiting
 
 function Now({ view, now }: { view: ItemView; now: number }) {
 	const last = view.events[view.events.length - 1] ?? null;
+	const host = hostWords(view.repository.provider);
 	const step = view.run?.step ?? null;
 	let text: string;
 	let when: ReactNode = null;
@@ -430,8 +492,7 @@ function Now({ view, now }: { view: ItemView; now: number }) {
 						? "Handed to you before re-review finished after changes were requested."
 						: "Handed to you with changes requested by the code reviewer.";
 			else
-				text =
-					"Handed to you. The pull request waits for your review; the platform never merges it. When it is merged or closed on GitHub, the item says so.";
+				text = `Handed to you. The ${host.noun} waits for your review; the platform never merges it. When it is merged or closed on ${host.name}, the item says so.`;
 			break;
 		default:
 			text = last?.said ?? STATE_WORD[view.state];
@@ -689,7 +750,9 @@ function Question({
 	now: number;
 }) {
 	// No agent is left to read a note once its machine was removed.
-	const noted = !["machine_removed", "feedback_feature", "feedback_more", "push_ci"].includes(question.kind);
+	const noted = !["machine_removed", "feedback_feature", "feedback_more", "push_ci", "ready_refused"].includes(
+		question.kind,
+	);
 	const [note, setNote] = useState("");
 	const [raising, setRaising] = useState(false);
 	const ids = { title: useId(), note: useId(), asked: useId() };
@@ -697,6 +760,9 @@ function Question({
 	// The agent's own question: its words are the reply's subject, and the reply is the note, so the note is needed.
 	const asked = question.kind === "agent_ask" ? (question.asked ?? null) : null;
 	const replying = question.kind === "agent_ask";
+	// The host refused to mark the pull request ready: the person's own way is on the host, so that link leads.
+	const onHost = question.kind === "ready_refused" && view.pullRequest ? view.pullRequest : null;
+	const host = hostWords(view.repository.provider);
 	const answer = (choice: ChoiceId, budget?: Partial<ItemBudget>) =>
 		acting.act({
 			kind: "answer",
@@ -763,13 +829,21 @@ function Question({
 						</div>
 					) : null}
 					<div className="item-choices">
+						{onHost ? (
+							<a className="button button-primary" href={onHost.url} target="_blank" rel="noreferrer">
+								<ProviderIcon id={view.repository.provider} size={14} />
+								Mark {host.mark}
+								{onHost.number} ready on {host.name}
+								<ExternalIcon size={12} />
+							</a>
+						) : null}
 						{question.choices
 							.filter(choice => !view.parent || question.kind === "branch_push" || choice.id !== "hand_over")
 							.flatMap((choice, index) => [
 								<button
 									key={choice.id}
 									type="button"
-									className={`button ${(question.recommended ? choice.id === question.recommended : index === 0) ? "button-primary" : choice.id === "give_up" ? "button-quiet" : "button-outline"}`}
+									className={`button ${onHost ? (choice.id === "dismiss" ? "button-quiet" : "button-outline") : (question.recommended ? choice.id === question.recommended : index === 0) ? "button-primary" : choice.id === "give_up" ? "button-quiet" : "button-outline"}`}
 									disabled={busy || (choice.id === "reply" && note.trim() === "")}
 									onClick={() => answer(choice.id)}
 								>
@@ -1245,14 +1319,33 @@ const readFirst = (item: Pick<ItemView, "state" | "origin">) =>
 	item.state === "draft" && item.origin !== null && item.origin !== undefined && !originIssue(item.origin).trusted;
 
 function IssueOrigin({ origin }: { origin: NonNullable<ItemView["origin"]> }) {
-	const { url, author, tracker } = originIssue(origin);
+	const { url, author, tracker, label, provider } = originIssue(origin);
 	return (
 		<span className="item-origin">
 			from{" "}
-			<a href={url} target="_blank" rel="noreferrer" title={tracker}>
-				{origin.issue ? `#${origin.issue.number}` : origin.linear.identifier}
+			<a className="item-origin-issue" href={url} target="_blank" rel="noreferrer" title={`${tracker} issue ${label}`}>
+				<ProviderIcon id={provider} size={12} />
+				{label}
 			</a>{" "}
 			by {author}
+		</span>
+	);
+}
+
+/** An item filed without an issue to link: "from the web", "from the API", or the source's mark and name. */
+function FiledFrom({ source }: { source: ItemView["source"] }) {
+	const provider = providerOf(source);
+	return (
+		<span className="item-filed-from">
+			from{" "}
+			{provider ? (
+				<span className="item-origin-issue">
+					<ProviderIcon id={provider} size={12} />
+					{filingSource[source]}
+				</span>
+			) : (
+				filingSource[source]
+			)}
 		</span>
 	);
 }
@@ -1458,7 +1551,9 @@ export function Item({ page }: { page: ItemPage }) {
 							target="_blank"
 							rel="noreferrer"
 						>
-							PR #{view.pullRequest.number} <ExternalIcon size={12} />
+							<ProviderIcon id={repository.provider} size={13} />
+							{hostWords(repository.provider).short} {requestNumber(repository.provider, view.pullRequest.number)}{" "}
+							<ExternalIcon size={12} />
 						</a>
 					) : null}
 					{!view.awaitingPlace ? (
@@ -1477,6 +1572,12 @@ export function Item({ page }: { page: ItemPage }) {
 						>
 							Code review
 						</a>
+					) : null}
+					{repository.provider === "gitlab" &&
+					view.state === "review" &&
+					view.verdict?.ci === "passed" &&
+					view.pullRequest ? (
+						<GitlabMerge view={view} onDone={page.replace} />
 					) : null}
 					{canSendBack ? (
 						<button
@@ -1537,25 +1638,16 @@ export function Item({ page }: { page: ItemPage }) {
 				</div>
 				<p className="item-meta">
 					<span>
-						<a {...linkProps({ name: "repository", id: repository.id })}>
+						<a
+							{...(repository.provider === "gitlab"
+								? { href: repository.url, target: "_blank", rel: "noreferrer" }
+								: linkProps({ name: "repository", id: repository.id }))}
+						>
 							{repository.owner}/{repository.name}
 						</a>{" "}
-						→ {view.task.base}
+						→ <BranchName branch={view.task.base} />
 					</span>
-					{view.origin ? (
-						<IssueOrigin origin={view.origin} />
-					) : (
-						<span>
-							from{" "}
-							{view.source === "api"
-								? "the API"
-								: view.source === "github"
-									? "GitHub"
-									: view.source === "linear"
-										? "Linear"
-										: "the web"}
-						</span>
-					)}
+					{view.origin ? <IssueOrigin origin={view.origin} /> : <FiledFrom source={view.source} />}
 					<time dateTime={new Date(view.createdAt).toISOString()} title={absoluteTime(view.createdAt)}>
 						filed {relativeTime(view.createdAt, now)}
 					</time>

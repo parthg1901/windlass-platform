@@ -1,5 +1,6 @@
 import type { FeaturePlan, ItemAction, ItemView, SubtaskAgent, SubtaskBudget } from "@contract";
 import { useEffect, useState } from "react";
+import { openPlanQuestions } from "../../../server/src/factory/feature-plan.js";
 import { budgetProblems, featureTotal, parseTokenInput, sumBudgets, tokenInput } from "../lib/feature";
 import { placeChanged, placeDraftOf, withPlace, type PlaceDraft } from "../lib/placement";
 import { agentChanged, cleanAgent, withAgent } from "../lib/subtask-agents";
@@ -136,7 +137,7 @@ export function usePlanReview(view: ItemView | null, acting: PlanActing) {
 		unattended,
 		refusal: acting.failed?.kind === "approve_plan" && acting.failed.reason === "bad_input" ? acting.error : null,
 		unconfirmed: unattended.length - confirmed.length,
-		unansweredLeft: plan?.questions.filter(q => !q.answer && !draft.answers[q.id]?.trim()).length ?? 0,
+		unansweredLeft: plan ? openPlanQuestions(plan, draft.answers).length : 0,
 		pool: plan ? featureTotal(plan, budgets) : null,
 		allotted: sumBudgets(Object.values(budgets)),
 		problems,

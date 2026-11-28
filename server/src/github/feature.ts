@@ -1,5 +1,5 @@
-import { taskKind, type TaskKind } from "../factory/readiness-track.js";
-import { GithubError, type GithubApp, type Pull } from "./app.js";
+import { mergeKindAllowed, taskKind, type TaskKind } from "../factory/readiness-track.js";
+import { GithubError, GraphqlRefusal, type GithubApp, type Pull } from "./app.js";
 import { ciState, readCi, type CiTarget } from "./ci.js";
 
 /** Called under the item write queue, after checking its review, feedback and repository setting. */
@@ -22,10 +22,10 @@ export async function mergeReviewedPull(
 		// GitHub caps comparisons at 300 files. A partial list cannot authorize a merge.
 		const files = compared.files;
 		const kind =
-			files?.length &&
-			files.length < 300 &&
-			taskKind(files.flatMap(f => (f.previous_filename ? [f.previous_filename, f.filename] : [f.filename])));
-		if (!kind || !kinds.includes(kind)) throw new Error("Automatic merge is off for this kind of change.");
+			files?.length && files.length < 300
+				? taskKind(files.flatMap(f => (f.previous_filename ? [f.previous_filename, f.filename] : [f.filename])))
+				: null;
+		if (!mergeKindAllowed(kinds, kind)) throw new Error("Automatic merge is off for this kind of change.");
 	}
 	await app.squashMerge(token, target.owner, target.name, pull.number, target.head, pull.title);
 	return "merged";
@@ -228,6 +228,12 @@ export async function openFeature(
 	return { head, pr: { number: pull.number, url: pull.url } };
 }
 
+/**
+ * Marks the draft feature PR ready for review; nothing to do once it is not a draft (the person may have marked it).
+ * The token needs Contents write besides Pull requests write: GitHub refuses the mutation to a token with Pull requests
+ * write alone ("Resource not accessible by integration"). There is no REST way: the pull request update ignores `draft`.
+ * A refusal throws a `GraphqlRefusal` with GitHub's reason.
+ */
 export async function readyFeature(
 	app: GithubApp,
 	token: string,
@@ -258,5 +264,9 @@ export async function readyFeature(
 		},
 	});
 	if (obj(obj(obj(obj(result.body).data).markPullRequestReadyForReview).pullRequest).isDraft !== false)
-		throw new Error("GitHub did not confirm the PR is ready for review.");
+		throw new GraphqlRefusal(
+			"mark the PR ready for review",
+			result.body,
+			"GitHub did not confirm the PR is ready for review.",
+		);
 }

@@ -20,6 +20,7 @@ import { createMockClient, type MockClient, type MockOptions } from "../api/mock
 import { App } from "../App";
 import { saveAuth } from "../lib/authStore";
 import { parseRoute } from "../lib/router";
+import { filterItems } from "./Factory";
 import { AppProvider } from "../state/app";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -199,6 +200,15 @@ describe("the Factory page's address and the bar's tabs", () => {
 		});
 		expect(parseRoute("/factory", "?repository=x&from=email")).toEqual({ name: "factory" });
 		expect(parseRoute("/factory/")).toEqual({ name: "factory" });
+	});
+
+	it("names a GitLab project by its key, so it never shares a GitHub repository's id", () => {
+		expect(parseRoute("/factory", "?repository=gitlab%3A7101")).toEqual({ name: "factory", repository: "gitlab:7101" });
+		const on = (provider: "github" | "gitlab", id: string) =>
+			({ id, source: "web", repository: { provider, id: 7101, owner: "acme", name: "harbor" } }) as ItemSummary;
+		const list = [on("github", "i1"), on("gitlab", "i2")];
+		expect(filterItems(list, { repository: 7101 }).map(item => item.id)).toEqual(["i1"]);
+		expect(filterItems(list, { repository: "gitlab:7101" }).map(item => item.id)).toEqual(["i2"]);
 	});
 });
 

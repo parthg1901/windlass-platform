@@ -1,3 +1,4 @@
+import type { resolveCodeHost } from "../codehost/index.js";
 import { config } from "../config.js";
 import type { GithubId, ItemState } from "../contract.js";
 import { issueComment, recentSubject, type IssueBinding } from "../factory/intake.js";
@@ -84,8 +85,15 @@ export async function observeIssue(
 	return observations;
 }
 
+// The GitHub adapter accepts an optional operation label for its error messages.
+export type GithubCommentHost = Pick<NonNullable<ReturnType<typeof resolveCodeHost>>, "withToken" | "listComments"> & {
+	createComment: GithubApp["createIssueComment"];
+	updateComment: GithubApp["updateIssueComment"];
+};
+
 export async function writeIssueComment(
-	app: GithubApp,
+	host: GithubCommentHost,
+	slug: string,
 	repo: { id: GithubId; owner: string; name: string },
 	binding: IssueBinding,
 	itemId: string,
@@ -99,26 +107,24 @@ export async function writeIssueComment(
 		issueComment(itemId, title, binding.origin, state, pr, `${config.origins[0]}/items/${itemId}`) +
 		(binding.modeReason ? " " + binding.modeReason : "");
 	const marker = body.split("\n", 1)[0];
-	return app.withToken(
-		binding.installationId,
-		{ repositoryId: repo.id, permissions: { metadata: "read", issues: "write" } },
+	return host.withToken(
+		{ installationId: binding.installationId, repositoryId: repo.id },
+		"comment:write",
 		async token => {
 			if (!commentId) {
-				const comments = await app.issueComments(token, repo.owner, repo.name, number, true);
+				const comments = await host.listComments(token, repo.owner, repo.name, number, true);
 				const own = comments.find(
-					one =>
-						one.author.toLowerCase() === app.settings.slug.toLowerCase() + "[bot]" &&
-						one.body.startsWith(marker + "\n"),
+					one => one.author.toLowerCase() === slug.toLowerCase() + "[bot]" && one.body.startsWith(marker + "\n"),
 				);
 				if (own && !own.id) throw new Error("GitHub returned no issue comment id");
 				if (own?.body === body) return own.id!;
 				commentId = own?.id ?? undefined;
 			}
 			if (commentId) {
-				await app.updateIssueComment(token, repo.owner, repo.name, commentId, body, "update the work item link");
+				await host.updateComment(token, repo.owner, repo.name, commentId, body, "update the work item link");
 				return commentId;
 			}
-			const id = await app.createIssueComment(token, repo.owner, repo.name, number, body, "post the work item link");
+			const id = await host.createComment(token, repo.owner, repo.name, number, body, "post the work item link");
 			if (!id) throw new Error("GitHub returned no issue comment id");
 			return id;
 		},

@@ -35,6 +35,12 @@
         "server/src/factory/reviewer-task.ts",
         "server/src/factory/verified-check.ts",
         "server/src/github/**",
+        "server/src/codehost/**",
+        "server/src/gitlab/**",
+        "scripts/gitlab-standin.ts",
+        "scripts/gitlab-protocol-check.ts",
+        "scripts/gitlab-check.ts",
+        "server/src/actors/user-gitlab.ts",
         "server/src/runner/**",
         "server/src/sandbox/**",
         "server/src/signin/**",
@@ -52,11 +58,12 @@
         "scripts/e2b-network-standin.mjs",
         "server/src/billing/**",
         "scripts/dodo-fake.ts",
-        "scripts/{access,account,billing,attachments,backup,machine-backup,connection,continue-session,harness,models,model-providers,stored-data,network,repository,review,reviewer-task,runner-control,runner-protocol,secrets,setup,usage,verified,web-files,github,shot,sizing,git-config,untrusted,session-title,model-relay-route,start-times,install-script,runner-wizard,cost,model-plans,plan-relay,pay-with,usage-summary}-check.ts",
+        "scripts/{access,account,billing,attachments,backup,machine-backup,connection,continue-session,harness,models,model-providers,stored-data,network,repository,review,reviewer-task,runner-control,runner-protocol,secrets,setup,usage,verified,web-files,github,codehost,shot,sizing,git-config,untrusted,session-title,model-relay-route,start-times,install-script,runner-wizard,cost,model-plans,plan-relay,pay-with,usage-summary}-check.ts",
         "server/src/actors/continue-session.ts",
         "server/src/factory/untrusted.ts",
         "server/src/factory/cost.ts",
         "server/src/factory/usage-summary.ts",
+        "server/src/sources/**",
         "server/src/actors/session-inbox.ts",
         "sandbox/relay/**",
         "server/src/actors/agent-session/**",
@@ -99,6 +106,7 @@
         "environment": "tsx ../scripts/environment-check.ts",
         "git-config": "tsx ../scripts/git-config-check.ts",
         "untrusted": "tsx ../scripts/untrusted-check.ts",
+        "sources": "tsx --test src/sources/registry.test.ts src/sources/updates.test.ts src/sources/bindings.test.ts",
         "session-title": "tsx ../scripts/session-title-check.ts",
         "usage": "tsx ../scripts/usage-check.ts",
         "billing": "tsx ../scripts/billing-check.ts",
@@ -107,6 +115,11 @@
         "verified": "tsx ../scripts/verified-check.ts",
         "web-files": "tsx ../scripts/web-files-check.ts",
         "github": "tsx ../scripts/github-check.ts",
+        "codehost": "tsx ../scripts/codehost-check.ts",
+        "codehost-ref": "tsx --test src/codehost/ref.test.ts",
+        "codehost-branch": "tsx --test src/codehost/branch.test.ts",
+        "gitlab-protocol": "tsx ../scripts/gitlab-protocol-check.ts",
+        "gitlab-connect": "tsx ../scripts/gitlab-check.ts connect",
         "daytona-provider": "tsx ../scripts/daytona-provider-test.ts",
         "e2b-provider": "tsx ../scripts/e2b-provider-test.ts",
         "e2b-snapshot": "tsx ../scripts/e2b-snapshot-check.ts",
@@ -209,6 +222,7 @@
         "scripts/check-listeners.ts",
         "server/src/factory/**",
         "server/src/github/**",
+        "server/src/codehost/ci.ts",
         "server/src/item-pages.ts",
         "server/src/submissions.ts",
         "server/src/api-routes.ts",
@@ -253,15 +267,34 @@
         "scripts/issue-intake-fixture.ts",
         "server/src/github/**",
         "server/src/factory/**",
-        "server/src/actors/{github-item,github-intake,github-inbox,github-repository,github-account,user-github,work-item,user-items}.ts",
+        "server/src/actors/{issue-intake,github-item,github-intake,github-inbox,github-repository,github-account,user-github,work-item,user-items}.ts",
         "server/src/index.ts",
         "server/src/registry.ts",
         "scripts/github-standin.ts",
         "scripts/login-http.ts",
-        "scripts/webhook-check.ts"
+        "scripts/webhook-check.ts",
+        "server/src/sources/**"
       ],
       "checks": {
         "webhook": "tsx ../scripts/webhook-check.ts"
+      }
+    },
+    "gitlab": {
+      "timeout": 15,
+      "paths": [
+        "scripts/gitlab-{check,protocol-check,standin,workspace-fixture}.ts",
+        "scripts/{check-listeners,check-sections,issue-intake-fixture,login-http}.ts",
+        "server/src/gitlab/**",
+        "server/src/sources/**",
+        "server/src/codehost/**",
+        "server/src/factory/{intake,untrusted}.ts",
+        "server/src/actors/{gitlab-*,user-gitlab,issue-intake,internal,user,user-items,work-item,agent-session}.ts",
+        "server/src/actors/agent-session/**",
+        "server/src/github/{git,publish}.ts",
+        "server/src/{index,registry,config,item-pages}.ts"
+      ],
+      "checks": {
+        "gitlab-intake": "tsx ../scripts/gitlab-check.ts intake refuse untrusted"
       }
     },
     "linear": {
@@ -270,6 +303,7 @@
         "scripts/check-listeners.ts",
         "scripts/issue-intake-fixture.ts",
         "server/src/linear/**",
+        "server/src/sources/**",
         "server/src/factory/**",
         "server/src/github/**",
         "server/src/config.ts",
@@ -287,6 +321,44 @@
       "checks": {
         "linear-protocol": "tsx ../scripts/linear-protocol-check.ts",
         "linear": "tsx ../scripts/linear-check.ts"
+      }
+    },
+    "jira": {
+      "timeout": 20,
+      "paths": [
+        "server/src/jira/**",
+        "server/src/sources/**",
+        "server/src/factory/**",
+        "server/src/github/**",
+        "server/src/linear/webhook.ts",
+        "server/src/{access,actor-errors,auth,client,config,contract,http-limits,index,item-pages,registry,repo-secrets,repository-defaults,signatures,submissions,tokens,user-limits}.ts",
+        "server/src/signin/seal.ts",
+        "server/src/actors/user/**",
+        "server/src/actors/{jira-site,user-jira,issue-intake,github-intake,github-item,github-inbox,github-repository,github-account,user-github,internal,user-items,user,work-item}.ts",
+        "scripts/{check-listeners,issue-intake-fixture,login-http}.ts",
+        "scripts/{github,jira}-standin.ts",
+        "scripts/jira-check.ts"
+      ],
+      "checks": {
+        "jira": "tsx ../scripts/jira-check.ts"
+      }
+    },
+    "slack": {
+      "timeout": 20,
+      "paths": [
+        "server/src/slack/**",
+        "server/src/sources/**",
+        "server/src/contract{,/slack}.ts",
+        "server/src/{actor-errors,auth,config,index,registry,repo-secrets,submissions,user-limits}.ts",
+        "server/src/signin/seal.ts",
+        "server/src/actors/{internal,user,slack-workspace,user-slack,user-items,issue-intake,work-item}.ts",
+        "server/src/factory/**",
+        "server/src/github/**",
+        "scripts/{slack-*,github-standin,login-http,issue-intake-fixture,check-listeners,check-wait}.ts"
+      ],
+      "checks": {
+        "slack-blocks": "tsx --test src/slack/blocks.test.ts",
+        "slack": "tsx ../scripts/slack-check.ts"
       }
     },
     "sandbox-docker": {

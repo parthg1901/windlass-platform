@@ -1,11 +1,12 @@
 // A feature's parts: dispatching subtasks, the feature branch's CI and updates, and approving the plan.
 import { isDeepStrictEqual } from "node:util";
-import { ciPollEvery } from "../github/ci.js";
+import { ciPollEvery } from "../codehost/ci.js";
 import { partRun, resolveRun, runPlace } from "./resolve-run.js";
 import { approveRoutes, reviewPart, placeKey, type PlacementInventory, type PlacementRoute } from "./placement.js";
 import { childItemId } from "./feature-ids.js";
 import { choice } from "./answered.js";
 import {
+	openPlanQuestions,
 	sharedPaths,
 	singleAfterPlanning,
 	PlanError,
@@ -603,7 +604,7 @@ export function approveFeature(
 
 export function runSingle(c: Change) {
 	const plan = c.item.featurePlan;
-	if (plan && c.item.filedTurn === c.key && plan.questions.some(q => !q.answer))
+	if (plan && c.item.filedTurn === c.key && openPlanQuestions(plan).length)
 		throw new PlanError("Answer and save the plan’s questions before approving one implementer.");
 	if (crossRepo(c.item)) {
 		c.say(

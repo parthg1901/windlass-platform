@@ -22,7 +22,7 @@ import type { RawAccess } from "rivetkit/db";
 import { clientError, serviceParams } from "../auth.js";
 import { config, linearConfig, ownEngineEndpoint } from "../config.js";
 import type { GithubId, LinearMapping, LinearStatus, LinearTeam, LinearTeamList } from "../contract.js";
-import type { LinearFiled, LinearFiling } from "../factory/intake.js";
+import type { TrackerFiled, LinearFiling } from "../factory/intake.js";
 import { githubApp } from "../github/app.js";
 import { githubId, isGithubId } from "../github/ids.js";
 import { GithubProblem, resolveRepository, type StoredConnection } from "../github/repos.js";
@@ -658,7 +658,7 @@ function issueUrl(reported: string, urlKey: string, identifier: string): string 
  * What one verified delivery comes to for the owner. The delivery names the issue and what changed; the issue itself is read from
  * Linear now with the connection's token, and the connection and the mapping are read from here: the route's claim is only where
  * the delivery was sent. Nothing is filed unless the workspace is still this connection's, the team still mapped, and what
- * qualified the issue still holds (an interrupted filing is finished anyway, in `fileLinearIssue`).
+ * qualified the issue still holds (an interrupted filing is finished anyway, in `fileTrackerIssue`).
  *
  * Answers `duplicate` for a delivery id that was already decided. Throws when it must be redelivered: Linear or GitHub
  * unreachable. Final decisions are kept so a redelivery after a lost reply finds them. A daily-cap refusal leaves the delivery open. A filing
@@ -667,7 +667,7 @@ function issueUrl(reported: string, urlKey: string, identifier: string): string 
 export async function fileLinearDelivery(
 	c: LinearCtx,
 	delivery: LinearDelivery,
-	file: (filing: LinearFiling) => Promise<LinearFiled>,
+	file: (filing: LinearFiling) => Promise<TrackerFiled>,
 ): Promise<LinearDispatch> {
 	const app = linearApp();
 	const stored = await readConnection(c.db);
@@ -703,7 +703,7 @@ export async function fileLinearDelivery(
 }
 
 /** What is kept and logged of a decision: its kind and its item or reason, nothing of the issue's text. */
-function summary(result: LinearFiled): { kind: string; itemId?: string; why?: string } {
+function summary(result: TrackerFiled): { kind: string; itemId?: string; why?: string } {
 	if (result.kind === "filed" || result.kind === "exists") return { kind: result.kind, itemId: result.itemId };
 	return { kind: result.kind, why: result.kind === "ignored" ? result.why : result.reason };
 }
@@ -716,8 +716,8 @@ async function decide(
 	reasons: Array<"label" | "assignment">,
 	teamId: string,
 	repositoryId: GithubId,
-	file: (filing: LinearFiling) => Promise<LinearFiled>,
-): Promise<LinearFiled> {
+	file: (filing: LinearFiling) => Promise<TrackerFiled>,
+): Promise<TrackerFiled> {
 	let issue;
 	try {
 		const { token } = await accessToken(c, app);

@@ -22,6 +22,7 @@ import {
 	pushWithToken,
 	readWork,
 } from "./git.js";
+import { withGitCredential } from "../codehost/credential.js";
 import { refHead } from "./feature.js";
 import { outgoingCredentials, redact } from "./redact.js";
 import {
@@ -49,6 +50,8 @@ export function sessionRepository(
 	repo: StoredRepository,
 	need: "read" | "write",
 ) {
+	if (repo.provider === "gitlab")
+		throw new GithubProblem("github_failed", "This operation requires a GitHub repository.");
 	return repo.closesIssue
 		? resolveBoundRepository(app, connection, repo.id, repo.installationId, need)
 		: resolveRepository(app, connection, repo.id, need);
@@ -72,19 +75,6 @@ function pullBody(
 }
 
 const fullName = (repository: { owner: string; name: string }) => `${repository.owner}/${repository.name}`;
-
-/** `windlass/<the title in a few words>-<the end of the session's id>`: named for the session, and unlike any other session's. */
-export function branchFor(title: string, sessionId: string): string {
-	const words = title
-		.normalize("NFKD")
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "")
-		.slice(0, 40)
-		.replace(/-+$/g, "");
-	const end = sessionId.replace(/[^A-Za-z0-9]/g, "").slice(-6);
-	return `windlass/${words === "" ? "agent" : words}-${end}`;
-}
 
 /** The address GitHub credits a user's commits by, when the user keeps their own private. */
 export function authorOf(connection: StoredConnection): { name: string; email: string } {
@@ -209,10 +199,10 @@ export async function cloneRepository(
 	try {
 		const owner = uid && sandbox.profile.startsWith("docker-") ? mirrorOwner(uid, String(repository.id)) : undefined;
 		const attempt = (reference: boolean, repair = false) =>
-			app.withToken(
-				resolved.installation.id,
-				{ repositoryId: repository.id, permissions: { metadata: "read", contents: "read" } },
-				async token => {
+			withGitCredential(
+				{ gitCredential: access => app.gitCredential(resolved.installation.id, repository.id, access) },
+				"read",
+				async ({ token, username }) => {
 					const clone = await cloneWithToken(sandbox, token, {
 						url: app.cloneUrl(resolved.repository.owner, resolved.repository.name),
 						branch: repository.branch,
@@ -221,6 +211,7 @@ export async function cloneRepository(
 						signal,
 						pinnedBase,
 						mirror: owner ? { owner, reference, repair } : undefined,
+						username,
 					});
 					return confirmBase(
 						app,
@@ -231,7 +222,6 @@ export async function cloneRepository(
 						work === undefined ? pinnedBase : undefined,
 					);
 				},
-				{ revokeAfter: true },
 			);
 		outcome = await attempt(!!owner && (await hasMirror(sandbox, owner, signal)));
 		if (outcome.failure === "mirror" && !signal?.aborted) outcome = await attempt(false, true);
@@ -485,10 +475,48 @@ async function commitAndPush(
 			throw problemOf(error, account, name);
 		}
 	}
-	const baseSha = repository.baseSha;
+	return scannedPush(
+		input,
+		message,
+		{
+			author: authorOf(connection),
+			push: attempt =>
+				withGitCredential(
+					{ gitCredential: access => app.gitCredential(installation.id, repository.id, access) },
+					"write",
+					({ token, username }) =>
+						pushWithToken(sandbox, token, {
+							attempt,
+							url: app.cloneUrl(resolved.repository.owner, resolved.repository.name),
+							branch,
+							lease: input.lease ?? null,
+							username,
+						}),
+				),
+			problem: error => problemOf(error, account, name),
+			failure: outcome => gitProblem(outcome, "push", name, account, branch),
+		},
+		expectedHead,
+	);
+}
+
+/** Commit, scan and transfer the identical outgoing object range for either provider. */
+export async function scannedPush(
+	input: Omit<PushInput, "app" | "connection">,
+	message: string,
+	remote: {
+		author: { name: string; email: string };
+		push(attempt: Parameters<typeof pushWithToken>[2]["attempt"]): Promise<GitOutcome>;
+		problem(error: unknown): Error;
+		failure(outcome: GitOutcome): Error;
+	},
+	expectedHead?: string,
+): Promise<Pushed> {
+	const { sandbox, repository, branch } = input;
+	const baseSha = repository.baseSha ?? null;
 	const committed = await commitWork(
 		sandbox,
-		{ sessionId: input.sessionId, branch, baseSha, pushed: input.pushed, author: authorOf(connection) },
+		{ sessionId: input.sessionId, branch, baseSha, pushed: input.pushed, author: remote.author },
 		message,
 	);
 	const unsafe = committed.marks.get("unsafe");
@@ -546,22 +574,11 @@ async function commitAndPush(
 
 	let pushed: GitOutcome;
 	try {
-		pushed = await app.withToken(
-			installation.id,
-			{ repositoryId: repository.id, permissions: { metadata: "read", contents: "write" } },
-			token =>
-				pushWithToken(sandbox, token, {
-					attempt: committed.attempt,
-					url: app.cloneUrl(resolved.repository.owner, resolved.repository.name),
-					branch,
-					lease: input.lease ?? null,
-				}),
-			{ revokeAfter: true },
-		);
+		pushed = await remote.push(committed.attempt);
 	} catch (error) {
 		// No token was to be had, so the push never ran: what the commit step left for it goes.
 		await discardHandover(sandbox, committed.attempt);
-		throw problemOf(error, account, name);
+		throw remote.problem(error);
 	}
 	if (!pushed.ok) {
 		if (pushed.marks.has("changedrange"))
@@ -574,10 +591,10 @@ async function commitAndPush(
 		if (pushed.marks.has("stale")) {
 			throw new GithubProblem(
 				"github_failed",
-				`The branch ${branch} at GitHub has commits someone else pushed since the platform's last push, so the push was refused rather than replace them. Fetch them (the agent's fetch_base brings origin/${branch} too), merge them into the workspace, and push again.`,
+				`The branch ${branch} on the remote has commits someone else pushed since the platform's last push, so the push was refused rather than replace them. Fetch them (the agent's fetch_base brings origin/${branch} too), merge them into the workspace, and push again.`,
 			);
 		}
-		throw gitProblem(pushed, "push", name, account, branch);
+		throw remote.failure(pushed);
 	}
 	return {
 		pushed: true,
@@ -830,18 +847,18 @@ export async function fetchBase(
 	const account = resolved.installation.account.login;
 	let fetched: GitOutcome;
 	try {
-		fetched = await app.withToken(
-			resolved.installation.id,
-			{ repositoryId: repository.id, permissions: { metadata: "read", contents: "read" } },
-			async token => {
+		fetched = await withGitCredential(
+			{ gitCredential: access => app.gitCredential(resolved.installation.id, repository.id, access) },
+			"read",
+			async ({ token, username }) => {
 				const fetch = await fetchWithToken(sandbox, token, {
 					url: app.cloneUrl(resolved.repository.owner, resolved.repository.name),
 					base: repository.branch,
 					work,
+					username,
 				});
 				return confirmBase(app, token, repository, resolved.repository, fetch);
 			},
-			{ revokeAfter: true },
 		);
 	} catch (error) {
 		throw problemOf(error, account, name);

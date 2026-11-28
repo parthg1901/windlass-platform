@@ -39,9 +39,10 @@ A request flows web → `server/src/registry.ts` actors in `server/src/actors/` 
 machine place, over the runner protocol in `server/src/runner/` to `runner/src/`. The browser gets
 the gateway address and token from `/platform/connection` (`server/src/platform-info.ts`); actor
 traffic does not pass through the server's HTTP port. Scripts use the API-token routes in
-`server/src/api-routes.ts`; GitHub, Linear and billing webhooks arrive as HTTP and are forwarded to actors.
+`server/src/api-routes.ts`; GitHub, GitLab, Linear, Jira, Slack and billing webhooks arrive as HTTP and are forwarded to actors.
 
-Other `server/src` folders: `server/src/github/`, `server/src/linear/`, `server/src/billing/`,
+Other `server/src` folders: `server/src/github/`, `server/src/gitlab/`, `server/src/codehost/` (the code-host interface items use),
+`server/src/linear/`, `server/src/jira/`, `server/src/slack/`, `server/src/billing/`,
 `server/src/signin/` (sealed ChatGPT and subscription sign-ins), `server/src/repo-setup/` (setup guides),
 `server/src/contract/` (shared wire types), `server/src/machines/` and `server/src/bucket/` (object storage).
 [Server guide](server/AGENTS.md) maps the loose files directly under `server/src`.
@@ -105,7 +106,9 @@ The area links lead to copyable commands. For other checks, look up the changed 
 | [Actors](server/src/actors/AGENTS.md) | `scripts/timeline-write-check.ts` for session writes, `scripts/idempotency-check.ts` for retries, `scripts/signin-check.ts` for credentials | The sign-in and `scripts/connection-check.ts` checks use `WLP_CHECK_SECTIONS`, e.g. `seal` and `issuing` respectively. |
 | [Sandbox](server/src/sandbox/AGENTS.md) | `scripts/model-relay-route-check.ts` for leases, `scripts/e2b-provider-test.ts` for the provider, `scripts/sandbox-check.ts` for Docker | On the Docker check use `WLP_CHECK_SECTIONS=profiles`. The Codex image check `scripts/codex-sandbox-escape-check.mjs` takes `WLP_ESCAPE_ONLY` (case-name substring). |
 | [GitHub](server/src/github/AGENTS.md) | `scripts/github-check.ts` for the App and publishing, `scripts/webhook-check.ts` for delivery to actors | Use `WLP_CHECK_SECTIONS=connect` for the former and `WEBHOOK_ONLY='G3 feature'` for the latter. |
+| [GitLab](server/src/gitlab/AGENTS.md) | `scripts/gitlab-protocol-check.ts` for the API adapter, `scripts/gitlab-check.ts` for connection and filing | The filing check takes section names as arguments, e.g. `connect`. |
 | [Linear](server/src/linear/AGENTS.md) | `scripts/linear-protocol-check.ts` for HTTP and OAuth, `scripts/linear-check.ts` for filing | Only the filing check takes `LINEAR_ONLY`, e.g. `LINEAR_ONLY=OAuth`. |
+| Jira and Slack | `scripts/jira-check.ts`, `scripts/slack-check.ts`, `server/src/slack/blocks.test.ts` (under `tsx --test`) | Each check runs as one case. |
 | [Sign-in](server/src/signin/AGENTS.md) | `scripts/signin-check.ts` for sealing and refresh | `WLP_CHECK_SECTIONS=seal`. |
 | [E2B](server/src/sandbox/e2b/AGENTS.md) | `scripts/e2b-provider-test.ts` against the fake client | See the guide for its section names. |
 | [Billing](server/src/billing/AGENTS.md) | `scripts/billing-check.ts` against the payment fake | `WLP_CHECK_SECTIONS=exempt` (exact match here). |

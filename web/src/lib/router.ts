@@ -4,8 +4,10 @@
  * a session by its ID, a work item by its ID, the Factory page with its filters, and the public docs. A reload stays on
  * the same screen; `?mock=1` is carried from one address to the next.
  */
+import { readRepoAddress } from "../../../server/src/codehost/ref.js";
 import { githubId } from "../../../server/src/github/ids.js";
-import { type GithubId, type ItemSummary, isPlanProvider, type PlanProvider } from "@contract";
+import { SOURCE_IDS } from "../../../server/src/sources/types.js";
+import { type GithubId, type ItemSummary, isPlanProvider, type PlanProvider, type RepoAddress } from "@contract";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { routeLabel } from "./nav";
 
@@ -41,7 +43,7 @@ export type Route =
 	/** A work item: where it is, what it waits for, what it asks, its verdicts and its cost. */
 	| { name: "item"; id: string }
 	/** Every work item across repositories, by what its person must do: `repository` and `from` filter it (`?repository=`, `?from=`). */
-	| { name: "factory"; repository?: GithubId; from?: ItemSource }
+	| { name: "factory"; repository?: RepoAddress; from?: ItemSource }
 	/**
 	 * Approves the connect command's request in a terminal: `code` is the one the terminal shows (`?code=`), `plan`
 	 * the plan it connects (`?plan=`), or `kind: "machine"` a machine it pairs (`?kind=machine`).
@@ -53,7 +55,7 @@ export type Route =
 
 /** How a work item was filed, as the Factory page filters by it. */
 export type ItemSource = ItemSummary["source"];
-export const ITEM_SOURCES: readonly ItemSource[] = ["web", "api", "github", "linear"];
+export const ITEM_SOURCES: readonly ItemSource[] = ["web", "api", ...SOURCE_IDS];
 
 /** The views of a chosen repository beside its overview, each at its own address. */
 export const REPOSITORY_VIEWS = ["agents", "items", "pulls", "settings"] as const;
@@ -84,7 +86,7 @@ export function parseRoute(pathname: string, search = ""): Route {
 	if (path === "/") return { name: "home" };
 	if (path === "/factory") {
 		const query = new URLSearchParams(search);
-		const repository = githubId(query.get("repository") ?? "");
+		const repository = readRepoAddress(query.get("repository") ?? "");
 		const from = ITEM_SOURCES.find(source => source === query.get("from"));
 		return { name: "factory", ...(repository !== null ? { repository } : {}), ...(from ? { from } : {}) };
 	}
@@ -188,14 +190,16 @@ export function href(route: Route): string {
 
 const LAST_APP_PAGE = "wlp.lastAppPage";
 
+const navigationHash = () =>
+	/^#(?:(?:github|linear|jira|slack)(?:-error)?|slack-link)=/.test(location.hash) ? "" : location.hash;
+
 export function rememberAppPage(): void {
 	const page = parseRoute(location.pathname).name;
 	if (page === "docs" || page === "notfound") return;
 	try {
 		// Login and integration callbacks can carry one-time credentials.
 		const search = page === "signin" ? new URL(href({ name: "signin" }), location.origin).search : location.search;
-		const hash = /^#(?:github|linear)(?:-error)?=/.test(location.hash) ? "" : location.hash;
-		sessionStorage.setItem(LAST_APP_PAGE, location.pathname + search + hash);
+		sessionStorage.setItem(LAST_APP_PAGE, location.pathname + search + navigationHash());
 	} catch {
 		// Storage may be disabled.
 	}
@@ -280,7 +284,7 @@ function entryState(): Record<string, unknown> {
  */
 export function navigate(route: Route, options: { replace?: boolean } = {}): void {
 	const target = href(route);
-	const current = here();
+	const current = location.pathname + location.search + navigationHash();
 	if (target === current) return;
 	if (route.name === "docs") rememberAppPage();
 	if (options.replace) history.replaceState({ from: entryState().from }, "", target);

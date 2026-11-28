@@ -228,6 +228,14 @@
  *   WLP_GITHUB_URL             GitHub itself, where users authorize and git clones from (default
  *                              https://github.com)
  *
+ * GitLab (read by `gitlabConfig` below). Requires the instance URL and both OAuth credentials:
+ *   WLP_GITLAB_BASE_URL        GitLab instance, including its path prefix for a self-managed deployment
+ *   WLP_GITLAB_CLIENT_ID       OAuth application ID
+ *   WLP_GITLAB_CLIENT_SECRET   OAuth application secret; not included in public settings
+ *   WLP_GITLAB_REDIRECT_URL    registered callback URL (default <WLP_PUBLIC_URL>/gitlab/callback,
+ *                              or the server's localhost URL when WLP_PUBLIC_URL is unset)
+ *   Project hooks are registered at <WLP_PUBLIC_URL>/gitlab/webhook, keeping any path prefix.
+ *
  * Linear (read by `linearConfig` below). A Linear OAuth app of this deployment's own lets the owner connect
  * a Linear workspace, map a team to a repository, and have an issue that gains a Windlass filing label or
  * is assigned to the app's user filed as a work item.
@@ -243,6 +251,11 @@
  *                              <WLP_PUBLIC_URL, or http://localhost:<WLP_HTTP_PORT>>/linear/callback)
  *   WLP_LINEAR_API_URL         Linear's API (default https://api.linear.app); the checks point it at a stand-in
  *   WLP_LINEAR_URL             Linear itself, where the owner authorizes (default https://linear.app)
+ *
+ * Slack (read by `slackConfig` only on the server). All three credentials are required:
+ *   WLP_SLACK_CLIENT_ID, WLP_SLACK_CLIENT_SECRET   workspace bot OAuth v2 client
+ *   WLP_SLACK_SIGNING_SECRET   key for the exact event/command request bytes
+ *   WLP_SLACK_URL              Slack origin (the checks point it at a local stand-in)
  *
  * Machines of the users' own (Plans/2026-11-19 "bring your own computer"). A user pairs a Linux
  * machine with Docker, and the runner on it dials out to the platform and runs the sandboxes of the
@@ -644,6 +657,48 @@ export function githubPrivateKey(env: NodeJS.ProcessEnv = process.env): string |
 	return decoded.includes("-----BEGIN") ? `${decoded.trim()}\n` : raw;
 }
 
+export interface GitlabConfig {
+	app: { clientId: string; baseUrl: string; redirectUrl: string; webhookUrl: string } | null;
+	missing: string[];
+}
+
+/** One OAuth application and instance per deployment. Plain HTTP is only for loopback stand-ins. */
+export function gitlabConfig(env: NodeJS.ProcessEnv = process.env): GitlabConfig {
+	const required = ["WLP_GITLAB_BASE_URL", "WLP_GITLAB_CLIENT_ID", "WLP_GITLAB_CLIENT_SECRET"];
+	const missing = required.filter(key => !env[key]?.trim());
+	if (missing.length) return { app: null, missing: missing.length === required.length ? [] : missing };
+	const clientId = env.WLP_GITLAB_CLIENT_ID!.trim();
+	if (!/^[A-Za-z0-9._-]{1,128}$/.test(clientId)) throw new Error("WLP_GITLAB_CLIENT_ID is not a client id");
+	const address = (key: string, fallback: string, raw = env[key]?.trim() || fallback) => {
+		const url = URL.parse(raw);
+		if (
+			!url ||
+			url.username ||
+			url.password ||
+			/[?#]/.test(url.href) ||
+			(url.protocol !== "https:" &&
+				!(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
+		) {
+			throw new Error(`${key} must be an HTTPS or loopback URL with no credentials, query or fragment`);
+		}
+		return url.href;
+	};
+	const publicUrl = (env.WLP_PUBLIC_URL?.trim() || `http://localhost:${config.httpPort}`).replace(/\/+$/, "");
+	return {
+		app: {
+			clientId,
+			baseUrl: address("WLP_GITLAB_BASE_URL", "").replace(/\/+$/, ""),
+			redirectUrl: address("WLP_GITLAB_REDIRECT_URL", `${publicUrl}/gitlab/callback`),
+			webhookUrl: address("WLP_PUBLIC_URL", "", `${publicUrl}/gitlab/webhook`),
+		},
+		missing: [],
+	};
+}
+
+export function gitlabClientSecret(env: NodeJS.ProcessEnv = process.env): string | null {
+	return env.WLP_GITLAB_CLIENT_SECRET?.trim() || null;
+}
+
 /** What `linearConfig` found: the Linear app's public settings when all of it is configured. */
 export interface LinearConfig {
 	/** Null when the feature is off. Holds no secret: the client secret is read where it is used. */
@@ -709,6 +764,62 @@ export function linearConfig(env: NodeJS.ProcessEnv = process.env): LinearConfig
 export function linearClientSecret(env: NodeJS.ProcessEnv = process.env): string | null {
 	const secret = (env.WLP_LINEAR_CLIENT_SECRET ?? "").trim();
 	return secret === "" ? null : secret;
+}
+
+/** Keep the client secret out of enumerable configuration. */
+export const jiraClientSecret = () => process.env.WLP_JIRA_CLIENT_SECRET?.trim();
+export function jiraConfig(env: NodeJS.ProcessEnv = process.env) {
+	const required = ["WLP_JIRA_CLIENT_ID", "WLP_JIRA_CLIENT_SECRET"];
+	const missing = required.filter(name => !env[name]?.trim());
+	if (missing.length) return { app: null, missing: missing.length === required.length ? [] : missing };
+	const clientId = env.WLP_JIRA_CLIENT_ID!.trim();
+	if (!/^[A-Za-z0-9._-]{1,100}$/.test(clientId)) throw new Error("WLP_JIRA_CLIENT_ID is not a client id");
+	const address = (name: string, fallback: string) => {
+		const url = URL.parse(env[name]?.trim() || fallback);
+		const local = url && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+		if (
+			!url ||
+			!(url.protocol === "https:" || (local && url.protocol === "http:")) ||
+			url.username ||
+			url.password ||
+			url.search ||
+			url.hash
+		) {
+			throw new Error(`${name} must be an HTTPS URL (or HTTP on loopback) without credentials, query or fragment`);
+		}
+		return url.href;
+	};
+	return {
+		app: {
+			clientId,
+			authUrl: address("WLP_JIRA_AUTH_URL", "https://auth.atlassian.com").replace(/\/+$/, ""),
+			apiUrl: address("WLP_JIRA_API_URL", "https://api.atlassian.com").replace(/\/+$/, ""),
+			redirectUrl: address(
+				"WLP_JIRA_REDIRECT_URL",
+				`${env.WLP_PUBLIC_URL?.trim().replace(/\/+$/, "") || `http://localhost:${config.httpPort}`}/jira/callback`,
+			),
+		},
+		missing: [],
+	};
+}
+
+export function slackConfig() {
+	const {
+		WLP_SLACK_CLIENT_ID: clientId,
+		WLP_SLACK_CLIENT_SECRET: clientSecret,
+		WLP_SLACK_SIGNING_SECRET: signingSecret,
+	} = process.env;
+	if (!clientId || !clientSecret || !signingSecret) return null;
+	const url = URL.parse(process.env.WLP_SLACK_URL || "https://slack.com");
+	if (
+		!url ||
+		url.username ||
+		url.password ||
+		!(url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK.has(url.hostname)))
+	)
+		throw new Error("WLP_SLACK_URL needs HTTPS or loopback HTTP.");
+	const publicUrl = process.env.WLP_PUBLIC_URL || `http://localhost:${config.httpPort}`;
+	return { clientId, url: url.origin, redirectUrl: `${publicUrl.replace(/\/+$/, "")}/slack/callback` };
 }
 
 /** A day: the longest a Rivet Cloud cluster issues a token for. */

@@ -1,5 +1,6 @@
 /** The user and agentSession actors' actions, events and snapshot shapes. */
 
+import type { SlackSettingsActions } from "./slack.js";
 import type {
 	ChatgptStatus,
 	ContinueSessionInput,
@@ -39,6 +40,8 @@ import type {
 	GithubRepositoryList,
 	GithubStatus,
 	LinearStatus,
+	JiraStatus,
+	JiraProjectList,
 	LinearTeamList,
 	PublishMessage,
 	PublishResult,
@@ -76,7 +79,7 @@ import type {
 import type { LiveDelta, NetworkBlockedItem, TimelineItem } from "./timeline.js";
 import type { BillingPeriod, BillingView, UsageNumbers, UsageView } from "./usage.js";
 
-export interface UserActions {
+export interface UserActions extends SlackSettingsActions {
 	signOutEverywhere(options?: { revokeApiTokens: boolean }): Promise<void>;
 	me(): Promise<UserProfile>;
 	linkedLogins(): Promise<LinkedLogin[]>;
@@ -118,6 +121,15 @@ export interface UserActions {
 	removeLinearMapping(teamId: string): Promise<LinearTeamList>;
 	/** Forgets the Linear connection and every mapping; nothing is filed from Linear after it. Items already filed stay. */
 	disconnectLinear(): Promise<LinearStatus>;
+	/** Jira Cloud 3LO; completion lists authorized sites without exposing the grant. */
+	jira(): Promise<JiraStatus>;
+	jiraConnect(input: { origin: string }): Promise<{ url: string }>;
+	jiraComplete(ticket: string): Promise<JiraStatus>;
+	jiraSelectSite(siteId: string): Promise<JiraStatus>;
+	jiraProjects(): Promise<JiraProjectList>;
+	saveJiraMapping(input: { siteId: string; projectId: string; repositoryId: GithubId }): Promise<JiraProjectList>;
+	removeJiraMapping(input: { siteId: string; projectId: string }): Promise<JiraProjectList>;
+	disconnectJira(): Promise<JiraStatus>;
 	/** Search owner/name, newest push first. Use fresh after changing an installation's repository access. */
 	githubRepositories(query: string, fresh?: boolean): Promise<GithubRepositoryList>;
 	githubBranches(repositoryId: GithubId): Promise<GithubBranchList>;
@@ -346,6 +358,7 @@ export interface UserActions {
 	 * cannot be taken. A machine must be paired to this user and have an available profile.
 	 */
 	createItem(input: CreateItemInput): Promise<ItemSummary>;
+	mergeGitlabItem(itemId: string, reviewedHead: string): Promise<ItemView>;
 	/** Throws a UserError with code `item_not_found`, or `item_conflict` when the item's state does not allow the action (it says why). */
 	actOnItem(input: { id: string; action: ItemAction }): Promise<ItemView>;
 	/** The factory's limits for this user. */

@@ -21,6 +21,7 @@ import "./styles/feed.css";
 import "./styles/landing.css";
 import "./styles/docs.css";
 import "./styles/settings.css";
+import "./styles/integrations.css";
 import "./styles/connections.css";
 import { QUESTION_TIMEOUT_MS } from "@contract";
 import { StrictMode } from "react";
@@ -101,6 +102,7 @@ async function createPlatformClient(): Promise<PlatformClient> {
 		// `__wlpMock.mockNextGithub("list" | "connect" | "denied" | "protected" | "gone")` (GitHub refuses),
 		// `__wlpMock.mockNextServers("list" | "approve" | "forget" | "slow")` (the panel's MCP servers),
 		// `__wlpMock.mockUsage("plenty" | "low" | "used" | "full")` (the day's sandbox time and the cap on sandboxes).
+		// `__wlpMock.mockIntegrations("connected" | "gitlab-reconnect")` (every Settings integration connected and mapped).
 		(window as unknown as { __wlpMock: unknown }).__wlpMock = client;
 		return client;
 	}

@@ -33,6 +33,7 @@ import { noneLine, RECOMMENDATION_WORD, SecondReview, shownReview } from "../com
 import { plural } from "../lib/format";
 import { linkProps } from "../lib/router";
 import { inSecondReview } from "../lib/items";
+import { hostWords } from "../lib/host";
 import { ReviewWord, VerdictWord } from "../components/ItemRow";
 
 // ---- what it says -------------------------------------------------------------------------------
@@ -163,7 +164,8 @@ export function checksSummary(view: ItemView): ChecksSummary {
 	if (!blockers && view.review?.recommendation === "changes_requested")
 		open.push({ count: 1, words: "changes requested in code review" });
 	add(questions(current).length, "question from the reviewer", "questions from the reviewer");
-	add(openFeedback(view).length, "comment on GitHub", "comments on GitHub");
+	const { name } = hostWords(view.repository.provider);
+	add(openFeedback(view).length, `comment on ${name}`, `comments on ${name}`);
 	return { open, ready: open.length === 0 && view.state === "review" && verdict?.result === "pass", reviewing };
 }
 
@@ -501,9 +503,10 @@ function Feedback({ view, when }: { view: ItemView; when(at: number): ReactNode 
 	const entries = openFeedback(view);
 	const states = [...new Set(entries.map(one => one.state))];
 	const settled = batches.filter(batch => !OPEN.has(batch.state)).length;
+	const { name } = hostWords(view.repository.provider);
 	return (
 		<div>
-			<dt>GitHub</dt>
+			<dt>{name}</dt>
 			<dd>
 				<p className="checks-head">
 					{entries.length > 0 ? (
@@ -538,9 +541,9 @@ function Feedback({ view, when }: { view: ItemView; when(at: number): ReactNode 
 											href={url}
 											target="_blank"
 											rel="noreferrer noopener"
-											aria-label={`Open @${entry.author}'s ${KIND_WORD[entry.kind].toLowerCase()} on GitHub`}
+											aria-label={`Open @${entry.author}'s ${KIND_WORD[entry.kind].toLowerCase()} on ${name}`}
 										>
-											On GitHub
+											On {name}
 											<ExternalIcon size={10} />
 										</a>
 									) : null}
@@ -640,6 +643,7 @@ export function ItemChecks({
 	const before = view.verdicts.slice(0, -1).reverse();
 	const summary = checksSummary(view);
 	const check = view.verifiedCheck;
+	const host = hostWords(view.repository.provider);
 	const checkLabel = check?.conclusion
 		? { success: "Success", action_required: "Action required", failure: "Failure", cancelled: "Cancelled" }[
 				check.conclusion
@@ -710,8 +714,8 @@ export function ItemChecks({
 						<dd>
 							<p className={`checks-head ${verdict.mergeable === false ? "tone-warn" : "tone-dim"}`}>
 								{verdict.mergeable === false
-									? "GitHub says the pull request conflicts with its base."
-									: "GitHub had not said whether it can be merged."}
+									? `${host.name} says the ${host.noun} conflicts with its base.`
+									: `${host.name} had not said whether it can be merged.`}
 							</p>
 						</dd>
 					</div>
@@ -724,7 +728,7 @@ export function ItemChecks({
 						{" "}
 						{check.state === "not_posted"
 							? check.said
-							: `On GitHub as windlass/verified: ${checkLabel} at ${check.sha.slice(0, 7)}.${check.conclusion === "action_required" ? " " + check.said + "." : ""}`}
+							: `On ${host.name} as windlass/verified: ${checkLabel} at ${check.sha.slice(0, 7)}.${check.conclusion === "action_required" ? " " + check.said + "." : ""}`}
 					</>
 				) : null}
 			</p>

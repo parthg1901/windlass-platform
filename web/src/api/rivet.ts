@@ -39,6 +39,7 @@ import {
 	type SessionSummary,
 	type TimelineItem,
 	type UsageNumbers,
+	type GitlabActions,
 	type UserActions,
 	type UserEvents,
 } from "@contract";
@@ -67,7 +68,7 @@ type Handle = ActorHandle<Untyped>;
 type Conn = ActorConn<Untyped>;
 
 /** The actor names, as the server's registry is expected to register them. ASSUMPTION 1. */
-const ACTOR = { user: "user", agentSession: "agentSession" } as const;
+const ACTOR = { user: "user", userGitlab: "userGitlab", agentSession: "agentSession" } as const;
 
 /**
  * How long an action may take. RivetKit retries an endpoint that does not answer for as long as it
@@ -121,8 +122,13 @@ const READS = new Set([
 	"costRates",
 	"finishedItems",
 	"apiTokens",
+	"gitlab",
+	"gitlabProjects",
+	"slack",
 	"linear",
 	"linearTeams",
+	"jira",
+	"jiraProjects",
 	"snapshot",
 	"changes",
 	"diff",
@@ -442,6 +448,11 @@ export function createRivetClient(
 
 	function userApi(auth: AuthResult): UserApi {
 		const handle = userHandle(auth);
+		const gitlabHandle = lazy(async () =>
+			(await connect()).getOrCreate<Untyped>(ACTOR.userGitlab, [auth.profile.uid], { params: { token: auth.token } }),
+		);
+		const gitlab = <K extends keyof GitlabActions>(name: K, ...args: Parameters<GitlabActions[K]>) =>
+			call<GitlabActions, K>(gitlabHandle(), name, ...(args as never));
 		const act = <K extends keyof UserActions & string>(name: K, ...args: Parameters<UserActions[K]>) =>
 			call<UserActions, K>(handle(), name, ...(args as never));
 		return {
@@ -457,6 +468,12 @@ export function createRivetClient(
 			continueSession: input => act("continueSession", input),
 			renameSession: (id, title) => act("renameSession", id, title),
 			deleteSession: id => act("deleteSession", id),
+			gitlab: () => gitlab("gitlab"),
+			gitlabConnect: input => gitlab("gitlabConnect", input),
+			gitlabComplete: ticket => gitlab("gitlabComplete", ticket),
+			gitlabProjects: query => gitlab("gitlabProjects", query),
+			gitlabPickProject: id => gitlab("gitlabPickProject", id),
+			gitlabDisconnect: () => gitlab("gitlabDisconnect"),
 			github: () => act("github"),
 			githubConnect: (origin, install) => act("githubConnect", { origin, install }),
 			githubComplete: ticket => act("githubComplete", ticket),
@@ -531,10 +548,29 @@ export function createRivetClient(
 			item: id => act("item", id),
 			itemAttachmentLinks: itemId => act("itemAttachmentLinks", itemId),
 			createItem: input => act("createItem", input),
+			mergeGitlabItem: (id, head) => act("mergeGitlabItem", id, head),
 			actOnItem: (id, action) => act("actOnItem", { id, action }),
 			factoryLimits: () => act("factoryLimits"),
 			costRates: () => act("costRates"),
 			finishedItems: days => act("finishedItems", days),
+			jira: () => act("jira"),
+			jiraConnect: input => act("jiraConnect", input),
+			jiraComplete: ticket => act("jiraComplete", ticket),
+			jiraSelectSite: siteId => act("jiraSelectSite", siteId),
+			jiraProjects: () => act("jiraProjects"),
+			saveJiraMapping: input => act("saveJiraMapping", input),
+			removeJiraMapping: input => act("removeJiraMapping", input),
+			disconnectJira: () => act("disconnectJira"),
+			slack: () => act("slack"),
+			slackChannels: () => act("slackChannels"),
+			slackConnect: input => act("slackConnect", input),
+			slackComplete: ticket => act("slackComplete", ticket),
+			saveSlackMapping: input => act("saveSlackMapping", input),
+			removeSlackMapping: channelId => act("removeSlackMapping", channelId),
+			setSlackDetails: input => act("setSlackDetails", input),
+			disconnectSlack: () => act("disconnectSlack"),
+			linkSlack: ticket => act("linkSlack", ticket),
+			unlinkSlack: teamId => act("unlinkSlack", teamId),
 			linear: () => act("linear"),
 			linearConnect: input => act("linearConnect", input),
 			linearComplete: ticket => act("linearComplete", ticket),

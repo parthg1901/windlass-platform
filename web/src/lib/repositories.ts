@@ -16,10 +16,12 @@ import {
 	type ModelList,
 	type PlatformInfo,
 	type PullRequestInfo,
+	type RepoAddress,
 	type SandboxProfileId,
 	type SessionRepository,
 	type SessionSummary,
 } from "@contract";
+import { keyOf } from "../../../server/src/codehost/ref.js";
 
 // ---- the user's own agents, and the sessions of their work items -------------------------------------
 
@@ -73,7 +75,7 @@ export function workingWords(
 
 /** The agents on one repository of the user's GitHub connection, or those on none. */
 export interface SessionGroup {
-	/** "github:<GitHub's id>", or "none" for the agents that are not on a repository of the connection. */
+	/** The repository's key (`keyOf`): "github:<id>", "gitlab:<id>", or "none" for the agents that are not on a repository of the connection. */
 	key: string;
 	/** The repository as the group's newest session has it: a rename shows once one is launched after it. Null for the group "none". */
 	repository: SessionRepository | null;
@@ -105,7 +107,7 @@ export function groupSessions(sessions: readonly SessionSummary[]): SessionGroup
 	const namedAt = new Map<string, number>();
 	for (const session of [...sessions].sort(byUse)) {
 		const repository = session.repository ?? null;
-		const key = repository ? `github:${repository.id}` : NO_REPOSITORY;
+		const key = repository ? keyOf(repository) : NO_REPOSITORY;
 		const ofItem = session.item !== undefined;
 		let group = groups.get(key);
 		if (!group) {
@@ -168,7 +170,7 @@ export const repositoryName = (repository: Pick<SessionRepository, "owner" | "na
 
 /** What a list of work items is kept to: one repository, one way of filing (the Factory's filters). */
 export interface FeedFilters {
-	repository?: GithubId;
+	repository?: RepoAddress;
 	from?: ItemSummary["source"];
 }
 
@@ -196,8 +198,8 @@ export function feedCounts(
 }
 
 /** The repositories that have work items, by name, with how many each has: from the feed's counts, so one whose items have all ended long ago is among them. */
-export function feedRepositories(feed: ItemFeed | null): Array<{ id: GithubId; name: string; items: number }> {
-	const found = new Map<string, { id: GithubId; name: string; items: number }>();
+export function feedRepositories(feed: ItemFeed | null): Array<{ id: RepoAddress; name: string; items: number }> {
+	const found = new Map<string, { id: RepoAddress; name: string; items: number }>();
 	for (const row of feed?.counts.byRepository ?? []) {
 		const key = String(row.repository);
 		const held = found.get(key) ?? { id: row.repository, name: `${row.owner}/${row.name}`, items: 0 };

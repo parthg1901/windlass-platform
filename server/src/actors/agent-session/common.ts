@@ -24,6 +24,9 @@ export class PlanWaitError extends Error {
 /** A confirmed checkout or policy failure. Transport and provider failures use the interruption budget. */
 export class ReviewRefused extends TurnProblem {}
 
+/** The code host would not give the sandbox a scoped Git credential (`GitCredentialRefused`): the owner has to act. */
+export class GitAccessRefused extends TurnProblem {}
+
 export function tail(text: string, lines = 6, chars = 800): string {
 	const kept = text
 		.split("\n")
@@ -64,7 +67,7 @@ export function sandboxChanged(c: Ctx): void {
 
 /** The user's GitHub connection as their actor has it now: asked each time, so a connection that was removed stops working at once. */
 export function githubConnection(c: Ctx, meta: SessionMeta): Promise<StoredConnection | null> {
-	return userActor(c, meta.uid).internalGithubConnection();
+	return meta.repo?.provider === "gitlab" ? Promise.resolve(null) : userActor(c, meta.uid).internalGithubConnection();
 }
 
 export function itemPrompt(row: InboxRow): string {

@@ -1,12 +1,12 @@
 ## What a work item is
 
-A work item is a task on one of your GitHub repositories that an agent carries through on its own. You write what you want done. An agent works on it in a sandbox, runs your checks, pushes a branch, waits for CI and hands it to you as a pull request. When it needs a decision from you, it waits under **Needs you**. You merge by default. A repository can [auto-merge eligible single items](#automatic-approvals-and-merges).
+A work item is a task on a connected repository that an agent carries through on its own. You write what you want done. An agent works on it in a sandbox, runs your checks, pushes a branch, waits for CI and hands it to you as a pull request on GitHub or a merge request on GitLab. When it needs a decision from you, it waits under **Needs you**. You merge by default. A GitHub repository can [auto-merge eligible single items](#automatic-approvals-and-merges).
 
-Work items need a repository from your GitHub connection. They run with Windlass unless you choose another agent on one of your machines: see [Choose the agent](#choose-the-agent). The Factory is offered where the platform turns work items on. Then **Agents · Factory** appears in the bar.
+GitHub is the default. For a connected GitLab project, file a single item [from a GitLab issue](#from-a-gitlab-issue). They run with Windlass unless you choose another agent on one of your machines: see [Choose the agent](#choose-the-agent). The Factory is offered where the platform turns work items on. Then **Agents · Factory** appears in the bar.
 
 The Factory has the same repository rail as **Agents**, with its search, owners and foot. There, a repository's ring counts its work items in progress and the amber count what needs you; choosing one shows only its work items. A repository with no work item is dimmer; choose it to file one on it.
 
-Every item resolves its place and agent the same way, whether filed from the composer, the API, GitHub or Linear: the item's own choice, then the repository's override, then your defaults ([Where each choice lives](/docs/settings#where-each-choice-lives)), then the deployment's. The composer shows the result in one line, with where it comes from, and **Change for this item**. If the result can't run (the machine is offline, the payer can't be used), the item waits and asks you instead of running elsewhere. Plan first plans on Windlass; its parts start from the same resolved place and agent unless the planner chose another.
+Every item resolves its place and agent the same way, whether filed from the composer, the API, GitHub, GitLab, Linear, Jira or Slack: the item's own choice, then the repository's override, then your defaults ([Where each choice lives](/docs/settings#where-each-choice-lives)), then the deployment's. The composer shows the result in one line, with where it comes from, and **Change for this item**. If the result can't run (the machine is offline, the payer can't be used), the item waits and asks you instead of running elsewhere. Plan first plans on Windlass; its parts start from the same resolved place and agent unless the planner chose another.
 
 A work item runs in one of two ways:
 
@@ -98,6 +98,16 @@ The App comments on the issue to say it took the item, and links to it. It also 
 
 On GitHub, removing the label cancels a draft. Closing the issue cancels an item that has not reached review. Editing the issue later does not change the item: it keeps the text it was filed with.
 
+### From a GitLab issue
+
+After [connecting GitLab in Settings](/docs/settings#gitlab), use the connected account to add the `windlass` label to an open issue in the selected project, or write an issue note beginning with `/windlass`. Windlass re-reads the issue and any command note, then files a **Quick** item. It acknowledges the filing with a 👀 reaction on the issue for a label, or on the note for a command. Redelivering the event, or labelling the issue again while its item is open, does not file another item. Once that item is done, failed or cancelled, the next label or command files a new one.
+
+Your own issue starts immediately; an issue someone else wrote starts as a draft. In both cases the issue and note are quoted as untrusted input.
+
+The item opens a merge request against the project’s default branch and polls GitLab for pipeline and job results. It counts the newest pipeline that ran its commit: a branch pipeline, the merge request’s own pipeline, or a merged-results pipeline built from it. Pipeline and merge request events also prompt it to check again. Once it hands over a passing result, review the MR and select **Merge…** on the item. Windlass rechecks the reviewed commit, target branch and pipeline before merging.
+
+GitLab supports single items only. Plan-first features, cross-repository work, integration workflows, Linear team mappings and the `windlass/verified` check remain GitHub-only.
+
 ### From a Linear issue
 
 Where the platform has a Linear OAuth client and signing secret, you can file a work item from a Linear issue.
@@ -111,7 +121,7 @@ Where the platform has a Linear OAuth client and signing secret, you can file a 
 
 `windlass-quick` (Linear does not allow a colon in a plain label name) selects **Quick**. The existing `windlass:quick` spelling also selects **Quick**. A plain `windlass` label selects **Plan first** by default. As on GitHub, a `bug` label selects **Quick** on a qualifying issue. An unrelated edit to an issue that already has the label or the assignment does not file anything. Each delivery from Linear is taken once, and one active issue files one item however many events qualify.
 
-**Placement and limits.** The item resolves its place and agent as any item does. It shares the daily limit with GitHub issues, drafts and filings in progress included, so a day's items from GitHub and Linear are counted together. If the daily limit is full, a later trigger or redelivery can file the issue once there is room.
+**Placement and limits.** The item resolves its place and agent as any item does. GitHub, Linear and Jira issues and Slack requests share one daily limit, including drafts and filings in progress. If the daily limit is full, a later trigger or redelivery can file the issue once there is room.
 
 **Trust.** Linear identifies the Windlass app as the connected user. Issues arrive as drafts with their authors' text quoted. Review and start the item in Windlass. Its page and list link to the Linear issue by its identifier, for example ENG-123.
 
@@ -120,6 +130,26 @@ Where the platform has a Linear OAuth client and signing secret, you can file a 
 Windlass attaches the pull request and comments when it opens, at handover, and when the item merges, fails or is cancelled. These comments include the PR link when available. At PR open or handover, Windlass moves the issue to **In Review** if the team has a Started state with that exact name and the move is forward. A merge moves the issue to a Completed state. Giving up or cancelling leaves the status for you to decide. Windlass preserves completed and canceled issues' statuses and only updates issues still in their mapped team. The item continues if Linear is unavailable. If you connected Linear before Windlass requested the `write` scope, reconnect to grant it.
 
 Removing a label, unassigning, editing or closing the Linear issue leaves the item as filed. To stop it, cancel it in Windlass. After the item ends, a new qualifying event on the active issue can file another item.
+
+### From a Jira issue
+
+Connect Jira Cloud and map a project to a writable GitHub repository in [Settings](/docs/settings#jira-cloud). If Jira is missing, ask the operator to enable work items and [configure the Jira app](https://github.com/WindlassAI/windlass-platform/blob/main/docs/configuration.md#jira-cloud).
+
+To try it, add `windlass` to an open issue or assign it to the account that connected Jira. Creating an issue with either also files a draft. Use `windlass-quick` for Quick mode. A qualifying Bug or issue labelled `bug` also uses Quick. Windlass quotes the issue text for you to review before starting the draft.
+
+Jira receives a comment linking to the draft, another when the PR opens, and a final outcome with the PR link when available. The issue keeps its Jira status. Only one item is active per site and issue, even after a project changes owners. A fresh trigger after it ends can file another.
+
+### From Slack
+
+In a [mapped channel](/docs/settings#slack), send `@Windlass Fix the setup guide` or `/windlass quick Fix the setup guide`. Put `quick` first to skip planning. The first time, follow the bot’s private link, confirm your Windlass account in Settings, then send the request again. You need write access to the mapped repository.
+
+The item uses your saved defaults and shares the daily limit with GitHub, Linear and Jira issues. Windlass posts item links in the mention’s thread when a plan or question needs you, a pull request opens, or work ends. For a slash command, follow the thread under the bot’s acknowledgement.
+
+In the thread, a plan has **Approve**, **Request changes** and **Open in Windlass**. **Request changes** asks what should change and sends your words with the request for a revised plan, as on the web. A question has one button for each choice that needs no more input. Only the Slack member linked to the item’s owner can press them. Others get a private note and nothing changes. Once a question is answered, in Slack or on the web, its message shows the answer and loses its buttons. A button from an older question is refused.
+
+A plan with open questions, or with parts that run an agent that works without asking, is approved in Windlass. Requests for secrets and questions that quote the agent link to Windlass. Windlass never posts the agent’s own words or check output to Slack.
+
+A mention in an item’s thread files nothing. If a question is open, its owner can reply with a choice’s label, such as `@Windlass Give up`. Anything else gets a private link to the item.
 
 ### From the API
 
@@ -555,7 +585,7 @@ After approval, a subtask that has not started yet can still change its agent, m
 
 ### The pull request
 
-When you approve a split plan, the platform opens a draft pull request from `windlass/feature-<id>` into the base branch. Each subtask's work lands on that branch. When the feature is handed over, the pull request is marked ready for review. Merging a feature stays yours.
+When you approve a split plan, the platform opens a draft pull request from `windlass/feature-<id>` into the base branch. Each subtask's work lands on that branch. When the feature is handed over, the pull request is marked ready for review. If GitHub refuses that step, the platform tries again after 5 minutes, 15 minutes and an hour, and logs GitHub's reason each time. If GitHub still refuses, the rest of the handover goes ahead and the item asks you to mark the pull request ready on GitHub yourself, or to try again. Once the pull request is no longer a draft, the question closes by itself. Merging a feature stays yours.
 
 By default, the factory watches CI on the current feature head as parts join. After the rerun and base check, a failure specific to the feature queues one fix part with the failing checks, their logs and the feature diff. The fix passes the local gate and joins through the same integration queue. Each new head supersedes the previous CI result. Handover waits until all parts have finished and CI passes on the current head. If the same failure comes back after a fix, the feature stops and asks you.
 
@@ -623,11 +653,11 @@ The Factory page lists your items by what you must do:
 
 A repository's **Work items** tab in **Agents** shows that repository's open items the same way, with its ended ones folded under **Show N ended items**. The **Work items** table on **Usage** shows the cost of your open items and your 25 newest ended ones in dollars (see [What an item cost](#what-an-item-cost)), and says how many older ended items the Factory page lists.
 
-Filter it with **repo** and **from**: filed from the web, the API, a GitHub issue or a Linear issue. The filters are kept in the address, as `?repository=` and `?from=`.
+Filter it with **repo** and **from**: filed from the web, the API, a GitHub, GitLab, Linear or Jira issue, or Slack. The filters are kept in the address, as `?repository=` and `?from=`.
 
 ## Limits
 
-When a Factory turn reaches a limit of this platform, the item waits and shows the reason. Machine turns use the runner's slots and do not count against hosted sandbox limits. GitHub and Linear intake share a daily filing limit. The deployment operator can override these limits for your account, and the **Work items** section of the **Usage** page shows them. By default:
+When a Factory turn reaches a limit of this platform, the item waits and shows the reason. Machine turns use the runner's slots and do not count against hosted sandbox limits. GitHub, Linear, Jira and Slack intake share a daily filing limit. The deployment operator can override these limits for your account, and the **Work items** section of the **Usage** page shows them. By default:
 
 | Limit | Default |
 | --- | --- |
@@ -635,7 +665,7 @@ When a Factory turn reaches a limit of this platform, the item waits and shows t
 | Tokens per item, cost-weighted | 2,000,000 |
 | Hosted sandbox time per item | 2 hours |
 | A feature | its subtasks' budgets and one item's for itself |
-| Items filed from GitHub and Linear together per UTC day, drafts among them | 20 |
+| Items filed from GitHub, Linear, Jira and Slack together per UTC day, drafts among them | 20 |
 | Daily model tokens across items and interactive sessions | Unlimited |
 
 When an item reaches its own budget, it pauses and asks you for more: see [When the budget is used](#when-the-budget-is-used). The operator's item budget applies to newly created items.

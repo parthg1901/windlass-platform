@@ -1,11 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog } from "../components/Dialog";
 import { ApiTokens } from "../components/ApiTokens";
 import { SettingsSecrets } from "../components/Secrets";
 import { DefaultAgent } from "../components/RunSettings";
 import { CopyButton } from "../components/Copy";
 import { GithubSettings } from "../components/GithubSettings";
+import { GitlabSettings, useGitlabSettings } from "../components/GitlabSettings";
+import { SlackSettings } from "../components/SlackSettings";
 import { LinearSettings } from "../components/LinearSettings";
+import { JiraSettings } from "../components/JiraSettings";
 import { LoginMethods } from "../components/LoginMethods";
 import { PersonalServers } from "../components/PersonalServers";
 import { PlanSection } from "../components/Plan";
@@ -21,9 +24,16 @@ export function Settings() {
 	const { platform } = useApp();
 	const auth = useAuth();
 	const github = useGithub();
+	const gitlab = useGitlabSettings();
 	const account = useAccount();
 	const { settings } = account;
 	const info = platform.info;
+	// A disabled integration has no Settings component to consume its callback.
+	useEffect(() => {
+		if (info && !info.items && /^#(?:slack(?:-link|-error)?|linear(?:-error)?)=/.test(location.hash)) {
+			history.replaceState(history.state, "", location.pathname + location.search);
+		}
+	}, [info]);
 	const hostedProfile = runOf({
 		account: settings?.defaults,
 		item: { place: "hosted" },
@@ -96,14 +106,21 @@ export function Settings() {
 					</SettingsGroup>
 				) : null}
 
-				{info?.items || github.enabled ? (
+				{info?.items || github.enabled || gitlab.error || (gitlab.status && gitlab.status.state !== "off") ? (
 					<SettingsGroup
 						id="settings-integrations"
 						title="Integrations"
-						lede={info?.items ? "Your repositories, and work items filed from other places." : "Your repositories."}
+						lede={
+							info?.items
+								? "Where agents find your code, and the places work items can be filed from."
+								: "Where agents find your code."
+						}
 					>
 						<GithubSettings />
+						<GitlabSettings connection={gitlab} />
 						{info?.items ? <LinearSettings /> : null}
+						{info?.items ? <JiraSettings /> : null}
+						{info?.items ? <SlackSettings key={auth.profile.uid} /> : null}
 						{info?.items ? <ApiTokens /> : null}
 					</SettingsGroup>
 				) : null}

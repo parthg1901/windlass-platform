@@ -19,7 +19,8 @@
 import { loginHttp } from "./login-http.js";
 import { connectChatgpt } from "./chatgpt-connect.js";
 import { commitsBehindBase, subtaskBranch } from "../server/src/github/feature.js";
-import { BaseMergeConflict, branchFor, updateBranchFromBase } from "../server/src/github/publish.js";
+import { branchFor } from "../server/src/codehost/branch.js";
+import { BaseMergeConflict, updateBranchFromBase } from "../server/src/github/publish.js";
 import { StandInObjectStore } from "../server/src/bucket/stand-in.js";
 import { verdictWords } from "../server/src/factory/verdict.js";
 import { localListeners, portFree } from "./check-listeners.js";

@@ -172,11 +172,11 @@ async function testNode() {
 	const { itemActions } = await import("../server/src/actors/user-items.js");
 	const { itemActor } = await import("../server/src/actors/internal.js");
 	const placeBuilder = itemActions.internalDefaultBuilder;
-	// Linear's intake is wired by another task; until then the check reaches `internalLinearIntake` through the GitHub intake's door, with the same session maker.
+	// Exercise both trackers with the same session fixture.
 	const githubIntake = itemActions.internalGithubIntake;
 	itemActions.internalGithubIntake = (c, trigger, makeSession) =>
 		"linearFiling" in trigger
-			? (itemActions.internalLinearIntake(c, trigger.linearFiling as never, makeSession) as never)
+			? (itemActions.internalTrackerIntake(c, trigger.linearFiling as never, makeSession) as never)
 			: githubIntake(c, trigger, makeSession);
 	let cancelDuringPlacement: string | null = null;
 	itemActions.internalDefaultBuilder = (c, input, makeSession) =>
@@ -3030,13 +3030,13 @@ async function run() {
 		);
 		// Linear: the same intake, queue, cap and placement, filed from an issue the platform has validated. No GitHub issue, no writeback.
 		type LinearFiling = import("../server/src/factory/intake.js").LinearFiling;
-		type LinearFiled = import("../server/src/factory/intake.js").LinearFiled;
+		type TrackerFiled = import("../server/src/factory/intake.js").TrackerFiled;
 		const linearOwner = async (login: string) => {
 			const person = standin.addUser(login);
 			projectG2.access.set(login, "write");
 			const connected = await connectUser(login);
 			const filings = client.user.get([connected.uid], service()) as unknown as {
-				internalGithubIntake(input: { linearFiling: LinearFiling }): Promise<LinearFiled>;
+				internalGithubIntake(input: { linearFiling: LinearFiling }): Promise<TrackerFiled>;
 			};
 			const ownerId = "lin_owner_" + login.replace(/\W/g, "_");
 			let n = 0;
@@ -3474,6 +3474,14 @@ async function run() {
 			for (const action of ["closed", "reopened", "synchronize"])
 				assert.deepEqual(take("pull_request", { action })?.data, { pr: 4, head: HEAD, merged: false });
 			assert.equal(take("pull_request", { action: "opened" }), null);
+			// Marked ready on GitHub: it wakes the item's pull request poll and carries no base for the setup guide check.
+			const based = { ...p.pull_request, base: { sha: HEAD } };
+			assert.deepEqual(take("pull_request", { action: "ready_for_review", pull_request: based })?.data, {
+				pr: 4,
+				head: HEAD,
+				merged: false,
+			});
+			assert.equal(take("pull_request", { action: "converted_to_draft", pull_request: based }), null);
 			assert.ok(take("pull_request_review", { action: "submitted", review: { ...p.review, body: "" } }));
 			assert.ok(take("pull_request_review", { action: "submitted", review: { ...p.review, state: "commented" } }));
 			assert.ok(

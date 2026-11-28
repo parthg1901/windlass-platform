@@ -79,9 +79,36 @@ A change holds from each agent's next turn. An account can keep 20 servers. A se
 
 Account secrets go to MCP servers by default: your own, and a repository's once you approve it. You can also give one to the agent's commands. A repository's setup command never gets an account secret. An account can keep 50. See [Secrets](/docs/security#secrets) for where each one goes.
 
+### GitLab
+
+GitLab appears under **Settings → Integrations** only when the deployment operator has [configured OAuth](https://github.com/WindlassAI/windlass-platform/blob/main/docs/configuration.md#gitlab) for one GitLab instance.
+
+1. Choose **Connect GitLab…** and approve access on GitLab. This connects your GitLab account for project work; it does not change how you sign in to Windlass.
+2. Back in Settings, search for a project, choose its namespace and name, then select **Save project**. You need Maintainer access or higher so Windlass can register the project webhook. Settings shows the selected project and its default branch.
+
+Your GitLab sign-in never enters a sandbox. For each clone, fetch or push, Windlass creates a short-lived project access token for that project, with read access to clone or write access to push, and revokes it when the operation ends. Maintainer access is also needed for this. On GitLab.com, project access tokens need a Premium or Ultimate plan. On self-managed GitLab any plan works, unless an administrator or group owner has turned them off. Without them, the item stops and says what is needed, and nothing is cloned or pushed.
+
+Windlass generates a secret for the project hook; you do not need to enter one. Deliveries with a missing or incorrect `X-Gitlab-Token` are refused and file nothing. To try the connection, [file an item from a GitLab issue](/docs/factory#from-a-gitlab-issue).
+
+If GitLab stops accepting the connection (you revoked it, or it expired), Windlass forgets it and Settings asks you to reconnect. Connect again and save the project.
+
+Choose **Disconnect…** and confirm to forget the connection and selected project. Windlass no longer accepts events for that connection. Your GitHub connection is unchanged.
+
 ### Linear
 
 Where Linear is available, connect your workspace and map each team to a GitHub repository. **Disconnect…** removes its mappings and stops new filings. Existing items stay. Label an issue `windlass` or assign it to the Windlass app. Use `windlass-quick` or `windlass:quick` for Quick mode. See [From a Linear issue](/docs/factory#from-a-linear-issue).
+
+### Jira Cloud
+
+Connect Jira, approve access in Atlassian, then choose a site. Under **Jira Cloud**, map a project to a writable GitHub repository. Remove a mapping or choose **Disconnect Jira** to stop filing. Existing items stay. See [From a Jira issue](/docs/factory#from-a-jira-issue).
+
+### Slack
+
+Choose **Connect Slack…**, approve the workspace, and invite Windlass to a public or private channel. In Settings, choose **#channel** and a repository you can push to, then **Map channel**. Disconnecting removes the bot token, member links and mappings. Existing items stay. See [From Slack](/docs/factory#from-slack).
+
+**Post plan and question details** is set per channel. Every member of the channel can read what Windlass posts there. With it on, Windlass posts the plan's goal, parts, checks and budget, and a question's text. With it off, Windlass posts links and choice buttons only. A new mapping turns it on for a public repository and off for a private one.
+
+Slack appears only when the deployment operator has [configured the Slack app](https://github.com/WindlassAI/windlass-platform/blob/main/docs/configuration.md#slack).
 
 ### API tokens
 
@@ -103,7 +130,7 @@ A **hosted minute** is one minute of a Medium sandbox on the platform (2 vCPU, 4
 | Hosted at once | 1 | 5 |
 | Sandbox sizes | Small, Medium | Small, Medium, Large |
 | Features over two repositories | No | Yes |
-| Items filed from GitHub and Linear together | 20 a day | 100 a day |
+| Items filed from GitHub, Linear, Jira and Slack together | 20 a day | 100 a day |
 | Past the included minutes | Hosted agents stop until the month resets | Monthly Pro bills $0.006 a minute up to your spend cap. Yearly Pro stops at 1,800 minutes a month. |
 
 - **Reset dates.** Free resets at 00:00 UTC on the first of the month. Pro starts when your subscription starts. Monthly Pro resets at the end of your billing period. Yearly Pro resets on each monthly anniversary, on the last day of a shorter month. Settings shows your next reset.
@@ -292,4 +319,4 @@ These are the deployment defaults without plans or account overrides. Your runne
 
 A question during a turn is one the agent asks while its turn runs, for example to approve a command. The turn holds its sandbox while it waits, so after 10 minutes the question is declined and the agent goes on. In a hosted sandbox an unanswered approval ends the turn after 5 minutes instead, and the sandbox pauses until you send a prompt. A work item never asks this way: its questions end the turn and wait for days if need be.
 
-Work items have their own budgets and one shared limit on items filed from GitHub and Linear. See [Factory limits](/docs/factory#limits). On your own machines, your runner sets sandbox limits. Windlass shares the daily model cap shown on Usage. See [Runner reference](/docs/runner#run-options).
+Work items have their own budgets and one shared limit on items filed from GitHub, Linear, Jira and Slack. See [Factory limits](/docs/factory#limits). On your own machines, your runner sets sandbox limits. Windlass shares the daily model cap shown on Usage. See [Runner reference](/docs/runner#run-options).

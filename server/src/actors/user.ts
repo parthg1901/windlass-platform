@@ -132,6 +132,10 @@ import {
 	type UsageNumbers,
 	type UserProfile,
 } from "../contract.js";
+import * as jira from "./user-jira.js";
+import type { JiraItemWrite } from "./internal.js";
+import type { JiraDelivery } from "../jira/webhook.js";
+import { SLACK_TABLES, slackSettingsActions } from "./user-slack.js";
 import {
 	LINEAR_TABLES,
 	type LinearItemWrite,
@@ -279,6 +283,7 @@ import {
 	unionHosts,
 } from "../repository-network.js";
 import { MAX_SETUP_COMMANDS, SetupCommandProblem, cleanSetupCommand, setupProjectKey } from "../setup-command.js";
+import { keyOf } from "../codehost/ref.js";
 import { Attempts, type Submission, SubmissionProblem, isRepeat, submissionOf } from "../submissions.js";
 import { serverSealer } from "../signin/seal.js";
 import { recordTurnTokens, tokensOn, usesPlatformModel, type TokenReceipt, hostedLimitsApply } from "../usage.js";
@@ -339,6 +344,7 @@ import {
 	createSessionActor,
 	isSessionGone,
 	isDuplicateKey,
+	isActorGone,
 	itemActor,
 	itemScreenshots,
 	modelKeyCaller,
@@ -607,6 +613,10 @@ function setupCommandOf(raw: unknown): string {
 	}
 }
 
+function sessionSetupKey(session: SessionSummary | undefined) {
+	return session?.repository?.provider === "gitlab" ? null : setupProjectKey(session?.repository?.id);
+}
+
 function setupKeyOf(repositoryId: unknown): string {
 	const key = setupProjectKey(repositoryId);
 	if (key === null) throw new UserError("Choose one of the listed repositories.", { code: "bad_input" });
@@ -722,7 +732,11 @@ function secretInput<T>(clean: () => T): T {
 function repositoryLabel(vars: UserVars, repositoryId: unknown): string {
 	let newest: SessionSummary | null = null;
 	for (const session of vars.sessions.values())
-		if (session.repository?.id === repositoryId && (newest === null || session.createdAt > newest.createdAt))
+		if (
+			session.repository?.provider !== "gitlab" &&
+			session.repository?.id === repositoryId &&
+			(newest === null || session.createdAt > newest.createdAt)
+		)
 			newest = session;
 	const known = newest?.repository;
 	return known ? `${known.owner}/${known.name}` : "";
@@ -804,9 +818,10 @@ function guideFilesFor(c: Pick<CreateCtx, "client">, id: GithubId) {
 	return c.client().githubRepository.getOrCreate([String(id)], { params: serviceParams() });
 }
 
-async function repoRecords(c: UserCtx & Pick<CreateCtx, "client">, id: GithubId) {
+/** The ended items on the repository `project` keys: by key, so a GitLab project never counts toward a GitHub repository of the same id. */
+async function repoRecords(c: UserCtx & Pick<CreateCtx, "client">, project: string) {
 	const rows = [...c.vars.items.items.values()].filter(
-		s => String(s.repository.id) === String(id) && !s.parent && ["done", "failed", "cancelled"].includes(s.state),
+		s => keyOf(s.repository) === project && !s.parent && ["done", "failed", "cancelled"].includes(s.state),
 	);
 	for (const row of rows)
 		if (row.record === undefined) {
@@ -818,13 +833,12 @@ async function repoRecords(c: UserCtx & Pick<CreateCtx, "client">, id: GithubId)
 
 async function repoPolicy(
 	c: UserCtx & Pick<CreateCtx, "client">,
-	id: GithubId,
 	project: string,
 	weekly = false,
 	scanError: string | null = null,
 	patch?: RepositoryDefaultsPatch,
 ) {
-	const records = await repoRecords(c, id);
+	const records = await repoRecords(c, project);
 	return c.db.transaction(async tx => {
 		const scan = await cachedScan(tx, project);
 		const inputs =
@@ -898,13 +912,7 @@ async function repositoryView(
 		}
 	}
 	const knowledge = await setupKnowledge(c.db, c.vars.profile!.uid, project);
-	const policy = await repoPolicy(
-		c,
-		repositoryId,
-		project,
-		!!(await c.cron.get(scheduleName(repositoryId))),
-		scanError,
-	);
+	const policy = await repoPolicy(c, project, !!(await c.cron.get(scheduleName(repositoryId))), scanError);
 	return {
 		id: repositoryId,
 		name: name === "" ? null : name,
@@ -1219,7 +1227,12 @@ async function makeSession(
 	}
 	// A repository of the user's GitHub connection: GitHub is asked now whether this user may read it.
 	let repo: StoredRepository | null = null;
-	if (input.repository !== undefined && input.repository !== null) {
+	if (item?.gitlab) {
+		const { project, iid } = item.gitlab;
+		const issue = Number(iid);
+		repo = { ...project, installationId: project.id, ...(Number.isSafeInteger(issue) && { closesIssue: issue }) };
+		repoUrl = project.url + ".git";
+	} else if (input.repository !== undefined && input.repository !== null) {
 		if (repoUrl !== null)
 			throw new UserError("Choose a repository from GitHub or paste an address, not both.", { code: "bad_input" });
 		const { id, branch } = input.repository;
@@ -1269,7 +1282,7 @@ async function makeSession(
 		if (methodProblem) throw new UserError(methodProblem, { code: "bad_input" });
 		const hostedSize =
 			place.kind === "hosted"
-				? await sessionHostedSize(c, input.hostedSize, repo ? setupKeyOf(repo.id) : null, item)
+				? await sessionHostedSize(c, input.hostedSize, repo?.provider === "github" ? setupKeyOf(repo.id) : null, item)
 				: undefined;
 		const profiles = machine ? machine.profiles : (await getLayer()).sandboxes.profiles();
 		const chosen = profiles.find(candidate => candidate.id === input.profile);
@@ -1328,7 +1341,7 @@ async function makeSession(
 			modelInput(() => checkItemEffort(models, model, item.effort, caps.models === "harness"));
 
 		// Saved before the session exists, so that its first sandbox finds it. It stays if the session cannot be made.
-		if (repo && setupCommand !== null)
+		if (repo?.provider === "github" && setupCommand !== null)
 			await saveSetup(c, profile.uid, setupKeyOf(repo.id), `${repo.owner}/${repo.name}`, setupCommand);
 
 		let title = givenTitle ?? DEFAULT_TITLE;
@@ -1965,6 +1978,8 @@ export const user = actor({
 					updated_at INTEGER NOT NULL
 				)
 			`);
+			for (const table of jira.JIRA_TABLES) await db.execute(table);
+			for (const table of SLACK_TABLES) await db.execute(table);
 			for (const table of LINEAR_TABLES) await db.execute(table);
 			await db.execute("DROP TABLE IF EXISTS github_grant");
 			await db.execute(GITHUB_SYNC_TABLE);
@@ -2126,6 +2141,8 @@ export const user = actor({
 	}),
 
 	createVars: loadUserState,
+	// Actions do not receive the handshake request. Retain its origin for OAuth ticket redemption.
+	createConnState: c => ({ origin: c.request?.headers.get("origin") ?? null }),
 
 	events: {
 		machineHost: event<MachineHostUpdate>({ canSubscribe: c => maySubscribe(c) }),
@@ -2344,20 +2361,100 @@ export const user = actor({
 			const { github, profile } = c.vars;
 			if (!github?.webhookLinked || !github.installations.some(i => i.id === installation)) return null;
 			for (const session of c.vars.sessions.values()) {
-				if (session.repository?.id !== repository || session.pullRequest?.number !== pr) continue;
+				if (
+					session.repository?.provider === "gitlab" ||
+					session.repository?.id !== repository ||
+					session.pullRequest?.number !== pr
+				)
+					continue;
 				const personal = !session.item && !session.environmentBuild && profile && mayUse(profile, config.access);
 				return { sessionId: personal ? session.id : null };
 			}
 			// A finished item's PR can still be linked after it leaves the live webhook directory.
 			for (const item of c.vars.items.items.values()) {
-				if (item.repository.id === repository && item.pullRequest?.number === pr) return { sessionId: null };
+				if (
+					item.repository.provider !== "gitlab" &&
+					item.repository.id === repository &&
+					item.pullRequest?.number === pr
+				)
+					return { sessionId: null };
 				if (item.repositories?.some(r => r.repositoryId === repository && r.pr?.number === pr))
 					return { sessionId: null };
 			}
 			return null;
 		},
+		internalGitlabIntake: (c, delivery: import("./issue-intake.js").GitlabTrigger) =>
+			itemActions.internalGitlabIntake(c, delivery, itemSession(c)),
+		internalGitlabWake: async (
+			c,
+			delivery: Extract<import("../gitlab/webhook.js").GitlabDelivery, { event: "pipeline" | "merge_request" }>,
+		) => {
+			requireServiceFor(c, "call");
+			const nudges = [...c.vars.items.items.values()].flatMap(item => {
+				const repo = item.repository;
+				if (
+					repo.provider !== "gitlab" ||
+					String(repo.id) !== delivery.projectId ||
+					!item.pullRequest ||
+					["done", "failed", "cancelled"].includes(item.state)
+				)
+					return [];
+				// A merge request's pipeline belongs to that MR only: its head may be a merged-results commit, so match it by MR.
+				if (delivery.iid !== undefined && String(item.pullRequest.number) !== String(delivery.iid)) return [];
+				const pr = item.pullRequest.number;
+				const subject =
+					delivery.event === "pipeline"
+						? { kind: "ci" as const, head: delivery.head, ...(delivery.iid !== undefined && { pr }) }
+						: { kind: "pr" as const, pr };
+				return [
+					{
+						id: item.id,
+						nudge: () =>
+							c
+								.client()
+								.workItem.get([c.key[0], item.id], { params: serviceParams() })
+								.internalGitlabNudge({ projectId: delivery.projectId, ...subject }),
+					},
+				];
+			});
+			// A nudge only brings a poll forward. One item failing must neither stop the others nor redeliver the event to all of them.
+			const results = await Promise.allSettled(nudges.map(n => n.nudge()));
+			results.forEach((result, i) => {
+				if (result.status === "rejected" && !isActorGone(result.reason))
+					console.warn(`[wlp] gitlab.nudge_failed item=${nudges[i]!.id}`);
+			});
+		},
 		internalGithubIntake: (c, input: import("../factory/intake.js").IntakeTrigger) =>
 			itemActions.internalGithubIntake(c, input, itemSession(c)),
+
+		...jira.jiraSettingsActions,
+		internalJiraCallback: (c, nonce: string, origin: string, code: string | null, hash: string) => {
+			requireServiceFor(c, "call");
+			return jira.stageGrant(c, nonce, origin, code, hash);
+		},
+		internalJiraSite: c => {
+			requireServiceFor(c, "call");
+			return jira.selectedSite(c);
+		},
+		internalJiraRenew: c => {
+			if (!c.scheduledFire) throw new UserError("This action is internal.", { code: "forbidden" });
+			return jira.renewJiraWebhooks(c);
+		},
+		internalJiraWrite: (c, input: JiraItemWrite) => {
+			requireServiceFor(c, "call");
+			return jira.writeJiraItem(c, input);
+		},
+		internalJiraDelivery: (c, delivery: JiraDelivery, digest: string) => {
+			requireServiceFor(c, "call");
+			return jira.fileJiraDelivery(c, delivery, digest, filing =>
+				itemActions.internalTrackerIntake(c, filing, itemSession(c)),
+			);
+		},
+		...slackSettingsActions,
+		internalSlackIntake: (c, filing: import("../factory/intake.js").SlackFiling) =>
+			itemActions.internalSlackIntake(c, filing, itemSession(c)),
+		internalSlackAct: itemActions.internalSlackAct,
+		internalSlackReply: itemActions.internalSlackReply,
 
 		linear: async (c): Promise<LinearStatus> => {
 			requireUser(c);
@@ -2401,10 +2498,11 @@ export const user = actor({
 		},
 		internalLinearDelivery: (c, delivery: import("../linear/webhook.js").LinearDelivery) => {
 			requireServiceFor(c, "call");
-			return fileLinearDelivery(c, delivery, filing => itemActions.internalLinearIntake(c, filing, itemSession(c)));
+			return fileLinearDelivery(c, delivery, filing => itemActions.internalTrackerIntake(c, filing, itemSession(c)));
 		},
 		createItem: (c, input: CreateItemInput): Promise<ItemSummary> => itemActions.createItem(c, input, itemSession(c)),
 		actOnItem: itemActions.actOnItem,
+		mergeGitlabItem: itemActions.mergeGitlabItem,
 		factoryLimits: itemActions.factoryLimits,
 		apiTokens: itemActions.apiTokens,
 		createApiToken: itemActions.createApiToken,
@@ -2743,13 +2841,13 @@ export const user = actor({
 			);
 		},
 
-		internalRepositoryAutonomy: async (c, repositoryId: GithubId) => {
+		internalRepositoryAutonomy: async (c, key: string | GithubId) => {
 			requireService(c);
-			const project = setupKeyOf(repositoryId);
+			const project = setupKeyOf(key);
 			const hasOffers = (await c.db.execute("SELECT 1 FROM setup_offer WHERE project=? AND off=0 LIMIT 1", project))
 				.length;
 			const { autoApprovePlans, autoMergeSingles, waitForCiOnEachPart, mergeKinds } = hasOffers
-				? (await repoPolicy(c, repositoryId, project)).defaults
+				? (await repoPolicy(c, project)).defaults
 				: await readDefaults(c.db, project);
 			return {
 				mergeKinds,
@@ -2907,7 +3005,7 @@ export const user = actor({
 		): Promise<{ allowed: boolean; hosts: string[]; network: RepositoryNetwork }> => {
 			requireService(c);
 			const session = c.vars.sessions.get(boundedText(input?.sessionId, 200));
-			const project = setupProjectKey(session?.repository?.id);
+			const project = sessionSetupKey(session);
 			if (!session || project === null)
 				throw new UserError(
 					"This agent has no repository of your GitHub connection, so there is no list to allow a host in. The deployment's operator can allow it for every sandbox (WLP_E2B_NETWORK_ALLOW).",
@@ -2949,7 +3047,7 @@ export const user = actor({
 		): Promise<{ filed: string[]; full: string[] }> => {
 			requireService(c);
 			const session = c.vars.sessions.get(boundedText(input?.sessionId, 200));
-			const project = setupProjectKey(session?.repository?.id);
+			const project = sessionSetupKey(session);
 			if (!session || project === null || !Array.isArray(input?.hosts)) return { filed: [], full: [] };
 			return await fileRequests(
 				c.db,
@@ -3061,7 +3159,7 @@ export const user = actor({
 		): Promise<void> => {
 			requireService(c);
 			const session = c.vars.sessions.get(boundedText(sessionId, 200));
-			const project = setupProjectKey(session?.repository?.id);
+			const project = sessionSetupKey(session);
 			if (!session || !project || session.environmentBuild || (kind !== "missed" && kind !== "cold")) return;
 			await changeEnvironments(c, host =>
 				environmentNudge(
@@ -3140,7 +3238,7 @@ export const user = actor({
 			const session = c.vars.sessions.get(sessionId);
 			if (!session || !validRequestedSecretName(name))
 				throw new UserError("That secret request is unavailable.", { code: "bad_secret" });
-			return requestedSecretConflict(c.db, setupProjectKey(session.repository?.id), name);
+			return requestedSecretConflict(c.db, sessionSetupKey(session), name);
 		},
 
 		internalSaveRequestedSecret: async (c, sessionId: string, input: RequestedSecretSave): Promise<void> => {
@@ -3149,7 +3247,7 @@ export const user = actor({
 			const session = c.vars.sessions.get(sessionId);
 			if (!session || !validRequestedSecretName(input.name))
 				throw new UserError("That secret request is unavailable.", { code: "bad_secret" });
-			const project = setupProjectKey(session.repository?.id) ?? ACCOUNT_SECRET_PROJECT;
+			const project = sessionSetupKey(session) ?? ACCOUNT_SECRET_PROJECT;
 			if (project !== input.project)
 				throw new UserError("The requested secret’s scope has changed.", { code: "bad_secret" });
 			if (session.place.kind === "machine" && !(await machineSecrets(c.db, session.place.machineId)))
@@ -3239,7 +3337,7 @@ export const user = actor({
 				})),
 				servers: (await readServers(c.db)).map(({ name, definition, unasked }) => ({ name, definition, unasked })),
 			};
-			const project = setupProjectKey(session.repository?.id);
+			const project = sessionSetupKey(session);
 			if (project === null)
 				return { project: null, secrets: [], checks: [], account, requestedNames, ...(redactOnly && { redactOnly }) };
 			// The hosts its repository's list allows, for a hosted sandbox. A cross-repo feature's own session reads every
@@ -3485,9 +3583,9 @@ export const user = actor({
 			if (!keep) await removeSession(c, c.key[0], session);
 			await retireDrafters(c, c.key[0], setupKeyOf(current.repository.id));
 		},
-		internalReadinessLevel: async (c, id: GithubId) => {
+		internalReadinessLevel: async (c, key: string | GithubId) => {
 			requireServiceFor(c, "call");
-			return (await repoPolicy(c, id, setupKeyOf(id))).readiness.latest?.level ?? null;
+			return (await repoPolicy(c, setupKeyOf(key))).readiness.latest?.level ?? null;
 		},
 		repository: async (c, repositoryId: GithubId): Promise<RepositoryView> => {
 			requireUser(c);
@@ -3532,8 +3630,7 @@ export const user = actor({
 		): Promise<RepositoryDefaults> => {
 			const profile = requireUser(c);
 			const project = setupKeyOf(input?.repositoryId);
-			if (input.offer !== undefined)
-				return (await repoPolicy(c, input.repositoryId, project, false, null, input)).defaults;
+			if (input.offer !== undefined) return (await repoPolicy(c, project, false, null, input)).defaults;
 			let change: DefaultsChange;
 			try {
 				change = await cleanRunDefaults(c, input, profile);
@@ -3558,7 +3655,7 @@ export const user = actor({
 				});
 				console.log(repositoryDefaultsLog(profile.uid, project, change));
 				if ((await c.db.execute("SELECT 1 FROM setup_offer WHERE project=? AND off=0 LIMIT 1", project)).length)
-					return (await repoPolicy(c, input.repositoryId, project)).defaults;
+					return (await repoPolicy(c, project)).defaults;
 				return saved;
 			} catch (error) {
 				throw clientError(c.log, error, "The defaults could not be saved. Try again.");

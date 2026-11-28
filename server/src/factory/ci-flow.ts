@@ -1,6 +1,6 @@
 // Publishing the branch and deciding what an item's CI reading means.
 import { mergeCandidate } from "./autonomy.js";
-import { CI_POLLING, type CiReading, ciPollEvery, workflowOverdue } from "../github/ci.js";
+import { CI_POLLING, type CiReading, ciPollEvery, workflowOverdue } from "../codehost/ci.js";
 import { spellSeconds } from "../usage.js";
 import { choice } from "./answered.js";
 import { crossRepo, handOver as crossHandOver } from "./cross-repo.js";

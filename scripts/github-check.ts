@@ -62,6 +62,8 @@ const { githubCallbackResponse } = await import("../server/src/github/connect.js
 const state = await import("../server/src/github/state.js");
 const repos = await import("../server/src/github/repos.js");
 const publish = await import("../server/src/github/publish.js");
+const naming = await import("../server/src/codehost/branch.js");
+const { githubCodeHost } = await import("../server/src/codehost/github.js");
 const gitSteps = await import("../server/src/github/git.js");
 const { redact, pushTokenKinds } = await import("../server/src/github/redact.js");
 type StoredConnection = import("../server/src/github/repos.js").StoredConnection;
@@ -878,14 +880,26 @@ await section("clone: a private repository, and nothing of the token left behind
 // The pull request
 // ---------------------------------------------------------------------------------------------
 
-const BRANCH = publish.branchFor("Fix the failing add test…", "s_0123456789abcdef");
+const BRANCH = naming.branchFor("Fix the failing add test…", "s_0123456789abcdef");
 
 await section("publish: a pull request is opened, then the same branch is updated", async () => {
 	expect(
 		"the branch is named for the session",
 		BRANCH === "windlass/fix-the-failing-add-test-abcdef" &&
-			publish.branchFor("  ", "s_ffff000011112222") === "windlass/agent-112222",
+			naming.branchFor("  ", "s_ffff000011112222") === "windlass/agent-112222",
 		BRANCH,
+	);
+	const taken = new Set(["windlass/add-csv-export", "windlass/add-csv-export-2"]);
+	const free = await naming.freeBranch("Add CSV export", async name => taken.has(name));
+	expect(
+		"a standalone agent's branch is its title in whole words, numbered past the branches the host has",
+		naming.branchWords("Run the whole test suite and fix the flaky ones") === "run-the-whole-test-suite-and-fix-the" &&
+			naming.branchWords("Supercalifragilisticexpialidocious-and-then-some-more-words") ===
+				"supercalifragilisticexpialidocious-and" &&
+			naming.branchWords("x".repeat(50)) === "x".repeat(40) &&
+			naming.wantedBranch(" … ") === "windlass/agent" &&
+			free === "windlass/add-csv-export-3",
+		free,
 	);
 	const sandbox = localSandbox("publish");
 	const repository = stored(harbor, adaInstallation);
@@ -974,6 +988,17 @@ await section("publish: a pull request is opened, then the same branch is update
 		tokens.every(
 			token => filesHolding(sandbox.cwd, token).length === 0 && filesHolding(sandbox.home, token).length === 0,
 		) && readdirSync("/tmp").every(name => !/^wlp-(push|publish|message)/.test(name)),
+	);
+	const github = githubCodeHost(app);
+	const [pushedThere, freeThere] = await app.withToken(
+		adaInstallation.id,
+		{ repositoryId: harbor.id, permissions: { metadata: "read", contents: "read" } },
+		token => Promise.all([BRANCH, `${BRANCH}-2`].map(branch => github.hasBranch(token, "ada", "harbor", branch))),
+		{ revokeAfter: true },
+	);
+	expect(
+		"GitHub is asked which branch names it has: the pushed branch, and not the next number after it",
+		pushedThere && !freeThere,
 	);
 	const local = await sandbox.run("git symbolic-ref --short HEAD; git status --porcelain; git config --list --local");
 	expect(
@@ -4016,7 +4041,7 @@ await mirrorSection(
 await section("a replaced sandbox: the workspace goes back on the session's branch", async () => {
 	const repository = stored(harbor, adaInstallation);
 	const session = "s_feedfacefeedface";
-	const branch = publish.branchFor("Keep what was pushed", session);
+	const branch = naming.branchFor("Keep what was pushed", session);
 	const lost = localSandbox("lost");
 	await publish.cloneRepository(app, adaConnection, repository, lost);
 	writeFileSync(join(lost.cwd, "KEPT.md"), "pushed before the sandbox was lost\n");
@@ -4125,7 +4150,7 @@ await section("a replaced sandbox: the workspace goes back on the session's bran
 await section("a replaced sandbox: the setup command runs on the base, never on what the session pushed", async () => {
 	const repository = stored(harbor, adaInstallation);
 	const session = "s_5e7a95e7a95e7a95";
-	const branch = publish.branchFor("Setup on the base", session);
+	const branch = naming.branchFor("Setup on the base", session);
 	// The base's setup script, and the branch's, which the agent rewrote to read the setup's secret.
 	standin.commit(harbor, "main", { "setup.sh": 'echo "base"\n', ".gitignore": "node_modules/\n" }, "The setup script");
 	const first = localSandbox("setup-first");

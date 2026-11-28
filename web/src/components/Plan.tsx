@@ -8,6 +8,7 @@ import type { BillingPeriod, BillingView, HostedMonth, PlanInfo, UsageNumbers } 
 import { useCallback, useEffect, useId, useState } from "react";
 import { sizeName } from "../lib/sizes";
 import { count } from "../lib/format";
+import { sourceNames } from "../../../server/src/sources/registry.js";
 import {
 	dollars,
 	minutes,
@@ -390,8 +391,8 @@ const FEATURES: Array<{ label: string; of(plan: PlanInfo, period: BillingPeriod)
 	{ label: "The Factory", of: () => "All of it: plan first, checks, CI fixes, review" },
 	{ label: "Features over two repositories", of: plan => plan.crossRepo },
 	{
-		label: "Items filed from GitHub or Linear",
-		of: plan => `${count(plan.githubItemsPerDay)} a day, GitHub and Linear together`,
+		label: "Items filed from connected services",
+		of: plan => `${count(plan.githubItemsPerDay)} a day in total, from ${sourceNames()} together`,
 	},
 	{
 		label: "Past the included minutes",

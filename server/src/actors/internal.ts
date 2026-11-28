@@ -233,6 +233,15 @@ export type ReserveAnswer =
 	| { ok: true; clampedSize?: HostedSize; hold: { id: string; seconds: number }; numbers: UsageNumbers }
 	| { ok: false; reason: "allowance" | "sandboxes" | "gone"; numbers: UsageNumbers };
 
+/** The item supplies the destination from its stored filing, never from task or question text. */
+export interface JiraItemWrite {
+	siteId: string;
+	projectId: string;
+	issueId: string;
+	itemId: string;
+	action: import("../factory/intake.js").JiraCommentAction;
+}
+
 /** Actions of `user` that only actors may call. */
 export interface UserInternal {
 	internalSetupPublished(
@@ -248,7 +257,19 @@ export interface UserInternal {
 		report: import("../factory/readiness.js").Judgment | string | null,
 		diagnosis?: import("../repo-setup/types.js").SetupDiagnosis | null,
 	): Promise<void>;
-	internalReadinessLevel(id: GithubId): Promise<import("../factory/readiness.js").ReadinessLevel | null>;
+	/** `key`: the repository's `repoKey` (GitHub's bare id still reads as its key). */
+	internalReadinessLevel(key: string | GithubId): Promise<import("../factory/readiness.js").ReadinessLevel | null>;
+	/** Service call: true when posted (including a replay), false for a permanent decline. Throw to retry. */
+	internalJiraWrite(input: JiraItemWrite): Promise<boolean>;
+	internalSlackIntake(
+		filing: import("../factory/intake.js").SlackFiling,
+	): Promise<import("../factory/intake.js").TrackerFiled>;
+	internalSlackAct(input: import("./user-items.js").SlackAnswer): Promise<void>;
+	internalSlackReply(input: {
+		id: string;
+		text: string;
+		slackUser: string;
+	}): Promise<import("./user-items.js").SlackReply>;
 	internalLinearHoldsTeam(workspaceId: string, teamId: string): Promise<boolean>;
 	internalLinearWrite(input: import("./user-linear.js").LinearItemWrite): Promise<boolean>;
 	internalDefaultBuilder(input: {
@@ -283,7 +304,8 @@ export interface UserInternal {
 		machine?: boolean;
 	}): Promise<import("./user-payer.js").PayerAnswer | null>;
 
-	internalRepositoryAutonomy(repositoryId: GithubId): Promise<RepositoryAutonomy>;
+	/** `key`: the repository's `repoKey` (GitHub's bare id still reads as its key). */
+	internalRepositoryAutonomy(key: string | GithubId): Promise<RepositoryAutonomy>;
 	internalPlanCritic(builderId: string, context: import("../factory/resolve-run.js").RunContext): Promise<void>;
 	internalPlacementInventory(
 		repositories: Record<string, GithubId>,
@@ -462,6 +484,11 @@ export interface SessionInternal {
 		base: string;
 		tests: import("../factory/base-tests.js").NamedTests;
 	}): Promise<import("../factory/base-tests.js").BaseTestResult | "pending">;
+	internalOpenFromPushed(input: {
+		title: string;
+		body: string;
+		head: string;
+	}): Promise<import("../contract.js").PullRequestInfo>;
 	internalPublish(input: {
 		key: string;
 		title: string;
@@ -537,7 +564,9 @@ export interface ItemInternal {
 	internalView(): Promise<ItemView>;
 	/** Each report and review that filed screenshots, the newest first: what its feature's page gathers. */
 	internalScreenshotSets(): Promise<Omit<PartScreenshots, "itemId" | "key" | "title">[]>;
-	internalAct(input: { action: ItemAction; by: string }): Promise<ItemView>;
+	internalMergeGitlab(reviewedHead: string): Promise<ItemView>;
+	/** `slack`: pressed in Slack by that member, for that question only. */
+	internalAct(input: { action: ItemAction; by: string; slack?: { user: string; question: string } }): Promise<ItemView>;
 	/** A fact about the item's turn; resolves once it is stored. */
 	internalFact(fact: Fact): Promise<void>;
 }
@@ -608,6 +637,14 @@ export function itemActor(c: HasClient, uid: string, itemId: string): ItemIntern
 
 export function sessionActor(c: HasClient, uid: string, sessionId: string): SessionInternal {
 	return c.client().agentSession.get([uid, sessionId], { params: serviceParams() }) as SessionInternal;
+}
+
+export function gitlabAccess(
+	c: HasClient,
+	uid: string,
+	projectId: string,
+): Promise<{ project: import("../contract.js").SessionRepository; viewer: string; token: string }> {
+	return c.client().userGitlab.get([uid], { params: serviceParams() }).internalGitlabAccess(projectId);
 }
 
 export function userActor(c: HasClient, uid: string): UserInternal {

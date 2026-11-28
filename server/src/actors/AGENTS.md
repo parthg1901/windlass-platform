@@ -23,7 +23,7 @@ Run one command from the repository root.
 
 Actors and their keys:
 
-- `./user.ts` user[uid]: account, session index, turn admission, GitHub and Linear connections.
+- `./user.ts` user[uid]: account, session index, turn admission, GitHub, Linear, Jira and Slack connections.
 - `./agent-session.ts` agentSession[uid, sessionId]: one sandbox and its turns.
 - `./work-item.ts` workItem[uid, itemId]: blueprint facts and the durable effect outbox.
 - `./machine.ts` machine[uid, machineId]: a paired runner's control socket, its report and the turn-slot FIFO.
@@ -34,6 +34,10 @@ Actors and their keys:
 - `./github-account.ts` githubAccount[githubUserId]: the GitHub user to uid link, service actions only.
 - `./github-repository.ts` githubRepository[repositoryId]: per-repository state, platform service credential only.
 - `./linear-workspace.ts` linearWorkspace[workspaceId]: which user a workspace's team files for.
+- `./user-gitlab.ts` userGitlab[uid]: the sealed GitLab grant, pending OAuth states and the selected project with its hook secret.
+- `./gitlab-inbox.ts` gitlabInbox[uid, projectId]: stores authenticated GitLab deliveries and nudges the items they name.
+- `./jira-site.ts` jiraSite[siteId]: project claims, delivery receipts and the one active filing per Jira issue.
+- `./slack-workspace.ts` slackWorkspace[teamId]: the bot token, channel mappings, member links and item threads.
 
 Helpers inside the `user` actor:
 
@@ -47,7 +51,10 @@ Helpers inside the `user` actor:
 - `./user-readiness.ts` schedules repository setup scans (cron `internalReadinessTick`) and caches their inputs.
 - `./user-github.ts` replaces the GitHub connection and retries webhook sync on `GITHUB_SYNC` delays.
 - `./user-linear.ts` stores the Linear connection and team mappings and decides each verified delivery.
-- `./issue-intake.ts` is what GitHub and Linear intake share: owner queue, daily cap and filing (`fileLinearIssue`). `./github-intake.ts` is GitHub's side.
+- `./user-jira.ts` stores the Jira grant, site and project mappings, renews webhooks and writes item comments back.
+- `./user-slack.ts` holds the Slack settings actions and the owner's member links.
+- `./issue-intake.ts` is what the intakes share: owner queue, daily cap and filing (`fileTrackerIssue` for Linear and Jira, `fileGitlabIssue`, `fileSlackRequest`). `./github-intake.ts` is GitHub's side.
+- `./gitlab-item.ts` resolves a work item's GitLab host, token and pipelines for `work-item` and `agentSession`.
 - `./github-item.ts` applies issue edits and closes to filed items.
 - `./provider-accounts.ts` tracks model-provider usage and refusals per account location; a plan's go to its own row, keyed as the plan. Windlass's own account (its ChatGPT models, where no key pays) is the ChatGPT plan's (`accountLocation`).
 - `./user-payer.ts` applies Pay with at a hosted turn's start, for the turn queue and `internalTurnPayer`: plan or key, an item's wait for its plan, the plan's parallel-turn cap and "Use my key now" (`pay_once`). Hosted Windlass's ChatGPT models follow it too, with no choice of their own; the key it switches to runs the OpenAI key's version of the same model (`keyModel`).

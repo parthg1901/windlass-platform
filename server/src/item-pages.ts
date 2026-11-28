@@ -16,7 +16,7 @@
  */
 
 import {
-	type GithubId,
+	type RepoAddress,
 	type ItemCount,
 	type ItemCursor,
 	type ItemFeed,
@@ -25,7 +25,8 @@ import {
 	ITEM_PAGE_DEFAULT,
 	ITEM_PAGE_MAX,
 } from "./contract.js";
-import { isGithubId } from "./github/ids.js";
+import { readRepoAddress, readRepoKey, repoAddress } from "./codehost/ref.js";
+import { SOURCE_IDS } from "./sources/types.js";
 
 /** Thrown for a page that cannot be read; `message` is fit to show. */
 export class ItemPageProblem extends Error {
@@ -36,7 +37,7 @@ export class ItemPageProblem extends Error {
 }
 
 const ENDED: ReadonlySet<ItemSummary["state"]> = new Set(["done", "failed", "cancelled"]);
-const SOURCES: ReadonlySet<ItemSummary["source"]> = new Set(["web", "api", "github", "linear"]);
+const SOURCES: ReadonlySet<ItemSummary["source"]> = new Set(["web", "api", ...SOURCE_IDS]);
 
 /** A page as asked for, checked: the cursor, the limit, and what it keeps. */
 export interface CleanPage {
@@ -44,7 +45,7 @@ export interface CleanPage {
 	limit: number;
 	/** true: only ended items; false: only open ones; null: both. */
 	ended: boolean | null;
-	repository: GithubId | null;
+	repository: RepoAddress | null;
 	source: ItemSummary["source"] | null;
 }
 
@@ -73,15 +74,15 @@ export function cleanItemPage(raw: unknown): CleanPage | null {
 		throw new ItemPageProblem(`A page holds 1 to ${ITEM_PAGE_MAX} work items.`);
 	if (input.ended !== undefined && typeof input.ended !== "boolean")
 		throw new ItemPageProblem("Say true or false for ended items only.");
-	if (input.repository !== undefined && input.repository !== null && !isGithubId(input.repository))
+	if (input.repository !== undefined && input.repository !== null && readRepoKey(input.repository) === null)
 		throw new ItemPageProblem("Name the repository by GitHub's id for it.");
 	if (input.source !== undefined && input.source !== null && !SOURCES.has(input.source as ItemSummary["source"]))
-		throw new ItemPageProblem("Filed from is web, api, github or linear.");
+		throw new ItemPageProblem("Filed from is web, api, github, gitlab, linear, jira or slack.");
 	return {
 		before,
 		limit,
 		ended: typeof input.ended === "boolean" ? input.ended : null,
-		repository: (input.repository ?? null) as GithubId | null,
+		repository: readRepoAddress(input.repository),
 		source: (input.source ?? null) as ItemSummary["source"] | null,
 	};
 }
@@ -100,7 +101,7 @@ export function itemPage(list: readonly ItemSummary[], page: CleanPage): ItemSum
 	const kept = list.filter(
 		item =>
 			(page.ended === null || ENDED.has(item.state) === page.ended) &&
-			(page.repository === null || String(item.repository.id) === String(page.repository)) &&
+			(page.repository === null || String(repoAddress(item.repository)) === String(page.repository)) &&
 			(page.source === null || item.source === page.source) &&
 			(page.before === null || after(item, page.before)),
 	);
@@ -140,14 +141,14 @@ export function itemFeed(list: readonly ItemSummary[], all?: Iterable<ItemSummar
 	let endedCount = 0;
 	const rows = new Map<string, ItemCount>();
 	for (const item of sorted) {
-		const key = `${item.repository.id}|${item.source}`;
+		const key = `${repoAddress(item.repository)}|${item.source}`;
 		let row = rows.get(key);
 		// The newest filed comes first: the row takes its repository's owner and name.
 		if (!row)
 			rows.set(
 				key,
 				(row = {
-					repository: item.repository.id,
+					repository: repoAddress(item.repository),
 					owner: item.repository.owner,
 					name: item.repository.name,
 					source: item.source,

@@ -22,6 +22,14 @@ export function taskKind(paths: string[]): TaskKind {
 	return "other";
 }
 
+/**
+ * Whether the repository's auto-merge kinds cover a change of `kind`. Unset kinds cover every change; an unknown
+ * kind (the change's files could not all be listed) is covered by none. Both code hosts and the CI poll ask this.
+ */
+export function mergeKindAllowed(kinds: readonly TaskKind[] | undefined, kind: TaskKind | null | undefined): boolean {
+	return !kinds || (!!kind && kinds.includes(kind));
+}
+
 export function finishedItem(v: ItemView, kind?: TaskKind, flaky = false, featureFix = false) {
 	const latest = v.verdicts.at(-1);
 	const verdict = latest && latest.head === v.head && latest.run === v.run?.n && !latest.moved ? latest : undefined;

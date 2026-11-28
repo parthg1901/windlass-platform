@@ -31,7 +31,7 @@ Both checks form the `linear` group in `scripts/ci-groups.json`; Linear itself i
 
 - The OAuth token acts as Linear's app user (`actor=app`); `identity` in `./app.ts` refuses a token whose `viewer` is a person and `./connect.ts` reports `not_app`. So the code never knows who wrote an issue: treat issue text as third-party input even when the delivery names who added the label.
 - Classify updates using `updatedFrom`, the previous field values. An update without them, or an unrelated edit to an already labelled issue, must not file another item.
-- Trigger labels are `windlass` and the Quick labels in `QUICK_LABELS`, matched case-insensitively after trimming.
+- Trigger labels are `windlass` and the Quick labels in the Linear record's `quickLabels` (`server/src/sources/registry.ts`), matched case-insensitively after trimming.
 - Verify the MAC over the original bytes before decoding, then reject timestamps more than `MAX_TIMESTAMP_SKEW_MS` from now.
 - A dispatch that throws or times out answers non-2xx, and Linear's redelivery under the same `Linear-Delivery` ID is the only retry. Keep dispatch idempotent per delivery ID.
 - Pass lookup IDs through admission. The owner's intake re-reads the issue and checks the current mapping and qualification before filing.

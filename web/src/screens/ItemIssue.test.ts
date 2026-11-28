@@ -10,10 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserApi } from "../api/client";
 import { createMockClient, type MockClient } from "../api/mock";
 import { saveAuth } from "../lib/authStore";
+import { href, parseRoute } from "../lib/router";
+import { filterItems } from "./Factory";
 import { AppProvider } from "../state/app";
 import { Item, useItem } from "./Item";
 import { RepositoryPane, useRepository } from "./Repository";
 import { useItems } from "../state/items";
+import { ItemRow } from "../components/ItemRow";
 import { NO_FILTERS } from "../lib/workspace";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -205,25 +208,38 @@ describe("an item from a GitHub issue", () => {
 	});
 });
 
-describe("an item from a Linear issue", () => {
-	const fromLinear = () => items.find(item => item.source === "linear") as ItemSummary;
-
-	it("links ENG-123 to its Linear URL, names the source, and warns of the outside author", async () => {
-		await render(itemPage(fromLinear));
+describe.each([
+	{
+		source: "linear",
+		tracker: "Linear",
+		key: "ENG-123",
+		author: "Grace Hopper",
+		url: "https://linear.app/acme/issue/ENG-123/show-the-release-channel",
+	},
+	{
+		source: "jira",
+		tracker: "Jira",
+		key: "REL-42",
+		author: "Sam Lee",
+		url: "https://acme.atlassian.net/browse/REL-42",
+	},
+])("an item from $tracker", ({ source, tracker, key, author, url }) => {
+	it("links its key to the issue and warns of the outside author before Start", async () => {
+		await render(itemPage(() => items.find(item => item.source === source)!));
 		const line = host.querySelector(".item-origin") as HTMLElement;
-		expect(line.textContent).toBe("from ENG-123 by Grace Hopper");
+		expect(line.textContent).toBe(`from ${key} by ${author}`);
 		const link = line.querySelector("a") as HTMLAnchorElement;
-		expect(link.textContent).toBe("ENG-123");
-		expect(link.getAttribute("href")).toBe("https://linear.app/acme/issue/ENG-123/show-the-release-channel");
+		expect(link.textContent).toBe(key);
+		expect(link.getAttribute("href")).toBe(url);
 		expect(link.target).toBe("_blank");
 		const note = host.querySelector("section[aria-labelledby='item-task'] .callout") as HTMLElement;
 		expect(note.textContent).toBe(
-			"The text below was written by Grace Hopper on Linear, not by you. Starting the item gives the agent this text, as it is shown here.",
+			`The text below was written by ${author} on ${tracker}, not by you. Starting the item gives the agent this text, as it is shown here.`,
 		);
 		expect(buttons(host, "Start")).toHaveLength(1);
 	});
 
-	it("links its row in the work list to the issue", async () => {
+	it("links its row to the issue and flags the outside author", async () => {
 		await render(() =>
 			createElement(RepositoryPane, {
 				page: useRepository(7101),
@@ -234,10 +250,41 @@ describe("an item from a Linear issue", () => {
 				machines: [],
 			}),
 		);
-		const link = [...host.querySelectorAll("li.item-row a")].find(
-			one => one.textContent === "ENG-123",
-		) as HTMLAnchorElement;
-		expect(link.getAttribute("href")).toBe("https://linear.app/acme/issue/ENG-123/show-the-release-channel");
-		expect(link.getAttribute("aria-label")).toBe("Issue ENG-123 on Linear");
+		const link = [...host.querySelectorAll("li.item-row a")].find(one => one.textContent === key) as HTMLAnchorElement;
+		expect(link.getAttribute("href")).toBe(url);
+		expect(link.getAttribute("aria-label")).toBe(`Issue ${key} on ${tracker}`);
+		expect(link.closest("li")?.textContent).toContain("from an outside author");
+	});
+});
+
+describe("an item filed from Slack", () => {
+	it("names Slack in the header without attributing the task to an issue author", async () => {
+		await render(
+			itemPage(() => fromIssue(false)),
+			view => ({ ...view, source: "slack", origin: null }),
+		);
+		expect(host.querySelector(".item-meta")?.textContent).toContain("from Slack");
+		expect(host.querySelector(".item-origin")).toBeNull();
+		expect(host.querySelector(".item-snapshot")).toBeNull();
+		expect(buttons(host.querySelector(".item-actions") as HTMLElement, "Start")).toHaveLength(1);
+	});
+
+	it("filters Slack rows from the Factory address and names the source without an issue link", async () => {
+		const url = new URL(href({ name: "factory", from: "slack" }), location.origin);
+		const route = parseRoute(url.pathname, url.search);
+		expect(route).toEqual({ name: "factory", from: "slack" });
+		if (route.name !== "factory") throw new Error("Expected the Factory route");
+		await render(() => {
+			const slack: ItemSummary = { ...fromIssue(false), source: "slack", origin: null };
+			const matches = filterItems([fromIssue(true), slack], route);
+			return createElement(
+				"ul",
+				null,
+				matches.map(item => createElement(ItemRow, { key: item.id, item, now: Date.now() })),
+			);
+		});
+		expect(host.querySelectorAll(".item-row")).toHaveLength(1);
+		expect(host.querySelector(".agent-meta")?.textContent).toContain("from Slack");
+		expect(host.querySelector(".agent-meta a[aria-label^='Issue']")).toBeNull();
 	});
 });

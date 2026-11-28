@@ -7,6 +7,7 @@ import { costWords, summaryCost, usd } from "../lib/cost";
 import type { CostRates, FactoryLimits, ItemSummary } from "@contract";
 import { spendWords } from "../lib/budget";
 import { CostFigure } from "./CostFigure";
+import { SourceNames } from "./ProviderIcon";
 
 function Of({ spent, budget, spell }: { spent: number; budget: number; spell(value: number): string }) {
 	return (
@@ -57,9 +58,10 @@ export function FactoryUsage({ value }: { value: FactoryLimits }) {
 						</dd>
 					</div>
 					<div>
-						<dt>Items from GitHub and Linear</dt>
+						<dt>Items filed from connected services</dt>
 						<dd className="factory-limit-text">
-							{count(value.githubItemsPerDay)} per UTC day, shared by GitHub and Linear, drafts among them
+							{count(value.githubItemsPerDay)} a day (UTC) in total, whether they come from <SourceNames join="or" />.
+							Drafts count.
 						</dd>
 					</div>
 					<div>

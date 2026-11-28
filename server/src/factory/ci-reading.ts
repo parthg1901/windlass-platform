@@ -1,5 +1,5 @@
 // Reads of a branch's CI shared by an item and a feature: progress, reruns and repair turns.
-import { type CiReading, rerunnableJobs, ciState } from "../github/ci.js";
+import { type CiReading, rerunnableJobs, ciState } from "../codehost/ci.js";
 import { choice } from "./answered.js";
 import { crossRepo, repoOf } from "./cross-repo.js";
 import type { CiProgress, Fact, FeatureCi, FactoryItem, Run, TurnPlan } from "./types.js";

@@ -30,7 +30,7 @@ import {
 	type RailRepository,
 } from "../lib/workspace";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, RingIcon, SearchIcon } from "./Icons";
-import { OwnerAvatar, RepoTile } from "./RepoTile";
+import { hostOfAddress, OwnerAvatar, RepoTile } from "./RepoTile";
 
 /** Whether the rail is folded away, and the way to fold it; Ctrl+B (⌘B) folds it and back, where there is one (not on a phone). */
 export function useRailFold(phone: boolean): [boolean, (next: boolean) => void] {
@@ -357,7 +357,7 @@ export function RepoRail({
 				label={repository.name}
 				title={name}
 				quiet={!badge.running && badge.needs === 0}
-				icon={<RepoTile name={repository.name} />}
+				icon={<RepoTile name={repository.name} host={hostOfAddress(repository.id)} />}
 				before={owned && repository.owner ? <span className="visually-hidden">{repository.owner}/</span> : null}
 				badges={
 					<Badges

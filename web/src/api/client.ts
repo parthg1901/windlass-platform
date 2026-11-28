@@ -23,11 +23,13 @@ import type {
 	CreateItemInput,
 	CreateSessionInput,
 	FactoryLimits,
+	GitlabActions,
 	GithubId,
 	GithubBranchList,
 	GithubRepository,
 	GithubRepositoryList,
 	GithubStatus,
+	SlackSettingsActions,
 	LinearStatus,
 	LinearTeamList,
 	HostAllowed,
@@ -174,27 +176,37 @@ export interface SessionFeed {
 }
 
 export interface UserApi
-	extends Pick<
-		UserActions,
-		| "signOutEverywhere"
-		| "modelProviders"
-		| "saveModelProvider"
-		| "checkModelProvider"
-		| "removeModelProvider"
-		| "modelPlans"
-		| "approvePlanConnect"
-		| "denyPlanConnect"
-		| "removeModelPlan"
-		| "recheckModelPlan"
-		| "payWith"
-		| "savePayWith"
-		| "useKeyNow"
-		| "githubStarterIssues"
-		| "addSetupNotes"
-		| "deleteSetupNote"
-		| "setGuideCheck"
-		| "runReadiness"
-	> {
+	extends GitlabActions,
+		SlackSettingsActions,
+		Pick<
+			UserActions,
+			| "signOutEverywhere"
+			| "modelProviders"
+			| "saveModelProvider"
+			| "checkModelProvider"
+			| "removeModelProvider"
+			| "modelPlans"
+			| "approvePlanConnect"
+			| "denyPlanConnect"
+			| "removeModelPlan"
+			| "recheckModelPlan"
+			| "payWith"
+			| "savePayWith"
+			| "useKeyNow"
+			| "githubStarterIssues"
+			| "addSetupNotes"
+			| "deleteSetupNote"
+			| "setGuideCheck"
+			| "runReadiness"
+			| "jira"
+			| "jiraConnect"
+			| "jiraComplete"
+			| "jiraSelectSite"
+			| "jiraProjects"
+			| "saveJiraMapping"
+			| "removeJiraMapping"
+			| "disconnectJira"
+		> {
 	me(): Promise<UserProfile>;
 	linkedLogins(): Promise<LinkedLogin[]>;
 	unlinkLogin(provider: LoginProvider): Promise<void>;
@@ -336,6 +348,7 @@ export interface UserApi
 	/** Files a work item, with its own agent on the repository. With `idempotencyKey`, the same call again answers with the item the first one made. Throws as `createSession` does, and with reason `bad_input`. */
 	createItem(input: CreateItemInput): Promise<ItemSummary>;
 	/** Starts, cancels, retries, sends back or answers an item. Throws with reason `item_conflict` where its state does not allow it, with why. */
+	mergeGitlabItem(id: string, reviewedHead: string): Promise<ItemView>;
 	actOnItem(id: string, action: ItemAction): Promise<ItemView>;
 	/** The factory's limits for this user, which the deployment's owner sets. */
 	factoryLimits(): Promise<FactoryLimits>;

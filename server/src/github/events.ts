@@ -1,6 +1,7 @@
 import { VERIFIED_NAME } from "./checks.js";
 import type { GithubId } from "../contract.js";
 import { decimalId, githubId, ownApp } from "./ids.js";
+import { sourceCaps } from "../sources/registry.js";
 
 /** The edge keeps just the inputs to a later lookup. GUID and receipt time come from the route. */
 type Sender = { id: GithubId; login: string; association: string };
@@ -128,14 +129,15 @@ export function edge(
 		return pr &&
 			head &&
 			typeof pull.merged === "boolean" &&
-			(["closed", "reopened", "synchronize"].includes(action) || (action === "opened" && target))
+			(["closed", "reopened", "synchronize", "ready_for_review"].includes(action) || (action === "opened" && target))
 			? {
 					...base,
 					event,
 					data: {
 						pr,
 						head,
-						...(target && { base: target }),
+						// Ready for review changes no commit: it only wakes the item's pull request poll, not the setup guide check.
+						...(target && action !== "ready_for_review" && { base: target }),
 						merged: pull.merged,
 						...(action === "closed" &&
 							/^windlass\/repo-setup-\d{8}$/.test(str(obj(pull.head).ref)) && { setupGuides: true as const }),
@@ -161,7 +163,7 @@ export function edge(
 		const label = str(obj(p.label).name);
 		if (
 			["labeled", "unlabeled"].includes(action) &&
-			["windlass", "windlass:orchestrate", "windlass:quick"].includes(label)
+			["windlass", "windlass:orchestrate", ...sourceCaps("github").quickLabels].includes(label)
 		)
 			return { ...base, event, data: { issue: n, sender, ...(label !== "windlass" && { label }) } };
 		if (["closed", "reopened", "edited", "deleted", "transferred"].includes(action))

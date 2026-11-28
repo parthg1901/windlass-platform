@@ -65,8 +65,17 @@ import { itemHarnessProblem, knownHarness, subtaskHarnessProblem } from "../sand
 import { itemSessionId } from "../factory/feature-ids.js";
 import { featureBranch, subtaskBranch } from "../github/feature.js";
 import { githubIntake } from "./github-intake.js";
-import { fileLinearIssue, inIntakeQueue, INTAKE_SOURCES, intakeScope, linearSources } from "./issue-intake.js";
-import type { Intake, IntakeTrigger, LinearFiled, LinearFiling } from "../factory/intake.js";
+import {
+	fileGitlabIssue,
+	type GitlabTrigger,
+	fileTrackerIssue,
+	fileSlackRequest,
+	inIntakeQueue,
+	INTAKE_SOURCES,
+	intakeScope,
+	type SiteJiraFiling,
+} from "./issue-intake.js";
+import type { Intake, IntakeTrigger, TrackerFiled, LinearFiling, SlackFiling } from "../factory/intake.js";
 import { GithubProblem, resolveBoundRepository, resolveRepository, type StoredConnection } from "../github/repos.js";
 import { githubApp } from "../github/app.js";
 import { refHead } from "../github/feature.js";
@@ -80,6 +89,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { UserError } from "rivetkit";
 import type { RawAccess } from "rivetkit/db";
 import { mayUse } from "../access.js";
+import { shortLabel } from "../factory/answered.js";
+import { slackChoices } from "../slack/blocks.js";
 import { type CleanPage, ItemPageProblem, cleanItemPage, itemFeed, itemPage, listedItems } from "../item-pages.js";
 import {
 	API_TOKEN_WINDOW_MS,
@@ -109,6 +120,7 @@ import {
 	type ApiTokenScope,
 	type CreateItemInput,
 	type CreateSessionInput,
+	type ChoiceId,
 	type FactoryLimits,
 	type FinishedItems,
 	type ItemAction,
@@ -133,6 +145,7 @@ import {
 import { createItem, RULES } from "../factory/blueprint.js";
 import { finishedItems } from "../factory/usage-summary.js";
 import { sources, thirdParty, untrustedWords } from "../factory/untrusted.js";
+import { bindingsOf, legacyBindings, submissionIdentity, untrustedOf } from "../sources/bindings.js";
 import {
 	keptFull,
 	makeSandboxRoom,
@@ -252,7 +265,7 @@ const KEYED = "work item";
 /** The action the turn queue's schedule fires (factory-e2e.ts checks it is registered under this name). */
 export const QUEUE_ACTION = "internalTurnQueue";
 
-/** The key of a creation in `ItemsState.created`: an item filed from an issue (GitHub's or Linear's) is in a scope of its own, apart from the web's and the API's. */
+/** The key of a creation in `ItemsState.created`: an item filed from an issue is in a scope of its own, apart from the web's and the API's. */
 const scopedKey = (intake: boolean, key: string) => (intake ? intakeScope(key) : "user:" + key);
 
 export async function loadItems(db: RawAccess): Promise<ItemsState> {
@@ -383,6 +396,7 @@ export interface ItemSessionInput {
 	owns?: string[];
 	childBranch?: { name: string; start: string };
 	issue?: { number: number; installationId: GithubId };
+	gitlab?: { project: SessionRepository; iid: string };
 	effort?: string;
 }
 export interface MakeSession {
@@ -477,6 +491,56 @@ async function noteItem(c: ItemsCtx, given: ItemSummary): Promise<void> {
 		await c.db.execute("UPDATE attachments SET ended_at=NULL WHERE item=? AND ended_at>0", summary.id);
 	c.broadcast("items", feedOf(c.vars.items));
 	if (releaseAt(summary) !== releaseAt(held)) queueChanged(c);
+}
+
+// The one path for a person's action, from the web or from Slack.
+async function act(
+	c: ItemsCtx,
+	uid: string,
+	id: string,
+	action: ItemAction,
+	slack?: { user: string; question: string },
+): Promise<ItemView> {
+	enabled();
+	knownItem(c, id);
+	const view = await itemActor(c, uid, id).internalAct({ action, by: `person:${uid}`, ...(slack && { slack }) });
+	await noteItem(c, view);
+	return view;
+}
+
+/** A Slack button or reply. `version`: the plan the Approve button was posted with. */
+export interface SlackAnswer {
+	id: string;
+	question: string;
+	choice: ChoiceId;
+	version?: number;
+	note?: string;
+	slackUser: string;
+}
+export type SlackReply = { kind: "answered" } | { kind: "choices"; labels: string[] } | { kind: "none" };
+const words = (text: string) =>
+	text
+		.toLowerCase()
+		.replace(/_/g, " ")
+		.replace(/[^\p{L}\p{N} ]/gu, "")
+		.replace(/\s+/g, " ")
+		.trim();
+
+function slackOwner(c: ItemsCtx): UserProfile {
+	const { profile } = c.vars;
+	if (!profile || !mayUse(profile, config.access))
+		throw new UserError("This account cannot act on work items here.", { code: "item_not_found" });
+	return profile;
+}
+
+// Approve is the web's version-bound approval. Every other choice is the web's answer to that question.
+function slackAct(c: ItemsCtx, input: SlackAnswer) {
+	const { uid } = slackOwner(c);
+	const action: ItemAction =
+		input.choice === "approve" && input.version !== undefined
+			? { kind: "approve_plan", version: input.version }
+			: { kind: "answer", question: input.question, choice: input.choice, ...(input.note && { note: input.note }) };
+	return act(c, uid, input.id, action, { user: input.slackUser, question: input.question });
 }
 
 function knownItem(c: ItemsCtx, id: unknown): ItemSummary {
@@ -645,6 +709,7 @@ export interface DefaultBuilder {
 	repository: CreateItemInput["repository"];
 	title: string;
 	issue?: { number: number; installationId: GithubId };
+	gitlab?: { project: SessionRepository; iid: string };
 }
 
 const availabilityErrors = new Set([
@@ -723,6 +788,7 @@ async function defaultBuilder(
 				role: "builder",
 				payer: run.payer,
 				issue: job.issue,
+				gitlab: job.gitlab,
 				effort: run.effort ?? undefined,
 				...(build && { afterPlanning: { model: build.model, effort: build.effort } }),
 				...child,
@@ -751,7 +817,7 @@ async function bindReviewer(
 }> {
 	const off = (reason: keyof typeof REVIEW_OFF_REASON) => ({ reviewer: { off: reason }, reviewerSessionId: null });
 	if (child) return off("feature");
-	if (!config.factory.reviewer) return off("deployment");
+	if (!config.factory.reviewer || session.repository?.provider === "gitlab") return off("deployment");
 	const reviewerSessionId = `s_${hex16(`review\n${itemId}`)}`;
 	if (!c.vars.sessions.has(reviewerSessionId)) {
 		const { id, branch } = session.repository!;
@@ -772,6 +838,7 @@ async function bindReviewer(
 					itemId,
 					role: "reviewer",
 					issue: job.issue,
+					gitlab: job.gitlab,
 					effort: run.effort ?? undefined,
 					...(session.hostedSize && { hostedSize: session.hostedSize }),
 				},
@@ -816,11 +883,11 @@ async function waitingRepository(c: ItemsCtx, job: DefaultBuilder): Promise<Sess
 async function savedContext(
 	c: ItemsCtx,
 	profile: UserProfile,
-	repositoryId: GithubId,
+	project: string,
 	makeSession: MakeSession,
 ): Promise<RunContext> {
 	const account = await readAccountDefaults(c.db);
-	const repository = await readDefaults(c.db, "github:" + repositoryId);
+	const repository = await readDefaults(c.db, project);
 	if (!makeSession.accountModels || !(namesModel(account) || namesModel(repository))) return { account, repository };
 	// Without a list (the plan is signed out), the defaults stay as saved and the item waits with the reason.
 	const list = await makeSession.accountModels(profile.demo).catch(() => null);
@@ -856,7 +923,7 @@ async function makeItem(
 	},
 ): Promise<ItemSummary> {
 	const input = cleanItemInput(raw);
-	const { github, linear } = intake ?? {};
+	const { github, linear, gitlab, jira, slack } = intake ?? {};
 	// An issue proposes a feature in its own repository only: a sibling needs the owner's own filing.
 	if (intake && input.repositories)
 		throw new UserError("An issue files a feature in its own repository only.", { code: "bad_input" });
@@ -874,7 +941,9 @@ async function makeItem(
 			: `i_${submission ? hex16(`${uid}\n${submission.key}`) : randomBytes(8).toString("hex")}`);
 	const sessionId = itemSessionId(itemId);
 	const issue = github && { number: github.origin.issue.number, installationId: github.installationId };
-	const context: RunContext = child?.context ?? (await savedContext(c, profile, input.repository.id, makeSession));
+	const context: RunContext =
+		child?.context ??
+		(await savedContext(c, profile, `${gitlab ? "gitlab" : "github"}:${input.repository.id}`, makeSession));
 	const role = child?.role ?? (input.mode === "orchestrate" ? "planner" : "builder");
 	if (!child) {
 		const offered = hostedSizesForPlan(
@@ -893,7 +962,14 @@ async function makeItem(
 		Object.assign(context.item, filedAgentSettings(context, input.model, input.effort));
 	}
 	const run = child?.resolved ?? resolveRun(context, role);
-	const job: DefaultBuilder = { context, role, repository: input.repository, title: input.title, issue };
+	const job: DefaultBuilder = {
+		context,
+		role,
+		repository: input.repository,
+		title: input.title,
+		issue,
+		...(gitlab && { gitlab: { project: gitlab.project, iid: gitlab.iid } }),
+	};
 	let summary: ItemSummary;
 	// Set just before the session is made: a refusal before that made nothing, and leaves the key unused.
 	let begun = false;
@@ -950,7 +1026,7 @@ async function makeItem(
 			run.profile ??= session.profile;
 			run.size = session.hostedSize ?? run.size;
 		}
-		const repository = session?.repository ?? (await waitingRepository(c, job));
+		const repository = session?.repository ?? job.gitlab?.project ?? (await waitingRepository(c, job));
 		if (!repository) throw new Error("the item's session has no repository");
 		const review = session && (await bindReviewer(c, profile, session, itemId, !!child, job, makeSession));
 		const now = Date.now();
@@ -965,6 +1041,8 @@ async function makeItem(
 			source,
 			github,
 			...(linear && { linear }),
+			...(jira && { jira }),
+			...(slack && { slack }),
 			createdAt: now,
 			activityAt: now,
 			verdict: null,
@@ -1004,13 +1082,7 @@ async function makeItem(
 			item.placement = child.placement;
 		}
 		// An issue someone else wrote is not the person's own text: every turn that hands the agent the task says where it came from.
-		const outside = sources(
-			child?.untrusted,
-			github && !github.origin.issue.trusted
-				? [untrustedWords.issue(github.origin.issue.number, github.origin.issue.author)]
-				: [],
-			linear ? linearSources(linear.origin) : [],
-		);
+		const outside = sources(child?.untrusted, gitlab?.sources, bindingsOf(meta).flatMap(untrustedOf));
 		if (outside.length) item.untrusted = outside;
 		const allowed = thirdParty(child?.unsandboxed).filter(source => outside.includes(source));
 		if (allowed.length) item.unsandboxed = allowed;
@@ -1079,15 +1151,10 @@ async function fileItem(
 	let attempt: Promise<ItemSummary>;
 	try {
 		const { idempotencyKey, ...asked } = raw as CreateItemInput;
-		// What a Linear item's key stands for is the issue's filing, not the text it had when the first attempt was made: an attempt that finishes an interrupted one is the same.
-		const submission = submissionOf(
-			idempotencyKey,
-			intake?.linear
-				? { linear: intake.linear.origin.linear.id, generation: intake.linear.generation }
-				: intake
-					? { asked, github: intake.github }
-					: asked,
-		);
+		// Retrying a tracker reservation finishes the same generation even after the issue text changes.
+		const [binding] = legacyBindings(intake ?? {});
+		const identity = binding ? submissionIdentity(binding, asked, idempotencyKey) : asked;
+		const submission = submissionOf(idempotencyKey, identity);
 		if (submission === null) return await makeItem(c, profile, asked, source, null, makeSession);
 		const key = scopedKey(!!intake, submission.key);
 		const made = c.vars.items.created.get(key);
@@ -2040,9 +2107,17 @@ export const itemActions = {
 			return view;
 		});
 	},
+	internalGitlabIntake(c: ItemsCtx, trigger: GitlabTrigger, makeSession: MakeSession) {
+		requireServiceFor(c, "call");
+		return inIntakeQueue(c, () =>
+			fileGitlabIssue(c, trigger, (profile, input, gitlab) =>
+				fileItem(c, profile, input, "gitlab", makeSession, { gitlab }),
+			),
+		);
+	},
 	internalGithubIntake(c: ItemsCtx, trigger: IntakeTrigger, makeSession: MakeSession) {
 		requireServiceFor(c, "call");
-		// All installations share this user's budget, and so does Linear: one queue. The durable claim makes interruption replayable.
+		// All trackers share this user's budget: one queue. The durable claim makes interruption replayable.
 		return inIntakeQueue(c, () =>
 			githubIntake(
 				c,
@@ -2052,15 +2127,23 @@ export const itemActions = {
 			),
 		);
 	},
-	/**
-	 * Files a Linear issue the platform has validated, on the repository its team is mapped to (`fileLinearIssue`): in the queue, under the cap and
-	 * through the reservations of `internalGithubIntake`, and as an item with its Linear provenance and no GitHub issue. The answer says what happened.
-	 */
-	internalLinearIntake(c: ItemsCtx, filing: LinearFiling, makeSession: MakeSession): Promise<LinearFiled> {
+	internalTrackerIntake(
+		c: ItemsCtx,
+		filing: LinearFiling | SiteJiraFiling,
+		makeSession: MakeSession,
+	): Promise<TrackerFiled> {
 		requireServiceFor(c, "call");
 		return inIntakeQueue(c, () =>
-			fileLinearIssue(c, filing, (profile, made) =>
-				fileItem(c, profile, made.input, "linear", makeSession, { linear: made.binding }),
+			fileTrackerIssue(c, filing, githubItemId, (profile, input, source, intake) =>
+				fileItem(c, profile, input, source, makeSession, intake),
+			),
+		);
+	},
+	internalSlackIntake(c: ItemsCtx, filing: SlackFiling, makeSession: MakeSession) {
+		requireServiceFor(c, "call");
+		return inIntakeQueue(c, () =>
+			fileSlackRequest(c, filing, (profile, made) =>
+				fileItem(c, profile, made.input, "slack", makeSession, { slack: made.binding }),
 			),
 		);
 	},
@@ -2204,16 +2287,50 @@ export const itemActions = {
 		return fileItem(c, profile, input, "web", makeSession);
 	},
 
-	actOnItem: async (c: ItemsCtx, input: { id: string; action: ItemAction }): Promise<ItemView> => {
+	mergeGitlabItem: async (c: ItemsCtx, itemId: string, reviewedHead: string): Promise<ItemView> => {
 		const profile = requireUser(c);
 		enabled();
-		knownItem(c, input?.id);
-		const view = await itemActor(c, profile.uid, input.id).internalAct({
-			action: input.action,
-			by: `person:${profile.uid}`,
-		});
+		knownItem(c, itemId);
+		const view = await itemActor(c, profile.uid, itemId).internalMergeGitlab(reviewedHead);
 		await noteItem(c, view);
-		return await attachmentStates(c, view);
+		return attachmentStates(c, view);
+	},
+
+	actOnItem: async (c: ItemsCtx, input: { id: string; action: ItemAction }): Promise<ItemView> => {
+		const profile = requireUser(c);
+		return await attachmentStates(c, await act(c, profile.uid, input?.id, input?.action));
+	},
+
+	/** A press in the item's Slack thread, by the member linked to this account. */
+	internalSlackAct: async (c: ItemsCtx, input: SlackAnswer): Promise<void> => {
+		requireServiceFor(c, "call");
+		await slackAct(c, input);
+	},
+
+	/** A mention in the item's thread: the owner's answer when it names a choice of the open question. */
+	internalSlackReply: async (
+		c: ItemsCtx,
+		input: { id: string; text: string; slackUser: string },
+	): Promise<SlackReply> => {
+		requireServiceFor(c, "call");
+		slackOwner(c);
+		knownItem(c, input.id);
+		const view = await itemActor(c, c.key[0], input.id).internalView();
+		const choices = view.question ? slackChoices(view.question, view.plan) : [];
+		if (!view.question || !choices.length) return { kind: "none" };
+		const wanted = words(input.text);
+		const choice = choices.find(
+			ch => words(ch.label) === wanted || words(shortLabel(ch)) === wanted || words(ch.id) === wanted,
+		);
+		if (!choice) return { kind: "choices", labels: choices.map(ch => ch.label) };
+		await slackAct(c, {
+			id: input.id,
+			question: view.question.id,
+			choice: choice.id,
+			version: view.plan?.version,
+			slackUser: input.slackUser,
+		});
+		return { kind: "answered" };
 	},
 
 	// Answered with work items off too: the ceiling on running agents among these holds for a person's own agents as well.

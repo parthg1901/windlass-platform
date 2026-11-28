@@ -1,7 +1,7 @@
 import { stripVTControlCharacters } from "node:util";
 import { createHash } from "node:crypto";
 import type { FeedbackEntry } from "../contract.js";
-import { plain } from "../github/ci.js";
+import { plain } from "../codehost/ci.js";
 
 export const QUIET_MS = 120_000;
 export const MOST_MS = 600_000;

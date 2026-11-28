@@ -164,6 +164,20 @@ missing when it starts.
 | `WLP_GITHUB_WEBHOOK_SECRET`, `WLP_GITHUB_WEBHOOK_SECRET_PREVIOUS` | the webhook's secret (at least 32 characters) and the previous one while it is rotated. Unset: no webhook route |
 | `WLP_GITHUB_POLL_FALLBACK` | `1`: keep polling GitHub, more slowly, beside the webhook; requires `WLP_GITHUB_WEBHOOK_SECRET` |
 
+## GitLab
+
+GitLab work items need one GitLab instance's OAuth application and work items turned on. With none of the three required variables, nothing of GitLab is offered; with some, GitLab is off and the server says which are missing.
+
+| Variable | Effect |
+|---|---|
+| `WLP_GITLAB_BASE_URL` | `https://gitlab.com` or the self-managed instance's base URL, including any path prefix |
+| `WLP_GITLAB_CLIENT_ID`, `WLP_GITLAB_CLIENT_SECRET` | the instance's OAuth application |
+| `WLP_GITLAB_REDIRECT_URL` | OAuth callback. Defaults to `/gitlab/callback` on `WLP_PUBLIC_URL`, or the local server when no public URL is set |
+
+Each project hook delivers to `/gitlab/webhook` under `WLP_PUBLIC_URL`, path prefix included. Windlass generates the hook's secret when a user saves a project.
+
+The OAuth application needs the `api` scope: Windlass uses it to register hooks, open merge requests, write notes, read pipelines and create project access tokens. That grant stays on the server. For each clone, fetch or push in a sandbox, Windlass creates a project access token for that one project (`read_repository` as Reporter to clone or fetch, `write_repository` as Developer to push) and revokes it as soon as the operation ends. GitLab expiry dates are whole days, so a token Windlass could not revoke expires within about a day, and the next operation on that project revokes it. Creating project access tokens needs Maintainer on the project and, on GitLab.com, a Premium or Ultimate plan. Self-managed GitLab allows them on any plan unless an administrator or group owner has turned them off. Without them, the clone or push stops and says what is needed. Windlass does not fall back to the user's sign-in.
+
 ## Linear
 
 Linear intake requires work items, a GitHub repository connection and a configured Linear OAuth app. A partial set of credentials leaves the integration unavailable.
@@ -173,6 +187,30 @@ Linear intake requires work items, a GitHub repository connection and a configur
 | `WLP_LINEAR_CLIENT_ID`, `WLP_LINEAR_CLIENT_SECRET`, `WLP_LINEAR_WEBHOOK_SECRET` | OAuth client ID and secret and the secret for signed issue deliveries. The webhook secret must be at least 32 characters. |
 | `WLP_LINEAR_REDIRECT_URL` | Registered OAuth callback. Defaults to `/linear/callback` on the platform’s public origin, or the local server when no public origin is set. |
 | `WLP_LINEAR_API_URL`, `WLP_LINEAR_URL` | Override Linear’s API and authorization origins, for example for a test stand-in. |
+
+## Jira Cloud
+
+Create an OAuth 2.0 (3LO) app in the Atlassian developer console. Enable the Jira API scopes `read:jira-user`, `read:jira-work`, `write:jira-work` and `manage:jira-webhook`. Windlass also requests `offline_access` to renew access without asking the user to sign in again. Register the exact callback URL below and allow the intended users to authorize the app.
+
+| Variable | Effect |
+|---|---|
+| `WLP_JIRA_CLIENT_ID`, `WLP_JIRA_CLIENT_SECRET` | Both are required. The server uses the secret for OAuth and to verify Jira’s signed webhook tokens. There is no separate webhook secret. |
+| `WLP_JIRA_REDIRECT_URL` | OAuth callback. Defaults to `/jira/callback` on `WLP_PUBLIC_URL`, or `http://localhost:<WLP_HTTP_PORT>/jira/callback` when no public URL is set. |
+| `WLP_JIRA_AUTH_URL`, `WLP_JIRA_API_URL` | Authorization and API origins. Default to `https://auth.atlassian.com` and `https://api.atlassian.com`; override for a local stand-in. |
+
+Use a public HTTPS origin for Jira Cloud. Route the callback and `/jira/webhook/<key>` to the server and keep webhook keys out of access logs. The app registers and renews dynamic webhooks for issue creation and updates; do not create a static webhook in Jira. Each user authorizes Jira in Settings, selects an accessible site, and maps a project to a connected GitHub repository. Work items must be enabled for filing.
+
+## Slack
+
+Slack intake needs a Slack app, work items and a GitHub repository connection. Set all three variables below; with any missing, Slack is not offered.
+
+| Variable | Effect |
+|---|---|
+| `WLP_SLACK_CLIENT_ID`, `WLP_SLACK_CLIENT_SECRET` | the Slack app's OAuth client |
+| `WLP_SLACK_SIGNING_SECRET` | verifies Slack's signed requests |
+| `WLP_SLACK_URL` | Slack's origin (default `https://slack.com`); override for a local stand-in |
+
+Under `WLP_PUBLIC_URL`, register `/slack/callback` for OAuth, `/slack/events` for the `app_mention` bot event, `/slack/commands` for the `/windlass` command, and `/slack/interactions` as the Interactivity Request URL. Buttons and the **Request changes** form need no extra scope. The bot scopes are `app_mentions:read`, `commands`, `chat:write`, `channels:read` and `groups:read`.
 
 ## Machines
 
@@ -197,7 +235,7 @@ Operators can set [per-user limits](#per-user-limits), including a daily token c
 | `WLP_ITEMS` | `1`: every user of the deployment may file work items ([work-items.md](work-items.md#turning-work-items-on)); default off. The `WLP_FACTORY_HOSTED_RUNNING` ceiling holds either way |
 | `WLP_FACTORY_HOSTED_RUNNING` | how many hosted sandboxes a user may have at work at once, their own agents and their work items' together (default 3, from 1 to 100). A work item's turn past it waits; a prompt of the user's own is refused with the reason. Sandboxes on the user's machines never count |
 | `WLP_FACTORY_ITEM_USD`, `WLP_FACTORY_ITEM_PLAN_PCT`, `WLP_FACTORY_ITEM_TOKENS`, `WLP_FACTORY_ITEM_HOSTED_SECONDS` | a new work item's budget: dollars where a key pays (default 5), points of the plan's 5-hour window where a plan pays (default 20), cost-weighted tokens where neither can be measured, cached input counted at a tenth (default 2,000,000), and seconds of hosted sandbox time (default 7200). A feature's budget is its approved subtasks' and one item's for its own turns |
-| `WLP_FACTORY_GITHUB_ITEMS_PER_DAY` | how many items a user may file from GitHub and Linear issues together in a UTC day, drafts among them (default 20) |
+| `WLP_FACTORY_GITHUB_ITEMS_PER_DAY` | how many items a user may file from GitHub, GitLab, Linear and Jira issues and Slack requests together in a UTC day, drafts among them (default 20) |
 | `WLP_FACTORY_ORCHESTRATE` | `0`: hide the Orchestrate control and refuse new orchestrated filings (default on) |
 | `WLP_FACTORY_REVIEWER` | `on`: give new top-level items a second review on their builder’s place, agent and profile. A feature is reviewed as a whole. Default off. |
 | `WLP_FACTORY_CROSS_REPO` | `1` enables Plan-first features spanning two connected repositories, subject to the account’s plan. Default off. |

@@ -18,16 +18,20 @@
  * Where the deployment runs no second review (`PlatformInfo.items.reviewer`), one line under the
  * heading says so and no row says a word of it.
  */
-import { type GithubId, type ItemState, type ItemSummary } from "@contract";
+import { type ItemState, type ItemSummary, type RepoAddress } from "@contract";
+import { repoAddress } from "../../../server/src/codehost/ref";
 import { useId, useRef, type ReactNode } from "react";
 import { RailFrame, RepoRail, useRailFold, useSearchKey, type RailChoice } from "../components/Rail";
 import { RailFoot, useHostedUsage } from "../components/RailFoot";
 import { StartComposer } from "../components/StartComposer";
-import { ChevronIcon, FileIcon, Mark, RepoIcon, WarnIcon } from "../components/Icons";
+import { ApiIcon, ChevronIcon, FileIcon, Mark, RepoIcon, WarnIcon } from "../components/Icons";
+import { ProviderIcon } from "../components/ProviderIcon";
+import { hostOfAddress, RepoTile } from "../components/RepoTile";
 import { Menu, PHONE_QUERY, Pill, useMediaQuery, type MenuSpec } from "../components/ui";
 import { plural } from "../lib/format";
 import { feedCounts, feedRepositories, repositoryName, workingCounts } from "../lib/repositories";
 import { ITEM_SOURCES, linkProps, navigate, useHistoryState, type ItemSource, type Route } from "../lib/router";
+import { bySource, filterWord } from "../../../server/src/sources/registry.js";
 import { railOf, type Rail } from "../lib/workspace";
 import { useApp } from "../state/app";
 import { useFactoryLimits, useNow, useSessions } from "../state/hooks";
@@ -40,12 +44,14 @@ import { ItemRow } from "../components/ItemRow";
 import { type ItemsState } from "../state/items";
 
 /** How an item was filed, in the filter's words. */
-export const SOURCE_WORD: Record<ItemSource, string> = {
-	web: "web",
-	api: "API",
-	github: "GitHub issue",
-	linear: "Linear issue",
-};
+export const SOURCE_WORD: Record<ItemSource, string> = { web: "web", api: "API", ...bySource(filterWord) };
+
+/** A source's glyph in the "Filed from" menu: its mark, the Windlass mark for the web, braces for the API. */
+function SourceGlyph({ source }: { source: ItemSource }) {
+	if (source === "web") return <Mark size={14} />;
+	if (source === "api") return <ApiIcon size={14} />;
+	return <ProviderIcon id={source} size={13} />;
+}
 
 const IN_PROGRESS: ItemState[] = ["working", "queued", "waiting"];
 const ENDED: ItemState[] = ["done", "failed", "cancelled"];
@@ -83,11 +89,11 @@ export function progressCount(progress: readonly ItemSummary[], children: readon
 /** The items the filters leave: on one repository, filed one way. */
 export function filterItems(
 	list: readonly ItemSummary[],
-	filters: { repository?: GithubId; from?: ItemSource },
+	filters: { repository?: RepoAddress; from?: ItemSource },
 ): ItemSummary[] {
 	return list.filter(
 		item =>
-			(filters.repository === undefined || String(item.repository.id) === String(filters.repository)) &&
+			(filters.repository === undefined || String(repoAddress(item.repository)) === String(filters.repository)) &&
 			(filters.from === undefined || item.source === filters.from),
 	);
 }
@@ -96,15 +102,17 @@ export function filterItems(
 function repositoriesOf(
 	list: readonly ItemSummary[],
 	counted: ReturnType<typeof feedRepositories>,
-): Array<{ id: GithubId; name: string; items: number }> {
+): Array<{ id: RepoAddress; name: string; items: number }> {
 	const found = new Map(counted.map(repository => [String(repository.id), repository]));
-	for (const item of list)
-		if (!found.has(String(item.repository.id)))
-			found.set(String(item.repository.id), {
-				id: item.repository.id,
+	for (const item of list) {
+		const id = repoAddress(item.repository);
+		if (!found.has(String(id)))
+			found.set(String(id), {
+				id,
 				name: repositoryName(item.repository),
-				items: list.filter(one => String(one.repository.id) === String(item.repository.id)).length,
+				items: list.filter(one => String(repoAddress(one.repository)) === String(id)).length,
 			});
+	}
 	return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -178,7 +186,7 @@ function FilterMenu({
 	label: string;
 	icon: ReactNode;
 	value: string;
-	choices: Array<{ key: string; name: string; note?: string }>;
+	choices: Array<{ key: string; name: string; note?: string; icon?: ReactNode }>;
 	chosen: string | null;
 	onChoose(key: string | null): void;
 }) {
@@ -208,6 +216,7 @@ function FilterMenu({
 					value: choice.key,
 					label: choice.name,
 					description: choice.note,
+					icon: choice.icon,
 					checked: chosen === choice.key,
 					onSelect: () => onChoose(choice.key),
 				})),
@@ -272,7 +281,7 @@ export function Factory({
 	filters,
 	items,
 }: {
-	filters: { repository?: GithubId; from?: ItemSource };
+	filters: { repository?: RepoAddress; from?: ItemSource };
 	items: ItemsState;
 }) {
 	const { platform } = useApp();
@@ -303,7 +312,7 @@ export function Factory({
 	const shownCount = shown === null ? 0 : shown.length - groups.ended.length + endedCount;
 	const repositories = repositoriesOf(list ?? [], feedRepositories(items.feed));
 	const filtered = filters.repository !== undefined || filters.from !== undefined;
-	const choose = (next: { repository?: GithubId; from?: ItemSource }) => {
+	const choose = (next: { repository?: RepoAddress; from?: ItemSource }) => {
 		navigate({ name: "factory", ...next }, { replace: true });
 	};
 	const chosenRepository =
@@ -474,6 +483,7 @@ export function Factory({
 										key: String(repository.id),
 										name: repository.name,
 										note: plural(repository.items, "work item"),
+										icon: <RepoTile name={repository.name} host={hostOfAddress(repository.id)} />,
 									}))}
 									chosen={filters.repository === undefined ? null : String(filters.repository)}
 									onChoose={key =>
@@ -490,9 +500,13 @@ export function Factory({
 							<FilterMenu
 								name="from"
 								label="Filed from"
-								icon={<FileIcon size={14} />}
+								icon={filters.from ? <SourceGlyph source={filters.from} /> : <FileIcon size={14} />}
 								value={filters.from ? SOURCE_WORD[filters.from] : "all"}
-								choices={ITEM_SOURCES.map(source => ({ key: source, name: SOURCE_WORD[source] }))}
+								choices={ITEM_SOURCES.map(source => ({
+									key: source,
+									name: SOURCE_WORD[source],
+									icon: <SourceGlyph source={source} />,
+								}))}
 								chosen={filters.from ?? null}
 								onChoose={key =>
 									choose({ repository: filters.repository, from: ITEM_SOURCES.find(source => source === key) })
@@ -603,7 +617,7 @@ export function railCounts(list: readonly ItemSummary[]): { needs: number; progr
 export function factoryRail(rail: Rail, items: readonly ItemSummary[]): Rail {
 	const by = new Map<string, ItemSummary[]>();
 	for (const item of items) {
-		const key = String(item.repository.id);
+		const key = String(repoAddress(item.repository));
 		by.set(key, [...(by.get(key) ?? []), item]);
 	}
 	const tally = (list: readonly ItemSummary[]) => {

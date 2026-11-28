@@ -1,6 +1,7 @@
 import { dependencyHash, SHA, type TreeEntry } from "../sandbox/snapshot-key.js";
 
 import type { GithubId } from "../contract.js";
+import type { GitAccess, GitCredential } from "../codehost/types.js";
 import { VERIFIED_NAME, type CheckRunUpdate } from "./checks.js";
 import { decimalId, githubId, githubJsonInteger, parseGithubJson } from "./ids.js";
 import { createPrivateKey, createSign, type KeyObject } from "node:crypto";
@@ -84,6 +85,32 @@ export class GithubError extends Error {
 	get unreachable(): boolean {
 		return this.status === 0 || this.status >= 500;
 	}
+}
+
+/**
+ * A GraphQL request GitHub answered without doing it. GitHub answers most refusals with 200 and an `errors` list, so
+ * `type` and `said` come from its first error; both are null when it gave none and only left out the expected data.
+ */
+export class GraphqlRefusal extends Error {
+	readonly type: string | null;
+	readonly said: string | null;
+	constructor(what: string, body: unknown, unconfirmed: string) {
+		const first = graphqlError(body);
+		super(first ? `GitHub refused to ${what}: ${first.text}` : unconfirmed);
+		this.name = "GraphqlRefusal";
+		this.type = first?.type ?? null;
+		this.said = first?.text ?? null;
+	}
+}
+
+/** The first of a GraphQL answer's `errors`, as "TYPE: message", cut to a log line. */
+export function graphqlError(body: unknown): { type: string | null; text: string } | null {
+	const errors = record(body).errors;
+	if (!Array.isArray(errors) || errors.length === 0) return null;
+	const first = record(errors[0]);
+	const type = typeof first.type === "string" && first.type ? first.type.slice(0, 64) : null;
+	const message = typeof first.message === "string" ? first.message.replace(/\s+/g, " ").trim().slice(0, 300) : "";
+	return { type, text: [type, message].filter(Boolean).join(": ") || "an error without a message" };
 }
 
 export type PermissionLevel = "read" | "write";
@@ -460,6 +487,24 @@ export class GithubApp {
 			console.error(`[wlp] github.token.revoke_failed: ${error instanceof Error ? error.message : "unknown error"}`);
 			return false;
 		}
+	}
+
+	/**
+	 * A token for a sandbox's Git on one repository: `contents: read` to clone and fetch, `contents: write` to push.
+	 * Its `revoke` is `revoke` above (`withGitCredential` calls it when the operation has ended).
+	 */
+	async gitCredential(installationId: GithubId, repositoryId: GithubId, access: GitAccess): Promise<GitCredential> {
+		const issued = await this.installationToken(installationId, {
+			repositoryId,
+			permissions: { metadata: "read", contents: access },
+		});
+		return {
+			token: issued.token,
+			username: "x-access-token",
+			revoke: async () => {
+				await this.revoke(issued);
+			},
+		};
 	}
 
 	/**
@@ -1454,9 +1499,13 @@ export class GithubApp {
 				});
 				const result = record(record(body).data).addReaction;
 				if (record(record(result).reaction).content !== "EYES")
-					throw new Error("GitHub did not acknowledge the review.");
+					throw new GraphqlRefusal("acknowledge the review", body, "GitHub did not acknowledge the review.");
 			},
 		).catch(error => {
+			if (error instanceof GraphqlRefusal && (error.type === "FORBIDDEN" || error.type === "NOT_FOUND")) {
+				console.warn(`github.feedback.ack_skipped entry=${key} graphql=${error.type}`);
+				return;
+			}
 			if (!(error instanceof GithubError) || error.rateLimited || ![403, 404, 410].includes(error.status)) throw error;
 			console.warn(`github.feedback.ack_skipped entry=${key} status=${error.status}`);
 		});

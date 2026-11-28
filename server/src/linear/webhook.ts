@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { config, linearConfig, type LinearConfig } from "../config.js";
 import { AddressBudget, clientAddress, MINUTE_MS, rateLimited } from "../http-limits.js";
+import { sourceCaps } from "../sources/registry.js";
 import { isLinearId, record, text } from "./app.js";
 
 export const LINEAR_WEBHOOK_PATH = "/linear/webhook";
@@ -9,11 +10,9 @@ export const MAX_WEBHOOK_BYTES = 1024 * 1024;
 /** How far a delivery's signed timestamp may be from now, either way. Linear's own SDK uses a minute. */
 export const MAX_TIMESTAMP_SKEW_MS = 60_000;
 
-export const QUICK_LABELS: readonly string[] = ["windlass:quick", "windlass-quick"];
-
 export function isTriggerLabel(name: string): boolean {
 	const label = name.trim().toLowerCase();
-	return label === "windlass" || QUICK_LABELS.includes(label);
+	return label === "windlass" || sourceCaps("linear").quickLabels.includes(label);
 }
 
 /** What a qualifying delivery comes to once authenticated: lookup ids and the transition, nothing of the issue's content. */

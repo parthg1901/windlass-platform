@@ -5,6 +5,7 @@ import { MissingPageLinks } from "./components/MissingPageLinks";
 import { Mark } from "./components/Icons";
 import { BackLink, PageTrail } from "./components/Nav";
 import { TopBar } from "./components/TopBar";
+import { repoAddress } from "../../server/src/codehost/ref.js";
 import { accountTrail, factoryLabel, itemTrail, sectionOfPage } from "./lib/nav";
 import {
 	navigate,
@@ -149,7 +150,8 @@ function FactoryRoute({
 	const repository =
 		route.repository === undefined
 			? null
-			: (items.list?.find(item => String(item.repository.id) === String(route.repository))?.repository.name ?? null);
+			: (items.list?.find(item => String(repoAddress(item.repository)) === String(route.repository))?.repository.name ??
+				null);
 	usePageLabel(factoryLabel(repository));
 	return (
 		<div className="app app-workspace">
