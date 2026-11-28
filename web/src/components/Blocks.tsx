@@ -56,6 +56,7 @@ import {
 	unrunLine,
 } from "../lib/verified";
 import { useNow } from "../state/hooks";
+import { turnPayerLabel } from "../lib/cost";
 import { linkProps } from "../lib/router";
 import { CopyButton, useLatest } from "./Copy";
 import { DiffHunks } from "./DiffView";
@@ -1424,6 +1425,7 @@ function TurnSummary({ turn }: { turn: TurnView }) {
 				<p className="turn-end-line turn-end-sub">
 					<span>context {contextWords(end.context)}</span>
 					{end.context.cost ? <span>{costWords(end.context.cost)}</span> : null}
+					{turnPayerLabel(end.modelKey) ? <span>{turnPayerLabel(end.modelKey)}</span> : null}
 				</p>
 			) : tokenLine || end.context === null ? null : end.outcome !== "error" ? (
 				<p className="turn-end-line turn-end-sub">

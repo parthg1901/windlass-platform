@@ -134,6 +134,8 @@ export interface ModelKeySpend {
 	provider: ModelProvider;
 	generation: string;
 	tokens: number;
+	/** The connected plan paid, not a Settings key. */
+	plan?: true;
 }
 
 export type TimelineItem =

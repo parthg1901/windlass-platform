@@ -60,6 +60,8 @@ export function Layers({
  */
 export interface ClaudeFacts {
 	hosted?: boolean;
+	/** What paid for its latest turn that says: a connected plan or a Settings key; absent before one. */
+	paidBy?: "plan" | "key";
 	mode: SessionMode;
 	opencode?: boolean;
 	codex?: boolean;
@@ -140,7 +142,15 @@ export function isolationOutcomes(profile: SandboxProfile, claude: ClaudeFacts |
 			: { text: "No internet from commands", kept: true };
 	const signIn: Outcome = claude
 		? claude.hosted
-			? { text: "Your API key stays on the platform", kept: true }
+			? {
+					text:
+						claude.paidBy === "plan"
+							? "Your plan's token stays on the platform"
+							: claude.paidBy === "key"
+								? "Your API key stays on the platform"
+								: "Your plan or key stays on the platform",
+					kept: true,
+				}
 			: claude.codex
 				? { text: "Your OpenAI sign-in stays on the machine", kept: true }
 				: claude.opencode

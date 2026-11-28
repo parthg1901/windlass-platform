@@ -9,7 +9,18 @@ import {
 	noUsage,
 	turnMeter,
 } from "../../../server/src/factory/cost.js";
-import { costWords, lineWords, payerAmount, payerLabel, sandboxRows, summaryCost, todayCostWords, usd } from "./cost";
+import {
+	costWords,
+	lineWords,
+	payerAmount,
+	payerLabel,
+	sandboxRows,
+	sessionPayerRows,
+	summaryCost,
+	todayCostWords,
+	turnPayerLabel,
+	usd,
+} from "./cost";
 
 const RATES: CostRates = {
 	models: { "anthropic/claude-sonnet-4-5": { input: 3, output: 15, cacheRead: 0.3 } },
@@ -112,5 +123,23 @@ describe("today's model cost on Usage", () => {
 		]);
 		expect(todayCostWords(since, RATES)).toBe("$3.00 on your keys + ≈ $3.00 included in your plans");
 		expect(modelUsageSince(before, before).models).toEqual([]);
+	});
+});
+
+describe("a session's cost by who paid", () => {
+	it("splits the turns a plan included from what a key paid, as an item's cost says them", () => {
+		expect(sessionPayerRows(undefined, RATES)).toEqual([]);
+		expect(sessionPayerRows(noUsage(), RATES)).toEqual([]);
+		expect(sessionPayerRows(usage({ ...keyTurn, key }, { ...keyTurn, key: plan }), RATES)).toEqual([
+			{ label: "Included in your Claude plan", value: "1 turn · ≈ $3.00 at API prices" },
+			{ label: "Paid with your Anthropic key", value: "$3.00" },
+		]);
+	});
+	it("names who paid for one turn, and nothing for a turn that does not say", () => {
+		expect(turnPayerLabel({ provider: "anthropic", generation: "g", tokens: 10, plan: true })).toBe(
+			"Included in your Claude plan",
+		);
+		expect(turnPayerLabel({ provider: "openai", generation: "g", tokens: 10 })).toBe("Paid with your OpenAI key");
+		expect(turnPayerLabel(undefined)).toBeNull();
 	});
 });

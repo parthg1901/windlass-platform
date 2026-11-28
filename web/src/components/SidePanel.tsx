@@ -40,6 +40,8 @@ import {
 	type SessionView,
 } from "../lib/timeline";
 import { useApp, useAuth } from "../state/app";
+import { useCostRates } from "../state/hooks";
+import { sessionPayerRows } from "../lib/cost";
 import { Dialog } from "./Dialog";
 import { DiffView } from "./DiffView";
 import { ContinuedRows } from "./ContinueSession";
@@ -205,10 +207,12 @@ function WhereItRuns({
 	egress?: EgressMode;
 }) {
 	const { platform } = useApp();
+	const paid = view.turns.findLast(turn => turn.end?.modelKey)?.end?.modelKey;
 	const claude =
 		summary.harness && summary.harness !== "windlass"
 			? {
 					hosted: summary.place.kind === "hosted",
+					...(paid && { paidBy: paid.plan ? ("plan" as const) : ("key" as const) }),
 					codex: summary.harness === "codex",
 					opencode: summary.harness === "opencode",
 					mode: currentMode(summary, profile),
@@ -383,6 +387,9 @@ function Usage({ view, summary }: { view: SessionView; summary: SessionSummary }
 	const uncounted = tokens ? uncountedWords(view, perCall) : null;
 	const context = usage === "context" ? view.context : null;
 	const share = context ? Math.min(1, context.used / context.size) : 0;
+	const rates = useCostRates();
+	// Who paid for its turns, as an item's cost says it: a plan's turns are included in it, a key's are billed.
+	const payers = rates ? sessionPayerRows(summary.spent, rates) : [];
 	return (
 		<section className="panel-section" aria-labelledby="panel-usage" data-usage={usage}>
 			<h2 className="panel-title" id="panel-usage">
@@ -427,6 +434,16 @@ function Usage({ view, summary }: { view: SessionView; summary: SessionSummary }
 					</>
 				) : null}
 			</div>
+			{payers.length > 0 ? (
+				<dl className="panel-payers">
+					{payers.map(row => (
+						<div key={row.label}>
+							<dt>{row.label}</dt>
+							<dd>{row.value}</dd>
+						</div>
+					))}
+				</dl>
+			) : null}
 			{unreported ? (
 				<p className="panel-empty panel-note">No token counts were reported.</p>
 			) : uncounted && (perCall || !context) ? (

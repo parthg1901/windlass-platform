@@ -59,6 +59,7 @@ import {
 import { setupProjectOf } from "../../setup-command.js";
 import { VerificationLog, groupReviewPaths } from "../../verified.js";
 import { turnTokens } from "../../factory/budget.js";
+import { addTurn, noUsage, turnMeter } from "../../factory/cost.js";
 import { reportedModelUsage, usesPlatformModel } from "../../usage.js";
 import { PlatformChecks } from "../../sandbox/platform-checks.js";
 import { type Handoff, itemActor, modelKeyActor, secretsActor, userActor } from "../internal.js";
@@ -2006,7 +2007,12 @@ export async function endSegment(c: Ctx, t: TurnScope): Promise<SegmentEnd> {
 	const segmentUsage = usageOf(t.result?.summary?.usage) ?? t.result?.acp?.tokens ?? null;
 	const modelKey =
 		capabilitiesOf(meta.harness).events === "acp" && account.provider && t.generation && segmentUsage
-			? { provider: account.provider, generation: t.generation, tokens: turnTokens(segmentUsage) }
+			? {
+					provider: account.provider,
+					generation: t.generation,
+					tokens: turnTokens(segmentUsage),
+					...(account.plan && { plan: true as const }),
+				}
 			: undefined;
 	if (pausing && active.pausing && run) {
 		try {
@@ -2264,6 +2270,23 @@ export async function closeTurn(
 			const answer = await metered(c, () => takeHold(c, meta, false));
 			if (answer && !answer.ok && answer.reason === "allowance") active.outOfTime = true;
 		}
+
+		// What the turn used, by model and payer, for the session's cost (`SessionSummary.spent`); one that could not run
+		// and reported nothing cost nothing.
+		const credential = run?.credential;
+		if (credential && !meta.readiness && (usage !== null || result?.acp?.usage || outcome !== "error"))
+			addTurn(
+				(meta.spent ??= noUsage()),
+				turnMeter({
+					harness: meta.harness ?? "windlass",
+					model: credential.model,
+					key: credential.key,
+					signIn: credential.itemSignIn ?? meta.origin?.signIn,
+					usage,
+					cost: result?.acp?.usage?.cost,
+					size: null,
+				}),
+			);
 
 		c.vars.pending = [];
 		append(c, {

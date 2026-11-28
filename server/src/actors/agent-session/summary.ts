@@ -36,6 +36,7 @@ export function summaryOf(meta: SessionMeta): SessionSummary {
 			: {}),
 		turns: meta.turns,
 		lastOutcome: meta.lastOutcome,
+		...(meta.spent?.models.length ? { spent: { models: meta.spent.models, sandbox: [] } } : {}),
 		...(meta.startTimes?.length ? { startTimes: meta.startTimes } : {}),
 		sandbox: meta.sandbox,
 		...(meta.servers && meta.servers.length > 0
