@@ -8,14 +8,15 @@ import { githubApp } from "../github/app.js";
 import { resolveRepository, type StoredConnection } from "../github/repos.js";
 import { sealSecret } from "../repo-secrets.js";
 import { serverSealer } from "../signin/seal.js";
-import { exchangeCode } from "../slack/app.js";
-import { authorizeSlack } from "../slack/connect.js";
-
+import { exchangeCode, signedInUser } from "../slack/app.js";
+import { authorizeSlack, authorizeSlackLink, slackLinkSubject } from "../slack/connect.js";
 import { type ActorClient, isActorGone } from "./internal.js";
+import { linkProvenAccount } from "./user-identity.js";
 
 export const SLACK_TABLES = [
 	"CREATE TABLE IF NOT EXISTS slack_connect (id INTEGER PRIMARY KEY CHECK(id=1), nonce TEXT, expires INTEGER)",
 	"CREATE TABLE IF NOT EXISTS slack_owner (id INTEGER PRIMARY KEY CHECK(id=1), team TEXT)",
+	"CREATE TABLE IF NOT EXISTS slack_link (nonce TEXT PRIMARY KEY, expires INTEGER NOT NULL)",
 ];
 type Ctx = Parameters<typeof requireUser>[0] & {
 	key: string[];
@@ -58,7 +59,7 @@ async function status(c: Ctx): Promise<SlackStatus> {
 		const view = await ifPresent<Pick<Extract<SlackStatus, { state: "connected" }>, "workspaceName" | "mappings">>(
 			workspace(c, row.team).internalView(c.key[0]),
 		);
-		if (view) return { state: "connected", ...view };
+		if (view) return { state: "connected", teamId: row.team, ...view };
 		await c.db.execute("DELETE FROM slack_owner");
 	}
 	return { state: "disconnected" };
@@ -94,11 +95,13 @@ export const slackSettingsActions = {
 			throw invalid();
 		if ((await status(c)).state === "connected")
 			throw new UserError("Disconnect your workspace first.", { code: "slack_connected" });
-		const { teamId, name, bot, token } = await exchangeCode(grant.code);
+		const { teamId, name, bot, token, installer } = await exchangeCode(grant.code);
 		const ws = c.client().slackWorkspace.getOrCreate([teamId], { params: serviceParams() });
 		const sealed = sealSecret(serverSealer(), uid, `slack:${teamId}`, "bot", token);
 		await c.db.execute("INSERT OR REPLACE INTO slack_owner VALUES(1,?)", teamId);
 		await ws.internalInstall({ owner: uid, name, bot, sealed });
+		// Installing is authorizing at Slack as oneself: what the installer asks for in Slack is filed in this account.
+		if (installer) await linkProvenAccount(c, "slack", teamId, { id: installer, name: "" }, name);
 		return status(c);
 	}),
 	slackChannels: action(async (c): Promise<SlackChannel[]> => (await owner(c)).internalChannels(c.key[0])),
@@ -132,3 +135,36 @@ export const slackSettingsActions = {
 		return status(c);
 	}),
 };
+
+/** Begins Sign in with Slack to link the Slack user who signs in: the address to send the browser to. */
+export async function beginSlackLink(c: Ctx, origin: string): Promise<{ url: string }> {
+	if (!slackConfig()?.signIn)
+		throw new UserError("Sign in with Slack is not set up here. Mention Windlass in Slack to get a link.", {
+			code: "slack_off",
+		});
+	if (!config.origins.includes(origin))
+		throw new UserError("Link from Windlass Settings.", { code: "origin_not_allowed" });
+	const nonce = randomUUID();
+	await c.db.execute(
+		"DELETE FROM slack_link WHERE expires<=? OR nonce NOT IN (SELECT nonce FROM slack_link ORDER BY expires DESC LIMIT 9)",
+		Date.now(),
+	);
+	await c.db.execute("INSERT INTO slack_link VALUES(?,?)", nonce, Date.now() + 600_000);
+	return authorizeSlackLink(c.key[0], nonce, origin);
+}
+
+/** The Slack user and team a Sign in with Slack ticket proves; null for a ticket not this user's, or used. */
+export async function completeSlackLink(c: Ctx, ticket: string) {
+	let grant: { nonce: string; code: string };
+	try {
+		grant = JSON.parse(serverSealer().open("transit", slackLinkSubject(c.key[0]), ticket));
+	} catch {
+		return null;
+	}
+	const claimed = await c.db.execute(
+		"DELETE FROM slack_link WHERE nonce=? AND expires>? RETURNING nonce",
+		grant.nonce,
+		Date.now(),
+	);
+	return claimed.length ? signedInUser(grant.code) : null;
+}

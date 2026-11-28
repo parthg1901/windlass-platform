@@ -167,7 +167,7 @@ GitLab work items need one GitLab instance's OAuth application and work items tu
 
 Each project hook delivers to `/gitlab/webhook` under `WLP_PUBLIC_URL`, path prefix included. Windlass generates the hook's secret when a user saves a project.
 
-The OAuth application needs the `api` scope: Windlass uses it to register hooks, open merge requests, write notes, read pipelines and create project access tokens. That grant stays on the server. For each clone, fetch or push in a sandbox, Windlass creates a project access token for that one project (`read_repository` as Reporter to clone or fetch, `write_repository` as Developer to push) and revokes it as soon as the operation ends. GitLab expiry dates are whole days, so a token Windlass could not revoke expires within about a day, and the next operation on that project revokes it. Creating project access tokens needs Maintainer on the project and, on GitLab.com, a Premium or Ultimate plan. Self-managed GitLab allows them on any plan unless an administrator or group owner has turned them off. Without them, the clone or push stops and says what is needed. Windlass does not fall back to the user's sign-in.
+The OAuth application needs the `api` and `read_user` scopes. `read_user` is the read-only sign-in a user makes to link their own GitLab account in Settings: Windlass reads who they are, then revokes the token. Without it, linking shows that GitLab refused the scope. The `api` scope is for the connection: Windlass uses it to register hooks, open merge requests, write notes, read pipelines and create project access tokens. That grant stays on the server. For each clone, fetch or push in a sandbox, Windlass creates a project access token for that one project (`read_repository` as Reporter to clone or fetch, `write_repository` as Developer to push) and revokes it as soon as the operation ends. GitLab expiry dates are whole days, so a token Windlass could not revoke expires within about a day, and the next operation on that project revokes it. Creating project access tokens needs Maintainer on the project and, on GitLab.com, a Premium or Ultimate plan. Self-managed GitLab allows them on any plan unless an administrator or group owner has turned them off. Without them, the clone or push stops and says what is needed. Windlass does not fall back to the user's sign-in.
 
 ## Linear
 
@@ -181,7 +181,7 @@ Linear intake requires work items, a GitHub repository connection and a configur
 
 ## Jira Cloud
 
-Create an OAuth 2.0 (3LO) app in the Atlassian developer console. Enable the Jira API scopes `read:jira-user`, `read:jira-work`, `write:jira-work` and `manage:jira-webhook`. Windlass also requests `offline_access` to renew access without asking the user to sign in again. Register the exact callback URL below and allow the intended users to authorize the app.
+Create an OAuth 2.0 (3LO) app in the Atlassian developer console. Enable the Jira API scopes `read:jira-user`, `read:jira-work`, `write:jira-work` and `manage:jira-webhook`. Windlass also requests `offline_access` to renew access without asking the user to sign in again. A user linking their own Jira account in Settings signs in with `read:jira-user` alone, with no refresh token, so the app needs no other scope for it. Register the exact callback URL below and allow the intended users to authorize the app.
 
 | Variable | Effect |
 |---|---|
@@ -200,8 +200,11 @@ Slack intake needs a Slack app, work items and a GitHub repository connection. S
 | `WLP_SLACK_CLIENT_ID`, `WLP_SLACK_CLIENT_SECRET` | the Slack app's OAuth client |
 | `WLP_SLACK_SIGNING_SECRET` | verifies Slack's signed requests |
 | `WLP_SLACK_URL` | Slack's origin (default `https://slack.com`); override for a local stand-in |
+| `WLP_SLACK_SIGN_IN` | `1` offers **Sign in with Slack** for linking a user's own Slack account in Settings. Needs the app set up for it, below. Off, a user links through the private link the bot sends them |
 
 Under `WLP_PUBLIC_URL`, register `/slack/callback` for OAuth, `/slack/events` for the `app_mention` bot event, `/slack/commands` for the `/windlass` command, and `/slack/interactions` as the Interactivity Request URL. Buttons and the **Request changes** form need no extra scope. The bot scopes are `app_mentions:read`, `commands`, `chat:write`, `channels:read` and `groups:read`.
+
+For `WLP_SLACK_SIGN_IN=1`, open the Slack app's **OAuth & Permissions** page and add `openid` and `profile` under **User Token Scopes**. The `/slack/callback` redirect URL above serves Sign in with Slack too. Windlass reads only who signed in and their workspace, then revokes the token.
 
 ## Machines
 

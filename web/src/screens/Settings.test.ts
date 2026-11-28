@@ -611,44 +611,111 @@ describe("Integrations in Settings", () => {
 		}
 	});
 
-	const linked = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-testid='linked-accounts']")!;
+	const youLine = (host: HTMLElement, surface: string) =>
+		host.querySelector<HTMLElement>(`[data-testid='${surface}-link']`)!;
+	const notice = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-testid='link-notice']");
 
-	it("scrubs a private link and lets a member confirm and unlink it without installing a workspace", async () => {
+	it.each([
+		["linear", "linear", "Linked Linear user Ada Lovelace (Acme workspace).", "Ada Lovelace"],
+		["jira", "jira", "Linked Jira user Ada Lovelace (Atlassian).", "Ada Lovelace"],
+		["gitlab", "gitlab", "Linked GitLab user @ada (gitlab.example.com).", "@ada"],
+		["slack-signin", "slack", "Linked Slack user ada (Acme Engineering workspace).", "ada"],
+	])("links at once on return from a %s sign-in and names the account", async (kind, surface, said, name) => {
 		const client = createMockClient({ pace: 0 });
-		const fragment = "#link=slack.T08ACME01." + crypto.randomUUID();
-		history.replaceState(null, "", "/settings?mock=1" + fragment);
-		rememberAppPage();
-		expect(lastAppHref()).toBe("/settings?mock=1");
-		const scroll = vi.fn();
-		const previousScroll = HTMLElement.prototype.scrollIntoView;
-		HTMLElement.prototype.scrollIntoView = scroll;
+		const fragment = `#link-return=${kind}.${crypto.randomUUID()}`;
 		const screen = await open(client, fragment);
 		try {
-			const card = linked(screen.host);
+			const line = youLine(screen.host, surface);
 			expect(location.hash).toBe("");
-			expect(card.textContent).toContain("No linked accounts.");
-			expect(card.innerHTML).not.toContain(fragment.split("=")[1]!);
-			expect(scroll.mock.contexts).toEqual([card]);
-			expect(document.activeElement?.textContent).toBe("Link this account");
-			await press(card, "Link this account");
-			await screen.settle();
-			expect(card.querySelector('[aria-label="Linked accounts"]')?.textContent).toContain("Slack");
-			expect(card.textContent).toContain("Acme Engineering");
-			expect(card.textContent).not.toContain("T08ACME01");
-			expect(card.textContent).not.toContain("Link this account");
-			expect(slack(screen.host).textContent).toContain("Not connected");
-			await press(card, "Unlink Slack account in Acme Engineering");
-			await screen.settle();
-			expect(card.textContent).toContain("No linked accounts.");
-			expect(await client.user(screen.auth).linkedAccounts()).toEqual([]);
+			expect(screen.host.innerHTML).not.toContain(fragment.split(".")[1]!);
+			expect(line.querySelector('[role="status"]')?.textContent).toBe(said);
+			expect(line.textContent).toContain(`You: linked as ${name}`);
+			expect(line.querySelector("[data-link-confirm]")).toBeNull();
+			expect((await client.user(screen.auth).linkedAccounts()).accounts.map(a => a.surface)).toEqual([surface]);
 		} finally {
-			HTMLElement.prototype.scrollIntoView = previousScroll;
 			screen.close();
 			client.dispose();
 		}
 	});
 
-	it("starts linking a Linear account and explains a failed link", async () => {
+	it("names a private Slack link and links it only once confirmed, then unlinks from the ⋯ menu", async () => {
+		const client = createMockClient({ pace: 0 });
+		const fragment = "#link=slack.T08ACME01." + crypto.randomUUID();
+		history.replaceState(null, "", "/settings?mock=1" + fragment);
+		rememberAppPage();
+		expect(lastAppHref()).toBe("/settings?mock=1");
+		const screen = await open(client, fragment);
+		try {
+			const card = slack(screen.host);
+			const line = youLine(screen.host, "slack");
+			expect(location.hash).toBe("");
+			expect(card.innerHTML).not.toContain(fragment.split("=")[1]!);
+			expect(line.textContent).toContain("You: not linked yet");
+			const confirmLink = "Link Slack user ada in Acme Engineering to this account";
+			expect(document.activeElement?.textContent).toBe(confirmLink);
+			expect((await client.user(screen.auth).linkedAccounts()).accounts).toEqual([]);
+			await press(line, confirmLink);
+			await screen.settle();
+			expect(line.querySelector('[role="status"]')?.textContent).toBe(
+				"Linked Slack user ada (Acme Engineering workspace).",
+			);
+			expect(line.textContent).toContain("You: linked as ada in Acme Engineering");
+			expect(card.textContent).not.toContain("T08ACME01");
+			expect(card.textContent).toContain("Not connected");
+			const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+			try {
+				await pressMore(card, "Slack", "Unlink me");
+			} finally {
+				confirm.mockRestore();
+			}
+			await screen.settle();
+			expect(line.textContent).toContain("You: not linked yet");
+			expect((await client.user(screen.auth).linkedAccounts()).accounts).toEqual([]);
+		} finally {
+			screen.close();
+			client.dispose();
+		}
+	});
+
+	it("dismisses a private Slack link that isn’t yours without linking it", async () => {
+		const client = createMockClient({ pace: 0 });
+		const screen = await open(client, "#link=slack.T08ACME01." + crypto.randomUUID());
+		try {
+			const line = youLine(screen.host, "slack");
+			await press(line, "Not me");
+			expect(line.querySelector("[data-link-confirm]")).toBeNull();
+			expect((await client.user(screen.auth).linkedAccounts()).accounts).toEqual([]);
+		} finally {
+			screen.close();
+			client.dispose();
+		}
+	});
+
+	it("shows a notice for a connected source you aren’t linked on, and hides it once you link", async () => {
+		const client = createMockClient({ pace: 0 });
+		const setup = await open(client);
+		const api = client.user(setup.auth);
+		const back = new URL((await api.linearConnect({ origin: "http://localhost" })).url);
+		await api.linearComplete(back.hash.slice("#linear=".length));
+		setup.close();
+		const screen = await open(client);
+		try {
+			expect(notice(screen.host)?.textContent).toContain("Items you file from Linear won’t run until you link.");
+			const line = youLine(screen.host, "linear");
+			expect(line.textContent).toContain("You: not linked yet: items you file here won’t run.");
+			// The return of the sign-in that Link starts (the page already open: only its fragment changes).
+			const signIn = new URL((await api.linkAccountStart({ surface: "linear", origin: "http://localhost" })).url);
+			await act(async () => void (location.hash = signIn.hash));
+			await screen.settle();
+			expect(line.textContent).toContain("You: linked as Ada Lovelace in Acme");
+			expect(notice(screen.host)).toBeNull();
+		} finally {
+			screen.close();
+			client.dispose();
+		}
+	});
+
+	it("starts the sign-in that links you right after connecting Linear, whose connection names nobody", async () => {
 		const client = createMockClient({ pace: 0 });
 		const user = client.user;
 		const start = vi.fn();
@@ -662,50 +729,96 @@ describe("Integrations in Settings", () => {
 				},
 			};
 		});
-		const screen = await open(client, "#link-error=denied");
-		const assign = vi.fn();
+		const setup = await open(client);
+		const back = new URL((await client.user(setup.auth).linearConnect({ origin: location.origin })).url);
+		setup.close();
+		const screen = await open(client, back.hash);
 		try {
-			const card = linked(screen.host);
-			expect(location.hash).toBe("");
-			expect(card.querySelector('[role="alert"]')?.textContent).toBe(
-				"Linear was not given access. Try again when you’re ready.",
-			);
-			expect(card.textContent).toContain("Connecting Jira in Settings links the Jira account you connect with.");
-			vi.stubGlobal("location", {
-				assign,
-				origin: "http://localhost",
-				pathname: "/settings",
-				search: "?mock=1",
-				hash: "",
+			await vi.waitFor(async () => {
+				await screen.settle();
+				expect(youLine(screen.host, "linear").textContent).toContain("You: linked as Ada Lovelace");
 			});
-			try {
-				await press(card, "Link Linear account…");
-			} finally {
-				vi.unstubAllGlobals();
-			}
-			expect(start).toHaveBeenCalledWith({ surface: "linear", origin: "http://localhost" });
-			const landing = new URL(assign.mock.calls[0]![0]);
-			expect(landing.pathname + landing.search).toBe("/settings?mock=1");
-			expect(landing.hash).toMatch(/^#link=linear\./);
+			expect(start).toHaveBeenCalledWith({ surface: "linear", origin: location.origin });
+			expect(notice(screen.host)).toBeNull();
+		} finally {
+			screen.close();
+			client.dispose();
+			vi.restoreAllMocks();
+		}
+	});
+
+	it("links whoever installs Slack", async () => {
+		const client = createMockClient({ pace: 0 });
+		const setup = await open(client);
+		const landing = await client.user(setup.auth).slackConnect({ origin: location.origin });
+		setup.close();
+		const screen = await open(client, new URL(landing.url).hash);
+		try {
+			expect(youLine(screen.host, "slack").textContent).toContain("You: linked as your Slack user in Acme Engineering");
+			expect(notice(screen.host)).toBeNull();
 		} finally {
 			screen.close();
 			client.dispose();
 		}
-		for (const [hash, message] of [
-			["#link-error=used", "That link expired. Start again."],
-			["#link-error=other", "The account could not be linked. Try again."],
+	});
+
+	it("starts a read-only sign-in from Link and explains a failed one on its card", async () => {
+		const client = createMockClient({ pace: 0 });
+		const screen = await open(client, "#link-error=gitlab.scope");
+		const assign = vi.fn();
+		try {
+			expect(location.hash).toBe("");
+			expect(youLine(screen.host, "gitlab").querySelector('[role="alert"]')?.textContent).toContain(
+				"GitLab refused the read-only sign-in",
+			);
+			const line = youLine(screen.host, "jira");
+			vi.stubGlobal("location", { assign, origin: "http://localhost", pathname: "/settings", search: "", hash: "" });
+			try {
+				await press(line, "Link Jira…");
+			} finally {
+				vi.unstubAllGlobals();
+			}
+			expect(new URL(assign.mock.calls[0]![0]).hash).toMatch(/^#link-return=jira\./);
+		} finally {
+			screen.close();
+			client.dispose();
+		}
+		for (const [hash, surface, message] of [
+			["#link-error=linear.denied", "linear", "Linear was not given access, so nothing was linked."],
+			["#link-error=slack.other", "slack", "Slack could not be linked. Try again."],
 		] as const) {
-			const client = createMockClient({ pace: 0, linear: false, jira: false });
+			const client = createMockClient({ pace: 0 });
 			const screen = await open(client, hash);
 			try {
-				const card = linked(screen.host);
-				expect(card.querySelector('[role="alert"]')?.textContent).toBe(message);
-				expect(card.textContent).not.toContain("Link Linear account…");
-				expect(card.textContent).not.toContain("Connecting Jira");
+				expect(youLine(screen.host, surface).querySelector('[role="alert"]')?.textContent).toContain(message);
 			} finally {
 				screen.close();
 				client.dispose();
 			}
+		}
+	});
+
+	it("offers the private link when Slack has no Sign in with Slack", async () => {
+		const client = createMockClient({ pace: 0 });
+		const user = client.user;
+		vi.spyOn(client, "user").mockImplementation(auth => {
+			const api = user(auth);
+			return {
+				...api,
+				linkedAccounts: async () => ({ ...(await api.linkedAccounts()), signIn: ["linear", "jira", "gitlab"] }),
+			};
+		});
+		const screen = await open(client);
+		try {
+			const line = youLine(screen.host, "slack");
+			expect(line.textContent).toContain(
+				"Mention Windlass in a mapped channel and open the private link it sends you.",
+			);
+			expect(line.querySelector("button")).toBeNull();
+		} finally {
+			screen.close();
+			client.dispose();
+			vi.restoreAllMocks();
 		}
 	});
 

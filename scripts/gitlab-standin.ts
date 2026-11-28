@@ -140,6 +140,8 @@ interface Session {
 	refresh: string;
 	expiresAt: number;
 	scope: string;
+	/** Who signed in, when not `user`. */
+	as?: User;
 }
 export interface StandinOptions {
 	callbackUrl?: string;
@@ -179,7 +181,9 @@ export class GitlabStandin {
 	readonly issued = new Set<string>();
 	readonly projectTokens: ProjectToken[] = [];
 	readonly gitAuth: GitAuth[] = [];
-	private readonly codes = new Map<string, { challenge: string; scope: string }>();
+	private readonly codes = new Map<string, { challenge: string; scope: string; as?: User }>();
+	/** Who signs in at the next consent, when not `user`. */
+	consentAs: User | undefined;
 	private nextId = 1000;
 	private server: Server | null = null;
 	baseUrl = "";
@@ -433,7 +437,11 @@ export class GitlabStandin {
 		if (deny) target.searchParams.set("error", "access_denied");
 		else {
 			const code = secret();
-			this.codes.set(code, { challenge: q.get("code_challenge")!, scope: q.get("scope") ?? "read_user" });
+			this.codes.set(code, {
+				challenge: q.get("code_challenge")!,
+				scope: q.get("scope") ?? "read_user",
+				as: this.consentAs,
+			});
 			target.searchParams.set("code", code);
 		}
 		return target.href;
@@ -593,11 +601,13 @@ export class GitlabStandin {
 				return json(200, {});
 			}
 			let scope: string;
+			let as: User | undefined;
 			if (fields.grant_type === "refresh_token") {
 				const prev = [...this.sessions.values()].find(s => s.refresh === fields.refresh_token);
 				if (!prev) return json(400, { error: "invalid_grant" });
 				this.sessions.delete(prev.access);
 				scope = prev.scope;
+				as = prev.as;
 			} else if (fields.grant_type === "authorization_code") {
 				const code = this.codes.get(fields.code);
 				if (
@@ -609,8 +619,9 @@ export class GitlabStandin {
 					return json(400, { error: "invalid_grant" });
 				this.codes.delete(fields.code);
 				scope = code.scope;
+				as = code.as;
 			} else return json(400, { error: "unsupported_grant_type" });
-			const s = { access: secret(), refresh: secret(), scope, expiresAt: Date.now() + 7200000 };
+			const s = { access: secret(), refresh: secret(), scope, expiresAt: Date.now() + 7200000, as };
 			this.sessions.set(s.access, s);
 			this.issued.add(s.access).add(s.refresh);
 			return json(200, {
@@ -626,7 +637,10 @@ export class GitlabStandin {
 		const grants = scopes(auth.startsWith("Bearer ") ? auth.slice(7) : String(req.headers["private-token"] ?? ""));
 		if (!grants.length) return fail(401, "401 Unauthorized");
 		const api = path.slice("/api/v4".length);
-		if (api === "/user" && method === "GET") return json(200, this.user);
+		if (api === "/user" && method === "GET") {
+			const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+			return json(200, this.sessions.get(token)?.as ?? this.user);
+		}
 		if (!grants.includes("api") && !(method === "GET" && grants.includes("read_api")))
 			return fail(403, "403 Forbidden");
 		const projectData = (p: StandinProject) => ({

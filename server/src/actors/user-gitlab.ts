@@ -9,6 +9,7 @@ import { challengeOf, GitlabApp, GitlabError, newVerifier, projectAccess, type G
 import {
 	GITLAB_RECONNECT,
 	gitlabApp,
+	gitlabHost,
 	gitlabTenant,
 	issuerOf,
 	openGitlabTicket,
@@ -208,6 +209,34 @@ const reported =
 		throw clientError(c.log, error, `GitLab could not be reached (${action}). Try again.`, "gitlab_unavailable");
 	};
 
+/** A pending sign-in at GitLab: connecting (`app`), or proving one's own GitLab user to link it (`person`). */
+async function authorize(c: Context, origin: unknown, generation: number, as: "app" | "person") {
+	const app = configured();
+	if (typeof origin !== "string" || !config.origins.includes(origin))
+		throw new UserError("Connect from the web app's address.", { code: "origin_not_allowed" });
+	const nonce = newVerifier(),
+		verifier = newVerifier(),
+		exp = Date.now() + STATE_TTL;
+	const fields = { k: "gitlab-state", uid: c.key[0], nonce, origin, exp, ...(as === "person" && { link: true }) };
+	const state = signedPayload("gl1", "github-state", fields);
+	await c.db.transaction(async tx => {
+		await tx.execute(
+			"DELETE FROM oauth_state WHERE expires_at <= ? OR nonce NOT IN (SELECT nonce FROM oauth_state ORDER BY expires_at DESC LIMIT 19)",
+			Date.now(),
+		);
+		await tx.execute(
+			"INSERT INTO oauth_state VALUES (?, ?, ?, ?, ?, ?)",
+			nonce,
+			issuerOf(app),
+			origin,
+			verifier,
+			generation,
+			exp,
+		);
+	});
+	return { url: app.authorizeUrl(state, challengeOf(verifier), as) };
+}
+
 type Claimed = { origin: string; verifier: string };
 export const userGitlab = actor({
 	onBeforeConnect: async (c, params: { token: string } | undefined) => {
@@ -273,31 +302,14 @@ export const userGitlab = actor({
 			return status(c);
 		},
 		gitlabConnect: async (c, input: { origin: string }) => {
-			const { generation } = await owner(c),
-				app = configured(),
-				origin = input?.origin;
-			if (!config.origins.includes(origin))
-				throw new UserError("Connect from the web app's address.", { code: "origin_not_allowed" });
-			const nonce = newVerifier(),
-				verifier = newVerifier(),
-				exp = Date.now() + STATE_TTL;
-			const state = signedPayload("gl1", "github-state", { k: "gitlab-state", uid: c.key[0], nonce, origin, exp });
-			await c.db.transaction(async tx => {
-				await tx.execute(
-					"DELETE FROM oauth_state WHERE expires_at <= ? OR nonce NOT IN (SELECT nonce FROM oauth_state ORDER BY expires_at DESC LIMIT 19)",
-					Date.now(),
-				);
-				await tx.execute(
-					"INSERT INTO oauth_state VALUES (?, ?, ?, ?, ?, ?)",
-					nonce,
-					issuerOf(app),
-					origin,
-					verifier,
-					generation,
-					exp,
-				);
-			});
-			return { url: app.authorizeUrl(state, challengeOf(verifier)) };
+			const { generation } = await owner(c);
+			return authorize(c, input?.origin, generation, "app");
+		},
+		/** Begins a read-only sign-in at GitLab as this user (`linkAccountStart`), to link that GitLab user: no grant is kept. */
+		internalLinkStart: async (c, origin: string) => {
+			requireServiceFor(c, "call");
+			checkKey(c.key);
+			return authorize(c, origin, -1, "person");
 		},
 		internalGitlabClaim: async (c, nonce: string): Promise<Claimed | null> => {
 			requireServiceFor(c, "call");
@@ -322,7 +334,7 @@ export const userGitlab = actor({
 			} catch {
 				throw invalid();
 			}
-			const { nonce, issuer, viewerId, token } = confirmed;
+			const { nonce, issuer, viewerId, login, token } = confirmed;
 			if (issuer !== issuerOf(app)) throw invalid();
 			return serialized(c, async () => {
 				const previous = await grant(c, app);
@@ -348,7 +360,7 @@ export const userGitlab = actor({
 				});
 				if (previous) await retire(c, app, previous, { viewer: viewerId, token });
 				// Connecting signs in as oneself at GitLab: issues this GitLab user files are filed in this account.
-				await accounts(c, app).internalLink(c.key[0]!, viewerId, "", app.settings.baseUrl);
+				await accounts(c, app).internalLink(c.key[0]!, viewerId, `@${login}`, gitlabHost(app));
 				return status(c);
 			});
 		},
@@ -461,6 +473,6 @@ export const actorGitlabConnectStore: GitlabConnectStore = {
 			if (!isActorGone(error)) throw error;
 		}
 		if (!claimed || claimed.origin !== fields.origin) return { ok: false, reason: "used", origin: fields.origin };
-		return { ok: true, uid: fields.uid, nonce: fields.nonce, ...claimed };
+		return { ok: true, uid: fields.uid, nonce: fields.nonce, ...claimed, link: fields.link === true };
 	},
 };

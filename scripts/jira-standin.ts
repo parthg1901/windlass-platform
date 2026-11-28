@@ -44,8 +44,8 @@ export class JiraStandin {
 	readonly sam: Person = { accountId: "acct:sam", displayName: "Sam" };
 	/** Who signs in at the next consent. */
 	consentAs: Person = author;
-	readonly codes = new Map<string, Person>();
-	private readonly access = new Map<string, Person>();
+	readonly codes = new Map<string, { person: Person; scopes: string[] }>();
+	private readonly access = new Map<string, { person: Person; scopes: string[] }>();
 	readAfterPost = false;
 	private sequence = 0;
 	private readonly server = createServer((req, res) => this.route(req, res).catch(() => res.writeHead(400).end()));
@@ -64,9 +64,12 @@ export class JiraStandin {
 		const { origin, searchParams } = new URL(url);
 		assert.equal(origin, this.url);
 		assert.equal(searchParams.get("redirect_uri"), this.callback);
-		assert.deepEqual(searchParams.get("scope")?.split(" ").sort(), [...scopes, "offline_access"].sort());
+		const asked = searchParams.get("scope")?.split(" ").sort();
+		// Connecting asks for everything and a refresh token; linking one's own account asks to read oneself, nothing more.
+		const person = asked?.length === 1 && asked[0] === "read:jira-user";
+		if (!person) assert.deepEqual(asked, [...scopes, "offline_access"].sort());
 		const code = randomUUID();
-		this.codes.set(code, this.consentAs);
+		this.codes.set(code, { person: this.consentAs, scopes: person ? ["read:jira-user"] : scopes });
 		return this.callback + "?" + new URLSearchParams({ code, state: searchParams.get("state")! });
 	}
 	issue(site: string, id: string, labels: string[], assigned = false) {
@@ -104,16 +107,20 @@ export class JiraStandin {
 		const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
 		const reply = (data: unknown) => res.end(JSON.stringify(data));
 		if (pathname === "/oauth/token") {
-			const person = this.codes.get(body.code);
-			assert.ok(body.client_id === "windlass" && body.client_secret === this.secret && person);
+			const grant = this.codes.get(body.code);
+			assert.ok(body.client_id === "windlass" && body.client_secret === this.secret && grant);
 			this.codes.delete(body.code);
 			const token = randomUUID();
-			this.access.set(token, person);
-			return reply({ access_token: token, refresh_token: randomUUID(), expires_in: 3600 });
+			this.access.set(token, grant);
+			const refresh = grant.scopes.length > 1 ? { refresh_token: randomUUID() } : {};
+			return reply({ access_token: token, ...refresh, expires_in: 3600 });
 		}
-		const caller = this.access.get(req.headers.authorization?.replace(/^Bearer /, "") ?? "");
-		assert.ok(caller);
-		if (pathname === "/oauth/token/accessible-resources") return reply(this.sites);
+		const grant = this.access.get(req.headers.authorization?.replace(/^Bearer /, "") ?? "");
+		assert.ok(grant);
+		const caller = grant.person;
+		if (pathname === "/oauth/token/accessible-resources")
+			return reply(this.sites.map(site => ({ ...site, scopes: grant.scopes })));
+		if (grant.scopes.length === 1 && !pathname.endsWith("/myself")) return res.writeHead(403).end();
 		const [, site, path] = /^\/ex\/jira\/(acme|harbor)\/rest\/api\/3\/(.+)$/.exec(pathname)!;
 		if (path === "myself") return reply(caller);
 		if (path === "project/search")

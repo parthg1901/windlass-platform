@@ -54,7 +54,7 @@ Helpers inside the `user` actor:
 - `./user-linear.ts` stores the Linear connection and team mappings and decides each verified delivery.
 - `./user-jira.ts` stores the Jira grant, site and project mappings, renews webhooks and writes item comments back.
 - `./user-slack.ts` holds the Slack settings actions.
-- `./user-identity.ts` holds the linked-account settings actions and the index of where this user is linked.
+- `./user-identity.ts` holds the linked-account settings actions (`linkAccountStart`, `linkAccount`, `linkOffer`, `unlinkAccount`) and the index of where this user is linked. Each surface's read-only sign-in lives with its connection: `beginSlackLink`, `beginLinearLink`, `beginJiraLink`, and `userGitlab`'s `internalLinkStart`.
 - `./issue-intake.ts` is what the intakes share: `resolveFiler`, the user's queue, daily cap and filing (`fileTrackerIssue` for Linear and Jira, `fileGitlabIssue`, `fileSlackRequest`). `./github-intake.ts` is GitHub's side.
 - `./gitlab-item.ts` resolves a work item's GitLab host, token and pipelines for `work-item` and `agentSession`.
 - `./github-item.ts` applies issue edits and closes to filed items.
@@ -100,6 +100,7 @@ Helpers inside `agentSession` (`./agent-session/`):
 - Throw `UserError` from `rivetkit` with a stable `code` for messages a client may show. Map domain errors such as `GithubProblem` to it at the action edge, as `./user.ts` does.
 
 - An item filed from another surface belongs to the person who triggered it. Every intake asks `resolveFiler` (`./issue-intake.ts`) for that person's linked uid and files there; an unlinked person files nothing. The mapping owner's actor only reads the issue and writes back to it (`./work-item.ts` routes Linear and Jira writes to the current mapper).
+- A link comes from a sign-in at the surface (or from connecting it), returning a `#link-return=` ticket sealed for the uid that began it, which the web app redeems at once. Slack's private one-time link is not bound to a uid, so the web app names it (`linkOffer`) and waits for a confirm before `linkAccount`.
 
 ## Pitfalls
 

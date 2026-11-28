@@ -103,7 +103,7 @@ async function run() {
 			);
 			await assert.rejects(owner.jiraComplete(ticket), { code: "jira_ticket" });
 			await owner.jiraSelectSite("acme");
-			assert.deepEqual(await owner.linkedAccounts(), [
+			assert.deepEqual((await owner.linkedAccounts()).accounts, [
 				{ surface: "jira", tenant: "atlassian", tenantName: "Atlassian", name: person.displayName },
 			]);
 		}
@@ -242,17 +242,46 @@ async function run() {
 		// Its comments are written by the project's owner, with b's connection.
 		assert.equal((await milestone(filed.id, "filed")).author.accountId, jira.bob.accountId);
 		// Unlinking makes Ada unlinked again.
-		assert.deepEqual(await a.unlinkAccount({ surface: "jira", tenant: "atlassian" }), []);
+		assert.deepEqual((await a.unlinkAccount({ surface: "jira", tenant: "atlassian" })).accounts, []);
 		const after = jira.issue("harbor", "106", ["windlass"]);
 		assert.equal(await jira.post(url, jira.event(after, hook, jira.ada)), false);
 		assert.equal(prompts("harbor/106"), 1);
 		assert.equal((await a.listItems()).filter(i => i.origin?.jira?.id === "106").length, 0);
 
+		// A teammate with no Jira connection links by a read-only sign-in at Atlassian; nobody's connection changes.
+		const { user: c } = await account();
+		const signIn = async (who: typeof c, person: typeof jira.sam) => {
+			jira.consentAs = person;
+			const start = new URL((await who.linkAccountStart({ surface: "jira", origin })).url);
+			assert.equal(start.searchParams.get("scope"), "read:jira-user", "read-only, and no refresh token");
+			const back = await fetch(jira.authorize(start.href), { redirect: "manual" });
+			const landing = new URL(back.headers.get("location")!);
+			assert.equal(landing.origin + landing.pathname, origin + "/settings");
+			assert.match(landing.hash, /^#link-return=jira\..+$/);
+			return landing.hash.slice("#link-return=".length);
+		};
+		const samTicket = await signIn(c, jira.sam);
+		await assert.rejects(a.linkAccount(samTicket), { code: "link_ticket" });
+		const sams = { surface: "jira", tenant: "atlassian", tenantName: "Atlassian", name: jira.sam.displayName };
+		const result = await c.linkAccount(samTicket);
+		assert.deepEqual(result.linked, sams);
+		assert.deepEqual(result.accounts, [sams]);
+		await assert.rejects(c.linkAccount(samTicket), { code: "link_ticket" });
+		assert.equal((await c.jira()).state, "disconnected");
+		assert.equal((await a.jira()).state, "connected");
+		assert.equal((await b.jira()).state, "connected");
+		const samFiles = jira.issue("harbor", "107", ["windlass"]);
+		assert.equal(await jira.post(url, jira.event(samFiles, hook, jira.sam)), true);
+		assert.equal((await c.listItems()).filter(i => i.origin?.jira?.id === "107").length, 1);
+		// The connector relinks the same way without touching the connection.
+		assert.equal((await a.linkAccount(await signIn(a, jira.ada))).linked.name, jira.ada.displayName);
+		assert.equal((await a.jira()).state, "connected");
+
 		assert.equal((await b.disconnectJira()).state, "disconnected");
 		assert.equal(jira.hooks.size, 0);
 		assert.equal(await jira.post(url, twin), false);
 		console.log(
-			"PASS Jira OAuth and account links, signed intake as the person who asked, comments, retry, owner handoff, paging and disconnect",
+			"PASS Jira OAuth and account links, read-only link sign-in, signed intake as the person who asked, comments, retry, owner handoff, paging and disconnect",
 		);
 	} finally {
 		child.kill("SIGTERM");

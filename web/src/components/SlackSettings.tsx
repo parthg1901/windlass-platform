@@ -12,6 +12,7 @@ import {
 	MappingRow,
 	useReturnRound,
 } from "./IntegrationCard";
+import { LinkLine, useReportConnection, useUnlinkItems } from "./LinkedAccounts";
 import { ProviderIcon } from "./ProviderIcon";
 import { Check } from "./ui";
 
@@ -40,6 +41,7 @@ export function SlackSettings() {
 	// A return to the page already open (only its fragment changes) is read again.
 	const returned = useReturnRound(RETURN);
 	const initialRound = useRef(returned);
+	const unlinkItems = useUnlinkItems("slack");
 
 	useEffect(() => {
 		let live = true;
@@ -136,6 +138,8 @@ export function SlackSettings() {
 			setBusy(false);
 		}
 	}
+	const teamId = status?.state === "connected" ? status.teamId : null;
+	useReportConnection("slack", teamId);
 	if (status?.state === "off") return null;
 	const api = client.user(auth);
 	const selectedChannel = channels?.find(ch => ch.id === channel);
@@ -170,13 +174,14 @@ export function SlackSettings() {
 					</button>
 				) : null
 			}
-			more={
-				connected
+			more={[
+				...unlinkItems,
+				...(connected
 					? [
 							{
 								id: "disconnect",
 								label: "Disconnect…",
-								tone: "warn",
+								tone: "warn" as const,
 								disabled: busy,
 								onSelect: () => {
 									if (confirm("Disconnect Slack and remove all its channel mappings? Items already filed stay."))
@@ -184,9 +189,10 @@ export function SlackSettings() {
 								},
 							},
 						]
-					: []
-			}
+					: []),
+			]}
 		>
+			<LinkLine surface="slack" tenant={teamId} />
 			{!status && !error && (
 				<div className="usage-loading" aria-busy="true" aria-label="Loading Slack">
 					<span className="skeleton skeleton-meta" style={{ width: "58%" }} />

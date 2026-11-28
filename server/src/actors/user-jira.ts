@@ -15,8 +15,8 @@ import type {
 import type { TrackerFiled } from "../factory/intake.js";
 import { githubApp } from "../github/app.js";
 import { GithubProblem, resolveRepository, type StoredConnection } from "../github/repos.js";
-import { jiraApp, JiraError, type JiraApp, type JiraToken } from "../jira/app.js";
-import { digest } from "../jira/connect.js";
+import { JIRA_PERSON_SCOPES, jiraApp, JiraError, type JiraApp, type JiraToken } from "../jira/app.js";
+import { digest, jiraLinkSubject } from "../jira/connect.js";
 import { isTriggerLabel, JIRA_WEBHOOK_PATH, type JiraDelivery, type JiraDispatch } from "../jira/webhook.js";
 import { signedPayload } from "../signatures.js";
 import { openSecret, sealSecret } from "../repo-secrets.js";
@@ -176,25 +176,50 @@ async function register(c: Ctx, app: JiraApp, token: string, site: JiraSite, map
 		throw error;
 	}
 }
+/** A pending sign-in at Atlassian: connecting Jira (`app`), or proving one's own Jira account to link it (`person`). */
+async function authorize(c: Ctx, origin: string, as: "app" | "person") {
+	const app = requireApp();
+	if (!config.origins.includes(origin) || (requestOrigin(c) && requestOrigin(c) !== origin))
+		throw problem("Connect Jira from the web app.", "origin_not_allowed");
+	const nonce = randomBytes(32).toString("base64url"),
+		exp = Date.now() + 600_000;
+	await c.db.execute(
+		"DELETE FROM jira_state WHERE expires<=? OR nonce NOT IN (SELECT nonce FROM jira_state ORDER BY expires DESC LIMIT 19)",
+		Date.now(),
+	);
+	await c.db.execute("INSERT INTO jira_state(nonce,origin,expires) VALUES(?,?,?)", nonce, origin, exp);
+	const state = { k: "jira-state", uid: c.key[0], nonce, origin, exp, ...(as === "person" && { link: true }) };
+	return { url: app.authorizeUrl(signedPayload("ji1", "github-state", state), as) };
+}
+
+/** Begins a read-only sign-in at Atlassian as oneself, to link that Jira account: the address to send the browser to. */
+export const beginJiraLink = (c: Ctx, origin: string) => serial(c, () => authorize(c, origin, "person"));
+
+/** The Jira account a link ticket proves, its state taken out of the list; null for a ticket not this user's, or used. */
+export async function completeJiraLink(c: Ctx, ticket: string) {
+	const app = requireApp();
+	let grant: { code: string; nonce: string };
+	try {
+		grant = JSON.parse(serverSealer().open("transit", jiraLinkSubject(c.key[0]!), ticket));
+	} catch {
+		return null;
+	}
+	const claimed = await c.db.execute(
+		"DELETE FROM jira_state WHERE nonce=? AND claimed=0 AND expires>? RETURNING nonce",
+		grant.nonce,
+		Date.now(),
+	);
+	if (!claimed.length) return null;
+	// The token reads who signed in and is dropped: Atlassian has no revoke, and it expires within the hour.
+	const token = await app.exchangeCode(grant.code);
+	const [site] = await app.sites(token.accessToken, JIRA_PERSON_SCOPES);
+	if (!site) throw problem("Choose a Jira site you use when Atlassian asks, then link again.", "jira_site");
+	return app.identity(token.accessToken, site.id);
+}
+
 export const jiraSettingsActions = {
 	jira: action(status),
-	jiraConnect: action(async (c, { origin }: { origin: string }) => {
-		const app = requireApp();
-		if (!config.origins.includes(origin) || (requestOrigin(c) && requestOrigin(c) !== origin))
-			throw problem("Connect Jira from the web app.", "origin_not_allowed");
-		const nonce = randomBytes(32).toString("base64url"),
-			exp = Date.now() + 600_000;
-		await c.db.execute(
-			"DELETE FROM jira_state WHERE expires<=? OR nonce NOT IN (SELECT nonce FROM jira_state ORDER BY expires DESC LIMIT 19)",
-			Date.now(),
-		);
-		await c.db.execute("INSERT INTO jira_state(nonce,origin,expires) VALUES(?,?,?)", nonce, origin, exp);
-		return {
-			url: app.authorizeUrl(
-				signedPayload("ji1", "github-state", { k: "jira-state", uid: c.key[0], nonce, origin, exp }),
-			),
-		};
-	}),
+	jiraConnect: action((c, { origin }: { origin: string }) => authorize(c, origin, "app")),
 	jiraComplete: action(async (c, ticket: string) => {
 		const app = requireApp();
 		if (typeof ticket !== "string" || !/^[\w-]{43}$/.test(ticket)) throw invalid();
@@ -362,7 +387,7 @@ async function askToLink(c: Ctx, app: JiraApp, token: string, site: string, issu
 			token,
 			site,
 			issue,
-			"Windlass files work in the Windlass account of the person who asks for it, and that person's Jira account isn't linked yet, so nothing was filed. Connect Jira in Windlass Settings to link your account, then add the label or assignment again.",
+			"Windlass files work in the Windlass account of the person who asks for it, and that person's Jira account isn't linked yet, so nothing was filed. Link your Jira account on the Jira card in Windlass Settings, then add the label or assignment again.",
 			linkedAccountsUrl(config.origins[0] ?? ""),
 		);
 	} catch {

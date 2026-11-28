@@ -67,7 +67,41 @@ export async function exchangeCode(code: string) {
 		name: String(result.team.name),
 		bot: String(result.bot_user_id),
 		token: String(result.access_token),
+		/** The Slack user who installed the app: they authorized it as themselves. */
+		installer: typeof result.authed_user?.id === "string" ? result.authed_user.id : null,
 	};
+}
+
+/**
+ * Who signed in with Slack (OpenID Connect, `openid profile`): their user and team. The token only proves that and is revoked
+ * at once.
+ */
+export async function signedInUser(code: string) {
+	const { clientId, redirectUrl } = settings();
+	const granted = await call("openid.connect.token", {
+		client_id: clientId,
+		client_secret: process.env.WLP_SLACK_CLIENT_SECRET!,
+		code,
+		redirect_uri: redirectUrl,
+	});
+	const token = typeof granted.access_token === "string" ? granted.access_token : "";
+	if (!token) throw new Error("Slack did not sign the user in.");
+	try {
+		const info = await call("openid.connect.userInfo", {}, token);
+		const userId = info["https://slack.com/user_id"],
+			teamId = info["https://slack.com/team_id"];
+		if (typeof userId !== "string" || !/^[UW][A-Z0-9]{1,32}$/.test(userId) || typeof teamId !== "string")
+			throw new Error("Slack did not say who signed in.");
+		if (!/^T[A-Z0-9]{1,32}$/.test(teamId)) throw new Error("Slack did not say who signed in.");
+		return {
+			userId,
+			name: String(info.name ?? "").slice(0, 200),
+			teamId,
+			teamName: String(info["https://slack.com/team_name"] ?? "").slice(0, 200),
+		};
+	} finally {
+		await call("auth.revoke", {}, token).catch(() => {});
+	}
 }
 
 export async function isJoinedChannel(token: string, id: string): Promise<boolean> {

@@ -8,7 +8,8 @@
  *             a code links that user to the person it was sent to. Good for five minutes and once.
  *   prompted  the people already asked to link on one subject (a Linear or Jira issue), so each is asked once there.
  *
- * Proofs that come from a sign-in at the surface itself (Linear, Jira, GitLab) link through `internalLink`.
+ * Proofs that come from a sign-in at the surface itself (Sign in with Slack, Linear, Jira, GitLab, or connecting one) link
+ * through `internalLink`.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -76,13 +77,27 @@ export const surfaceAccounts = actor({
 				await tx.execute("INSERT INTO link VALUES(?,?,?,?)", row.external_id, uid, row.name, Date.now());
 			});
 		},
-		/** Links `uid` to a person the surface's own sign-in proved. */
+		/** What a code would link, without spending it: for the user to confirm, named. */
+		async internalPeek(c, proof: string): Promise<{ externalId: string; name: string; tenantName: string }> {
+			requireServiceFor(c, "call");
+			const [row] = await c.db.execute<{ external_id: string; name: string; tenant: string | null }>(
+				"SELECT external_id, proof.name, tenant.name AS tenant FROM proof LEFT JOIN tenant WHERE digest=? AND expires>?",
+				hash(proof),
+				Date.now(),
+			);
+			if (!row) throw new UserError("This link has expired or was already used.", { code: "link_ticket" });
+			return { externalId: row.external_id, name: row.name, tenantName: row.tenant ?? "" };
+		},
+		/** Links `uid` to a person the surface's own sign-in proved. A sign-in that names nobody keeps the name known before. */
 		async internalLink(c, uid: string, externalId: string, name: string, tenantName: string): Promise<void> {
 			requireServiceFor(c, "call");
 			await c.db.transaction(async tx => {
-				const [old] = await tx.execute<{ uid: string }>("SELECT uid FROM link WHERE external_id=?", externalId);
+				const [old] = await tx.execute<{ uid: string; name: string }>(
+					"SELECT uid, name FROM link WHERE external_id=?",
+					externalId,
+				);
 				await tx.execute("DELETE FROM link WHERE external_id=? OR uid=?", externalId, uid);
-				await tx.execute("INSERT INTO link VALUES(?,?,?,?)", externalId, uid, name, Date.now());
+				await tx.execute("INSERT INTO link VALUES(?,?,?,?)", externalId, uid, name || old?.name || "", Date.now());
 				await tx.execute("INSERT OR REPLACE INTO tenant VALUES(1,?)", tenantName);
 				if (old && old.uid !== uid)
 					console.log(`surface.account.relinked surface=${c.key[0]} from=${old.uid} to=${uid}`);
@@ -132,6 +147,7 @@ export const surfaceAccounts = actor({
 export interface SurfaceAccounts {
 	internalOffer(externalId: string, name: string, tenantName: string): Promise<string>;
 	internalRedeem(uid: string, proof: string): Promise<void>;
+	internalPeek(proof: string): Promise<{ externalId: string; name: string; tenantName: string }>;
 	internalLink(uid: string, externalId: string, name: string, tenantName: string): Promise<void>;
 	internalWho(externalId: string): Promise<string | null>;
 	internalLinkOf(uid: string): Promise<LinkOf | null>;
@@ -148,5 +164,5 @@ export function surfaceAccountsOf(c: HasClient, surface: Surface, tenant: string
 /** Jira's account ids are Atlassian's, the same on every site: one directory for all of them. */
 export const JIRA_TENANT = "atlassian";
 
-/** Where an unlinked person is sent to link. The address carries no secret. */
-export const linkedAccountsUrl = (origin: string) => `${origin}/settings#linked-accounts`;
+/** Where an unlinked person is sent to link: Settings' integrations, where each one's card links its user. No secret in it. */
+export const linkedAccountsUrl = (origin: string) => `${origin}/settings#settings-integrations`;

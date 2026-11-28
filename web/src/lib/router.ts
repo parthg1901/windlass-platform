@@ -28,7 +28,7 @@ export type Route =
 	/** The user's sandbox time and kept sandboxes. */
 	| { name: "usage" }
 	/** What the user keeps for their account, whatever the repository: defaults, their own MCP servers, and those servers' secrets. */
-	| { name: "settings"; section?: "settings-models" | "settings-github" }
+	| { name: "settings"; section?: "settings-models" | "settings-github" | "settings-integrations" }
 	/** Free and Pro side by side, with the way to upgrade: where the deployment has billing (`PlatformInfo.billing`). */
 	| { name: "plans" }
 	/** The user's own machines. With `add`, the dialog that pairs one is open: the address a runner prints with its code. */

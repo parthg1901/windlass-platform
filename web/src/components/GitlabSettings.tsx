@@ -12,6 +12,7 @@ import {
 	MappingRow,
 	useReturnRound,
 } from "./IntegrationCard";
+import { LinkLine, useReportConnection, useUnlinkItems } from "./LinkedAccounts";
 import { BranchName } from "./BranchName";
 
 const RETURN = /^#gitlab(?:-error)?=/;
@@ -66,7 +67,7 @@ export function useGitlabSettings() {
 
 export function GitlabSettings({ connection }: { connection: ReturnType<typeof useGitlabSettings> }) {
 	const { api, status, setStatus, error, setError, reload } = connection;
-	const { explain } = useApp();
+	const { explain, platform } = useApp();
 	const [query, setQuery] = useState("");
 	const [selected, setSelected] = useState("");
 	const [list, setList] = useState<GitlabProjectList | null>(null);
@@ -77,6 +78,10 @@ export function GitlabSettings({ connection }: { connection: ReturnType<typeof u
 	const [changing, setChanging] = useState(false);
 	const search = useRef<HTMLInputElement>(null);
 	const connected = status?.state === "connected";
+	// GitLab issues file work only where items are on: its users link there.
+	const filing = !!platform.info?.items;
+	const unlinkItems = useUnlinkItems("gitlab");
+	useReportConnection("gitlab", filing && connected ? "*" : null);
 	const picking = connected && (!status.project || changing);
 	useEffect(() => {
 		if (changing) search.current?.focus();
@@ -135,13 +140,14 @@ export function GitlabSettings({ connection }: { connection: ReturnType<typeof u
 					</button>
 				) : null
 			}
-			more={
-				connected
+			more={[
+				...(filing ? unlinkItems : []),
+				...(connected
 					? [
 							{
 								id: "disconnect",
 								label: "Disconnect…",
-								tone: "warn",
+								tone: "warn" as const,
 								disabled: busy,
 								onSelect: () => {
 									if (confirm("Disconnect GitLab and forget the selected project?"))
@@ -152,9 +158,10 @@ export function GitlabSettings({ connection }: { connection: ReturnType<typeof u
 								},
 							},
 						]
-					: []
-			}
+					: []),
+			]}
 		>
+			{filing ? <LinkLine surface="gitlab" /> : null}
 			{error && (
 				<p className="callout callout-warn" role="alert">
 					<WarnIcon />

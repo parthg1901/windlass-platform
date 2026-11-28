@@ -568,6 +568,7 @@ export function createRivetClient(
 			disconnectSlack: () => act("disconnectSlack"),
 			linkedAccounts: () => act("linkedAccounts"),
 			linkAccount: ticket => act("linkAccount", ticket),
+			linkOffer: ticket => act("linkOffer", ticket),
 			linkAccountStart: input => act("linkAccountStart", input),
 			unlinkAccount: input => act("unlinkAccount", input),
 			linear: () => act("linear"),

@@ -156,6 +156,7 @@ import {
 	type GitlabStatus,
 	type SlackSettingsActions,
 	type LinkedAccount,
+	type LinkedAccounts,
 	type LinkedAccountsActions,
 	type LinkSurface,
 	type SlackStatus,
@@ -1525,7 +1526,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		const status = (): SlackStatus => {
 			if (options.slack === false) return { state: "off" };
 			return recall(slackKey("owner")) === uid()
-				? { state: "connected", workspaceName: slackWorkspace.name, mappings: mappings() }
+				? { state: "connected", teamId: slackWorkspace.id, workspaceName: slackWorkspace.name, mappings: mappings() }
 				: { state: "disconnected" };
 		};
 		const owner = () => {
@@ -1543,6 +1544,8 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				if (recall(slackKey("owner")) && recall(slackKey("owner")) !== uid())
 					throw new Error("This workspace already has an owner.");
 				keep(slackKey("owner"), uid());
+				// Installing links the installer; Slack names nobody to a bot without users:read.
+				linkMock(uid(), "slack", "");
 				return status();
 			},
 			async slackChannels() {
@@ -1588,42 +1591,62 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 
 	// ---- Linked accounts ------------------------------------------------------------------------
 
-	const LINKED_TENANT_NAMES: Record<LinkSurface, string> = {
-		slack: slackWorkspace.name,
-		linear: "Harbor Labs",
-		jira: "Atlassian",
+	// The mock's surfaces, as linked accounts name them. Its Linear workspace is `linearConnection`'s.
+	const LINKED: Record<LinkSurface, Omit<LinkedAccount, "surface">> = {
+		slack: { tenant: slackWorkspace.id, tenantName: slackWorkspace.name, name: "ada" },
+		linear: { tenant: "ws-acme", tenantName: "Acme", name: "Ada Lovelace" },
+		jira: { tenant: "atlassian", tenantName: "Atlassian", name: "Ada Lovelace" },
+		gitlab: { tenant: "gitlab-mock", tenantName: "gitlab.example.com", name: "@ada" },
 	};
+	const linkedKey = (uid: string) => `wlp.mock.linked.${uid}`;
+	function mockLinked(uid: string): LinkedAccount[] {
+		return JSON.parse(recall(linkedKey(uid)) || "[]");
+	}
+	function storeLinked(uid: string, next: LinkedAccount[]) {
+		keep(linkedKey(uid), JSON.stringify(next));
+	}
+	/** Links `uid` as a surface's mock user, as connecting or signing in at the surface does. */
+	function linkMock(uid: string, surface: LinkSurface, name = LINKED[surface].name): LinkedAccount {
+		const account = { surface, ...LINKED[surface], name };
+		storeLinked(uid, [...mockLinked(uid).filter(a => a.surface !== surface || a.tenant !== account.tenant), account]);
+		return account;
+	}
 	function linkedAccountsActions(world: () => World): LinkedAccountsActions {
-		const key = () => `wlp.mock.linked.${world().profile.uid}`;
-		const list = (): LinkedAccount[] => JSON.parse(recall(key()) || "[]");
-		const store = (next: LinkedAccount[]) => {
-			keep(key(), JSON.stringify(next));
-			return next;
-		};
+		const uid = () => world().profile.uid;
+		const view = (): LinkedAccounts => ({
+			accounts: mockLinked(uid()),
+			signIn: (["slack", "linear", "jira", "gitlab"] as const).filter(surface => options[surface] !== false),
+		});
+		const refused = () =>
+			new PlatformError("user", "This link is not valid. Start again from where you were asked to link.", {
+				reason: "link_ticket",
+			});
 		return {
 			async linkedAccounts() {
-				return list();
+				return view();
 			},
 			async linkAccount(ticket) {
-				const [surface, tenant, proof] = ticket.split(".");
-				let account: LinkedAccount | null = null;
-				if (surface === "slack" && tenant && proof)
-					account = { surface, tenant, tenantName: LINKED_TENANT_NAMES.slack, name: "" };
-				else if (surface === "linear" && tenant)
-					account = { surface, tenant: "mock-linear", tenantName: LINKED_TENANT_NAMES.linear, name: "Ada" };
-				if (!account)
-					throw new PlatformError("user", "This link is not valid for this account any more. Start again.", {
-						reason: "link_ticket",
-					});
-				const linked = account;
-				return store([...list().filter(a => a.surface !== linked.surface || a.tenant !== linked.tenant), linked]);
+				const [kind, rest] = [ticket.slice(0, ticket.indexOf(".")), ticket.slice(ticket.indexOf(".") + 1)];
+				const surface = kind === "slack-signin" ? "slack" : kind;
+				if (!rest || !(["slack", "linear", "jira", "gitlab"] as const).some(s => s === surface)) throw refused();
+				const linked = linkMock(uid(), surface as LinkSurface);
+				return { linked, ...view() };
 			},
-			async linkAccountStart({ origin }) {
+			async linkOffer(ticket) {
+				if (!/^slack\.T[A-Z0-9]+\./.test(ticket)) throw refused();
+				return { surface: "slack", tenantName: LINKED.slack.tenantName, name: LINKED.slack.name };
+			},
+			async linkAccountStart({ surface, origin }) {
 				const search = typeof location === "undefined" ? "" : location.search;
-				return { url: `${origin.replace(/\/$/, "")}/settings${search}#link=linear.${crypto.randomUUID()}` };
+				const kind = surface === "slack" ? "slack-signin" : surface;
+				return { url: `${origin.replace(/\/$/, "")}/settings${search}#link-return=${kind}.${crypto.randomUUID()}` };
 			},
 			async unlinkAccount({ surface, tenant }) {
-				return store(list().filter(a => a.surface !== surface || a.tenant !== tenant));
+				storeLinked(
+					uid(),
+					mockLinked(uid()).filter(a => a.surface !== surface || a.tenant !== tenant),
+				);
+				return view();
 			},
 		};
 	}
@@ -5966,6 +5989,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 					throw new PlatformError("user", "This link is no longer valid. Connect GitLab again.");
 				keep(key, "");
 				keep(`wlp.mock.gitlab.${uid}`, "connected");
+				linkMock(uid, "gitlab");
 				return gitlabStatus(uid);
 			},
 			async gitlabProjects(query) {
@@ -6012,6 +6036,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 					connectedAt: now(),
 				};
 				storeJira({ connection, mappings: {} });
+				linkMock(world().profile.uid, "jira");
 				return { state: "connected", connection };
 			},
 			async jiraSelectSite(siteId) {
@@ -7472,6 +7497,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				`wlp.mock.linked.${uid}`,
 				JSON.stringify([
 					{ surface: "slack", tenant: slackWorkspace.id, tenantName: slackWorkspace.name, name: "" },
+					{ surface: "jira", ...LINKED.jira },
 				] satisfies LinkedAccount[]),
 			);
 			keep(

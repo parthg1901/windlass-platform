@@ -14,6 +14,10 @@ export interface SlackPosted {
 export class SlackStandin {
 	readonly team = { id: "T12345678", name: "Test workspace" };
 	readonly member = "U55667788";
+	/** The Slack user who installs the app. */
+	readonly installer = "U11223344";
+	/** Names Sign in with Slack gives its users. */
+	readonly names = new Map([["U55667788", "Mia Member"]]);
 	readonly bot = "UBOT";
 	readonly channel = { id: "C12345678", name: "engineering" };
 	isMember = true;
@@ -29,6 +33,8 @@ export class SlackStandin {
 	readonly secret = randomUUID();
 	readonly signing = randomUUID();
 	private readonly codes = new Map<string, string>();
+	private readonly signIns = new Map<string, string>();
+	private readonly people = new Map<string, string>();
 	private readonly triggers = new Set<string>();
 	readonly tokens = new Set<string>();
 	private readonly server = createServer(async (req, res) => {
@@ -45,11 +51,42 @@ export class SlackStandin {
 			this.codes.delete(code);
 			const token = randomUUID();
 			this.tokens.add(token);
-			return json({ ok: true, team: this.team, bot_user_id: this.bot, access_token: token, token_type: "bot", scope });
+			return json({
+				ok: true,
+				team: this.team,
+				bot_user_id: this.bot,
+				access_token: token,
+				token_type: "bot",
+				scope,
+				authed_user: { id: this.installer },
+			});
+		}
+		if (req.url === "/api/openid.connect.token") {
+			const code = form.get("code") ?? "",
+				user = this.signIns.get(code);
+			if (!user || form.get("client_secret") !== this.secret || form.get("redirect_uri") !== this.callback)
+				return json({ ok: false, error: "invalid_code" });
+			this.signIns.delete(code);
+			const token = "xoxp-" + randomUUID();
+			this.tokens.add(token);
+			this.people.set(token, user);
+			return json({ ok: true, access_token: token, token_type: "Bearer", id_token: "unused" });
 		}
 		const token = req.headers.authorization?.slice(7) ?? "";
 		if (!this.tokens.has(token)) return json({ ok: false, error: "invalid_auth" });
 		switch (url.pathname) {
+			case "/api/openid.connect.userInfo": {
+				const user = this.people.get(token);
+				if (!user) return json({ ok: false, error: "invalid_auth" });
+				return json({
+					ok: true,
+					sub: user,
+					"https://slack.com/user_id": user,
+					"https://slack.com/team_id": this.team.id,
+					"https://slack.com/team_name": this.team.name,
+					name: this.names.get(user) ?? "",
+				});
+			}
 			case "/api/conversations.info": {
 				if (req.method !== "GET" || form.get("channel") !== this.channel.id)
 					return json({ ok: false, error: "channel_not_found" });
@@ -128,6 +165,22 @@ export class SlackStandin {
 			throw new Error("Wrong OAuth destination");
 		const code = randomUUID();
 		this.codes.set(code, q.get("scope")!);
+		return this.callback + "?" + new URLSearchParams({ state: q.get("state")!, code });
+	}
+	/** Sign in with Slack as `user`: the callback address Slack sends the browser back to. */
+	signIn(consent: string, user = this.member) {
+		const url = new URL(consent),
+			q = url.searchParams;
+		if (
+			url.origin !== this.url ||
+			url.pathname !== "/openid/connect/authorize" ||
+			q.get("redirect_uri") !== this.callback ||
+			q.get("scope") !== "openid profile" ||
+			q.get("response_type") !== "code"
+		)
+			throw new Error("Wrong Sign in with Slack destination");
+		const code = randomUUID();
+		this.signIns.set(code, user);
 		return this.callback + "?" + new URLSearchParams({ state: q.get("state")!, code });
 	}
 	/** Each mention starts its own thread unless `thread` names one. */

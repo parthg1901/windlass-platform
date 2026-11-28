@@ -47,6 +47,7 @@ async function run() {
 		WLP_SLACK_CLIENT_ID: "test",
 		WLP_SLACK_CLIENT_SECRET: slack.secret,
 		WLP_SLACK_SIGNING_SECRET: slack.signing,
+		WLP_SLACK_SIGN_IN: "1",
 	});
 	for (const key of ["RIVET_ADMIN_TOKEN", "RIVET_ENDPOINT", "RIVET_ENGINE", "PORT", "WLP_FACTORY_ORCHESTRATE"])
 		delete process.env[key];
@@ -104,6 +105,9 @@ async function run() {
 			return status;
 		};
 		assert.equal((await connect()).state, "connected");
+		// Installing is signing in at Slack as oneself: the installer is linked, with no name (the bot reads no profiles).
+		const installerLink = { surface: "slack", tenant: slack.team.id, tenantName: slack.team.name, name: "" };
+		assert.deepEqual((await owner.linkedAccounts()).accounts, [installerLink]);
 		assert.deepEqual(await owner.slackChannels(), [slack.channel]);
 		await owner.saveSlackMapping({ channelId: slack.channel.id, repositoryId: repo.id });
 		assert.equal(
@@ -126,17 +130,43 @@ async function run() {
 		await ack(send(slack.mention()));
 		const prompt = await until("link prompt", async () => slack.privateReplies[0]);
 		assert.equal(prompt.user, slack.member);
-		const ticket = prompt.text.split("#link=")[1];
+		const ticket = prompt.text.split("#link=")[1]!;
 		assert.ok(ticket?.startsWith(`slack.${slack.team.id}.`));
 		await assert.rejects(member.linkAccount(`slack.${slack.team.id}.00000000-0000-0000-0000-000000000000`), {
 			code: "link_ticket",
 		});
-		assert.deepEqual(await member.linkAccount(ticket), [
-			{ surface: "slack", tenant: slack.team.id, tenantName: slack.team.name, name: "" },
-		]);
+		// Whoever opens a private link is told whose it is first; asking does not spend it.
+		const offer = { surface: "slack", tenantName: slack.team.name, name: slack.member };
+		assert.deepEqual(await member.linkOffer(ticket), offer);
+		assert.deepEqual(await member.linkOffer(ticket), offer);
+		const memberLink = { surface: "slack", tenant: slack.team.id, tenantName: slack.team.name, name: "" };
+		const linked = await member.linkAccount(ticket);
+		assert.deepEqual(linked.linked, memberLink);
+		assert.deepEqual(linked.accounts, [memberLink]);
+		assert.deepEqual(linked.signIn, ["slack"]);
 		// A code works once: nobody else can take the member's link with it afterwards.
 		await assert.rejects(owner.linkAccount(ticket), { code: "link_ticket" });
-		assert.deepEqual(await owner.linkedAccounts(), []);
+		await assert.rejects(owner.linkOffer(ticket), { code: "link_ticket" });
+		assert.deepEqual((await owner.linkedAccounts()).accounts, [installerLink]);
+		// Sign in with Slack links the person on the page at once; its ticket opens only for the account that began it.
+		const signIn = async (who: typeof member, user: string) => {
+			const start = new URL((await who.linkAccountStart({ surface: "slack", origin })).url);
+			assert.equal(start.pathname, "/openid/connect/authorize");
+			const back = await fetch(slack.signIn(start.href, user), { redirect: "manual" });
+			const landing = new URL(back.headers.get("location")!);
+			assert.equal(landing.origin + landing.pathname, origin + "/settings");
+			assert.match(landing.hash, /^#link-return=slack-signin\..+$/);
+			return landing.hash.slice("#link-return=".length);
+		};
+		const signedIn = await signIn(member, slack.member);
+		const tokensBefore = slack.tokens.size;
+		await assert.rejects(owner.linkAccount(signedIn), { code: "link_ticket" });
+		const named = { ...memberLink, name: "Mia Member" };
+		assert.deepEqual((await member.linkAccount(signedIn)).linked, named);
+		assert.equal(slack.tokens.size, tokensBefore, "the sign-in's token is revoked");
+		await assert.rejects(member.linkAccount(signedIn), { code: "link_ticket" });
+		assert.deepEqual((await member.unlinkAccount({ surface: "slack", tenant: slack.team.id })).accounts, []);
+		assert.deepEqual((await member.linkAccount(await signIn(member, slack.member))).accounts, [named]);
 		await ack(send(slack.mention()));
 		await until("member write check", async () => slack.privateReplies.some(r => r.text.includes("write access")));
 		assert.equal((await member.listItems()).length, 0);
@@ -389,7 +419,7 @@ async function run() {
 		assert.equal((await owner.listItems()).length, 0);
 		assert.equal(slack.messages.filter(m => m.text.startsWith("Work item filed")).length, 5);
 		// Revoking the link makes the member unlinked again: a request files nothing and asks them to link.
-		assert.deepEqual(await member.unlinkAccount({ surface: "slack", tenant: slack.team.id }), []);
+		assert.deepEqual((await member.unlinkAccount({ surface: "slack", tenant: slack.team.id })).accounts, []);
 		const asked = slack.privateReplies.length;
 		await ack(send(slack.mention("After unlinking")));
 		const again = await until("link prompt after unlinking", async () => slack.privateReplies[asked]);
@@ -403,11 +433,25 @@ async function run() {
 		assert.equal((await owner.disconnectSlack()).state, "disconnected");
 		assert.equal(slack.tokens.size, 0);
 		assert.deepEqual(await member.slack(), { state: "disconnected" });
-		assert.deepEqual(await member.linkedAccounts(), [], "disconnecting the workspace removes its member links");
+		assert.deepEqual(
+			(await member.linkedAccounts()).accounts,
+			[],
+			"disconnecting the workspace removes its member links",
+		);
 		await ack(send(slack.mention()));
-		assert.deepEqual(await connect(), { state: "connected", workspaceName: slack.team.name, mappings: [] });
+		assert.deepEqual(await connect(), {
+			state: "connected",
+			teamId: slack.team.id,
+			workspaceName: slack.team.name,
+			mappings: [],
+		});
+		assert.deepEqual(
+			(await owner.linkedAccounts()).accounts,
+			[installerLink],
+			"reinstalling links the installer again",
+		);
 		console.log(
-			"PASS signed requests, named channel discovery, member links and revocation, member access, asynchronous filing, retries, thread replies, plan approval and answers from Slack, a one-implementer plan held for its questions, and disconnect",
+			"PASS signed requests, named channel discovery, installer link, private links named before use, Sign in with Slack, member links and revocation, member access, asynchronous filing, retries, thread replies, plan approval and answers from Slack, a one-implementer plan held for its questions, and disconnect",
 		);
 	} finally {
 		child.kill("SIGTERM");

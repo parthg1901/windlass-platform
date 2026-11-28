@@ -3,6 +3,8 @@ import type { JiraSite } from "../contract.js";
 import type { JiraCommentAction } from "../factory/intake.js";
 
 export const JIRA_SCOPES = ["read:jira-user", "read:jira-work", "write:jira-work", "manage:jira-webhook"];
+/** A sign-in that only proves which Atlassian account someone is (a linked account): reading their own user, nothing else. */
+export const JIRA_PERSON_SCOPES = ["read:jira-user"];
 export interface JiraToken {
 	accessToken: string;
 	refreshToken: string | null;
@@ -31,14 +33,15 @@ const positive = (n: unknown): n is number => typeof n === "number" && Number.is
 
 export class JiraApp {
 	constructor(readonly settings: NonNullable<ReturnType<typeof jiraConfig>["app"]>) {}
-	authorizeUrl(state: string) {
+	/** `person`: someone signing in as themselves, read-only and without a refresh token, to prove their account. */
+	authorizeUrl(state: string, as: "app" | "person" = "app") {
 		const query = new URLSearchParams({
 			audience: "api.atlassian.com",
 			client_id: this.settings.clientId,
 			redirect_uri: this.settings.redirectUrl,
 			response_type: "code",
 			prompt: "consent",
-			scope: [...JIRA_SCOPES, "offline_access"].join(" "),
+			scope: (as === "app" ? [...JIRA_SCOPES, "offline_access"] : JIRA_PERSON_SCOPES).join(" "),
 			state,
 		});
 		return `${this.settings.authUrl}/authorize?${query}`;
@@ -95,7 +98,7 @@ export class JiraApp {
 		return this.token({ grant_type: "refresh_token", refresh_token });
 	}
 
-	async sites(token: string): Promise<JiraSite[]> {
+	async sites(token: string, needed = JIRA_SCOPES): Promise<JiraSite[]> {
 		const rows: (JiraSite & { scopes: string[] })[] = await this.send(
 			`${this.settings.apiUrl}/oauth/token/accessible-resources`,
 			"GET",
@@ -107,7 +110,7 @@ export class JiraApp {
 				site?.protocol === "https:" &&
 				!site.username &&
 				!site.password &&
-				JIRA_SCOPES.every(s => scopes.includes(s))
+				needed.every(s => scopes.includes(s))
 				? [{ id, name, url: site.origin }]
 				: [];
 		});
@@ -205,7 +208,7 @@ export class JiraApp {
 			{ type: "paragraph", content: [{ type: "text", text }] },
 			{
 				type: "paragraph",
-				content: [{ type: "text", text: "Linked accounts", marks: [{ type: "link", attrs: { href: url.href } }] }],
+				content: [{ type: "text", text: "Link your account", marks: [{ type: "link", attrs: { href: url.href } }] }],
 			},
 		];
 		await this.rest(token, site, `issue/${issue}/comment`, "POST", { body: { type: "doc", version: 1, content } });
