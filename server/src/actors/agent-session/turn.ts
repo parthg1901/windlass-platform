@@ -59,7 +59,7 @@ import {
 import { setupProjectOf } from "../../setup-command.js";
 import { VerificationLog, groupReviewPaths } from "../../verified.js";
 import { turnTokens } from "../../factory/budget.js";
-import { addTurn, noUsage, turnMeter } from "../../factory/cost.js";
+import { addTurn, noUsage, turnCost, turnMeter } from "../../factory/cost.js";
 import { reportedModelUsage, usesPlatformModel } from "../../usage.js";
 import { PlatformChecks } from "../../sandbox/platform-checks.js";
 import { type Handoff, itemActor, modelKeyActor, secretsActor, userActor } from "../internal.js";
@@ -161,6 +161,8 @@ export type ItemTurnEnd = {
 	usage: TurnUsage | null;
 	checks: RepositoryCheck[];
 	acp?: RunTurnResult["acp"];
+	/** This turn's own share of the agent's reported cost (factory/cost.ts `turnCost`), not its running total. */
+	cost?: { amount: number; currency: string } | null;
 };
 
 /** What the turn needs of agent-session.ts, which a module here must not import. */
@@ -2271,6 +2273,9 @@ export async function closeTurn(
 			if (answer && !answer.ok && answer.reason === "allowance") active.outOfTime = true;
 		}
 
+		// The agent reports its session's running cost: this turn's is what it grew by (`turnCost`).
+		const reportedCost = turnCost(result?.acp?.usage?.cost, meta.agentCostTotal);
+		meta.agentCostTotal = reportedCost.total;
 		// What the turn used, by model and payer, for the session's cost (`SessionSummary.spent`); one that could not run
 		// and reported nothing cost nothing.
 		const credential = run?.credential;
@@ -2283,7 +2288,7 @@ export async function closeTurn(
 					key: credential.key,
 					signIn: credential.itemSignIn ?? meta.origin?.signIn,
 					usage,
-					cost: result?.acp?.usage?.cost,
+					cost: reportedCost.cost,
 					size: null,
 				}),
 			);
@@ -2347,6 +2352,7 @@ export async function closeTurn(
 				usage,
 				checks: active.secrets?.checks ?? [],
 				acp: result?.acp,
+				cost: reportedCost.cost,
 			});
 		await persist(c);
 		await within(c.vars.reporting, REPORT_WAIT_MS);

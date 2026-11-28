@@ -1825,7 +1825,8 @@ async function itemTurnEnded(
 			key: ended.credential.key,
 			signIn: ended.itemSignIn,
 			usage: ended.usage,
-			cost: ended.acp?.usage?.cost,
+			// This turn's own share of the reported cost (closeTurn `turnCost`), not the agent's running total.
+			cost: "cost" in ended ? ended.cost : ended.acp?.usage?.cost,
 			size: meta.place.kind === "hosted" ? (meta.hostedSize ?? SESSION_HOSTED_SIZE) : null,
 		});
 	// The item's budget (factory/budget.ts): the turn's dollars of work at today's prices, whoever paid.

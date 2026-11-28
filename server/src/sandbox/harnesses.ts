@@ -219,8 +219,9 @@ export interface AcpProfile {
 	ownMachineLogin?: true;
 	/**
 	 * What the cost in its `usage_update` covers, where the platform takes it as a turn's dollars (factory/cost.ts).
-	 * "turn": the agent process runs one turn, and its cost is that process's total (Claude Code's `total_cost_usd`).
-	 * Absent: its reported cost is not used, and its tokens are priced from the catalog instead.
+	 * "turn": a running total for the agent's session (Claude Code's `total_cost_usd`, which a resumed session carries
+	 * on); a turn counts what it grew by (`turnCost`). Absent: its reported cost is not used, and its tokens are
+	 * priced from the catalog instead.
 	 */
 	reportedCost?: "turn";
 	/**
