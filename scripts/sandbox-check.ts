@@ -213,11 +213,11 @@ interface TurnExtra {
 	windlass?: Windlass;
 }
 
-/** Runs one turn. `script: null` is the one unscripted turn of this check: see `failures`. */
+/** Runs one scripted turn. */
 async function turn(
 	handle: DockerSandboxHandle,
 	prompt: string,
-	script: ScriptedModel | null,
+	script: ScriptedModel,
 	extra: TurnExtra = {},
 ): Promise<TurnRun> {
 	const events: WindlassEvent[] = [];
@@ -230,7 +230,7 @@ async function turn(
 		prompt,
 		maxSteps: extra.maxSteps,
 		onReview: extra.onReview,
-		script: script ?? undefined,
+		script,
 		windlassSessionId: extra.windlassSessionId,
 		signal: extra.signal,
 		onEvent: event => {
@@ -2503,25 +2503,23 @@ PYTHON`);
 		}
 		expect("none of these left a process in the sandbox", (await strayProcesses(handle.container)).length === 0);
 
-		// An unscripted turn of a user without a sign-in: there is no access token to hand it, so Windlass is not even
-		// started. No prompt is sent, so no model is asked; and had anything tried, this sandbox has no network to try with.
+		// An unscripted turn with nothing to pay for it: no key and no plan, so Windlass is not even started and no model
+		// is asked. Had anything tried, this sandbox has no network to try with.
 		if (!isolated) {
 			info(
-				"SKIP  the turn without a sign-in: the sandbox is not provably cut off from the network and without a sign-in",
+				"SKIP  the turn without a key or plan: the sandbox is not provably cut off from the network and without a sign-in",
 			);
 		} else {
-			const noSignIn = await turn(handle, "Hello?", null);
+			const started = Date.now();
+			const refusal = await layer.windlass.runTurn(handle, { prompt: "Hello?" }).then(
+				() => "it ran",
+				(error: unknown) => (error instanceof Error ? error.message : String(error)),
+			);
+			const refusedMs = Date.now() - started;
 			expect(
-				"an unscripted turn without a sign-in fails as `auth_required` before Windlass starts: no event, no prompt, no model request",
-				noSignIn.result.failure?.reason === "auth_required" &&
-					/Sign in with ChatGPT/.test(noSignIn.result.failure.message) &&
-					noSignIn.events.length === 0 &&
-					noSignIn.result.summary === null &&
-					noSignIn.result.windlassSessionId === null &&
-					noSignIn.result.exitCode === null &&
-					!noSignIn.result.aborted &&
-					noSignIn.durationMs < 5000,
-				`${noSignIn.result.failure?.message} (${noSignIn.durationMs} ms)`,
+				"an unscripted turn with no key or plan is refused before Windlass starts, with the Connections sentence",
+				/key on the Connections page to run Windlass here/.test(refusal) && refusedMs < 5000,
+				`${refusal} (${refusedMs} ms)`,
 			);
 			expect(
 				"it left nothing in the sandbox: no process, no token file",
@@ -2563,10 +2561,14 @@ PYTHON`);
 			`${row?.sealed?.length ?? 0} characters stored`,
 		);
 		expect(
-			"status() reports sub, email and expiry only",
+			"status() reports sub, email, expiry and plan type only",
 			JSON.stringify(account) ===
-				JSON.stringify({ sub: "fake-sub-123", email: "fake.user@example.invalid", accessExpiresAt: expiresAt }) &&
-				!JSON.stringify(account).includes("FAKE-"),
+				JSON.stringify({
+					sub: "fake-sub-123",
+					email: "fake.user@example.invalid",
+					accessExpiresAt: expiresAt,
+					planType: null,
+				}) && !JSON.stringify(account).includes("FAKE-"),
 			JSON.stringify(account),
 		);
 		let opened = "it opened";

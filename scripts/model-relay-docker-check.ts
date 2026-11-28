@@ -93,11 +93,14 @@ http.createServer((req, res) => {
 	});
 }).listen(8080);`;
 
-/** A request from inside the session, as a command could make one: node's fetch to the forwarder. */
+/**
+ * A request from inside the session, as a command could make one: node's fetch to the forwarder. No cookie: the
+ * OpenAI key wire refuses a header it does not know (sandbox/relay/wires.cjs).
+ */
 const CLIENT = `
 const [bearer, path, body, count] = process.argv.slice(1);
 const one = () => fetch("http://127.0.0.1:17893" + path, { method: body ? "POST" : "GET", body: body || undefined,
-	headers: { authorization: "Bearer " + bearer, "content-type": "application/json", cookie: "c=1" } })
+	headers: { authorization: "Bearer " + bearer, "content-type": "application/json" } })
 	.then(async (r) => ({ status: r.status, text: (await r.text()).slice(0, 300) }), (e) => ({ status: 0, text: String(e.cause?.code ?? e) }));
 Promise.all(Array.from({ length: Number(count || 1) }, (_, i) => new Promise((ok) => setTimeout(ok, i * 50)).then(one))).then((r) => console.log(JSON.stringify(r)));`;
 
