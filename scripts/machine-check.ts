@@ -104,20 +104,6 @@ async function realRunner() {
 	const [{ id, key }] = (await once(process, "message")) as [{ id: { uid: string; machineId: string }; key: Buffer }];
 	process.disconnect();
 	Object.assign(globalThis, { SANDBOX_IMAGE: "sha256:" + "0".repeat(64), SHOTS_IMAGE_PIN: "" });
-	// The runner in this tree says its last release (runner/package.json) until the release commit raises it to the
-	// platform's minimum: its hello says the release it will ship as.
-	const { MIN_RUNNER_VERSION, versionAtLeast } = await import("../server/src/runner/control.js");
-	const { VERSION } = await import(new URL("../runner/src/state.ts", import.meta.url).href);
-	if (!versionAtLeast(VERSION, MIN_RUNNER_VERSION)) {
-		const send = WebSocket.prototype.send;
-		WebSocket.prototype.send = function (this: WebSocket, data: Parameters<WebSocket["send"]>[0]) {
-			const frame = typeof data === "string" && data.includes('"hello"') ? JSON.parse(data) : null;
-			return send.call(
-				this,
-				frame?.kind === "hello" ? JSON.stringify({ ...frame, runnerVersion: MIN_RUNNER_VERSION }) : data,
-			);
-		};
-	}
 	const { control } = await import(new URL("../runner/src/control.ts", import.meta.url).href);
 	const { Executor } = await import(new URL("../runner/src/docker-executor.ts", import.meta.url).href);
 	const { save } = await import(new URL("../runner/src/state.ts", import.meta.url).href);
