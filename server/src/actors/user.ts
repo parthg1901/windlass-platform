@@ -130,6 +130,7 @@ import {
 import * as jira from "./user-jira.js";
 import type { JiraItemWrite } from "./internal.js";
 import type { JiraDelivery } from "../jira/webhook.js";
+import { openUserGitlab } from "./user-gitlab.js";
 import { SLACK_TABLES, slackSettingsActions } from "./user-slack.js";
 import { IDENTITY_TABLES, linkedAccountActions } from "./user-identity.js";
 import {
@@ -2533,6 +2534,10 @@ export const user = actor({
 		internalWithdrawTurn: itemActions.internalWithdrawTurn,
 		[QUEUE_ACTION]: (c): Promise<void> => itemActions.internalTurnQueue(c),
 		me: (c): UserProfile => requireUser(c),
+		openGitlab: (c): Promise<boolean> => {
+			requireUser(c);
+			return openUserGitlab(c);
+		},
 		startChatgpt: signinActions.startChatgpt,
 		expireModelAttempt: signinActions.expireModelAttempt,
 		finishChatgpt: signinActions.finishChatgpt,
