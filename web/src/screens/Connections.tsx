@@ -15,18 +15,20 @@ import {
 	type PlanProvider,
 	type WhenLimited,
 } from "@contract";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { THIS_MACHINE_CLAUDE_COMMAND } from "../../../server/src/contract/machine-setup.js";
 import { payWithFor } from "../../../server/src/pay-with.js";
 import { keyProviders, machineHarness } from "../../../server/src/sandbox/harnesses.js";
 import { ChatgptPlan } from "../components/ChatgptPlan";
 import { ClaudePlan } from "../components/ClaudePlan";
+import { Command } from "../components/Command";
 import { Dialog } from "../components/Dialog";
 import { CloudIcon, MachineIcon, WarnIcon } from "../components/Icons";
 import { KeyDialog, ModelProviders } from "../components/ModelProviders";
 import { PlanWait } from "../components/PlanConnect";
 import { SettingsGroup, SettingsLayout } from "../components/SettingsGroups";
 import { AgentGlyph } from "../components/ui/Pill";
-import { StatusTag, type StatusTone } from "../components/ui/StatusTag";
+import { StatusTag, type StatusTone, Waiting } from "../components/ui/StatusTag";
 import { HARNESS_DISPLAY_ORDER, HARNESS_NAMES } from "../lib/acp";
 import {
 	type CellAction,
@@ -34,6 +36,7 @@ import {
 	type ConnectionInputs,
 	hostedCell,
 	machineCell,
+	withMachineLoginNote,
 } from "../lib/connections";
 import { machineLabel, settingsKeyUpgrade } from "../lib/machines";
 import { SOURCE_NAMES } from "../lib/models";
@@ -76,14 +79,96 @@ const TONES: Record<ConnectionCell["state"], StatusTone> = {
 /** What the page opens over itself from a cell: a plan's connect command, or a key's entry. */
 type Opened = { kind: "plan"; provider: PlanProvider } | { kind: "key"; provider: ModelProvider; replacing: boolean };
 
+/**
+ * A machine's agent that can keep a login of its own there (Claude Code): the plan from Windlass, or that login.
+ * Choosing the login shows the command to run on the machine; its runner's report turns the cell over to "kept" by
+ * itself. A kept login offers the way back, which the runner carries out (`removeMachineClaudeLogin`).
+ */
+function OwnLogin({
+	harness,
+	own,
+	onMachines,
+}: {
+	harness: HarnessId;
+	own: NonNullable<ConnectionCell["ownLogin"]>;
+	onMachines(list: MachineSummary[]): void;
+}) {
+	const { client, explain } = useApp();
+	const auth = useAuth();
+	const [choosing, setChoosing] = useState(false);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	useEffect(() => {
+		setChoosing(false);
+		setError(null);
+	}, [own.state]);
+	const plan = machineHarness(harness)?.planProviders[0];
+	if (own.state === "kept") {
+		const switchBack = () => {
+			setBusy(true);
+			setError(null);
+			client
+				.user(auth)
+				.removeMachineClaudeLogin({ machineId: own.machineId })
+				.then(onMachines, failure => setError(explain(failure)))
+				.finally(() => setBusy(false));
+		};
+		return (
+			<div className="conn-own">
+				<button
+					type="button"
+					className="button button-outline button-small conn-action"
+					disabled={busy}
+					onClick={switchBack}
+				>
+					{busy ? "Switching back…" : "Switch back to your plan"}
+				</button>
+				{error ? (
+					<p className="field-note tone-bad" role="alert">
+						{error}
+					</p>
+				) : null}
+			</div>
+		);
+	}
+	const name = `own-login-${harness}-${own.machineId}`;
+	return (
+		<fieldset className="conn-own">
+			<legend className="visually-hidden">How {HARNESS_NAMES[harness]} pays on this machine</legend>
+			<label className="conn-own-option">
+				<input type="radio" name={name} checked={!choosing} onChange={() => setChoosing(false)} />
+				Your {plan ? PLAN_NAMES[plan] : "plan"}, from Windlass
+			</label>
+			<label className="conn-own-option">
+				<input type="radio" name={name} checked={choosing} onChange={() => setChoosing(true)} />
+				This machine's own login — it never leaves this machine
+			</label>
+			{choosing ? (
+				<div className="conn-own-command">
+					<Command text={THIS_MACHINE_CLAUDE_COMMAND} label="The command for this machine" />
+					<p className="field-note">
+						Run it in a terminal on this machine. It runs <code>claude setup-token</code> there and hands the token to
+						the machine's runner, not to Windlass.
+					</p>
+					<Waiting>Waiting for the machine to report the login…</Waiting>
+				</div>
+			) : null}
+		</fieldset>
+	);
+}
+
 function Cell({
 	cell,
+	harness,
 	target,
 	onAct,
+	onMachines,
 }: {
 	cell: ConnectionCell;
+	harness: HarnessId;
 	target: boolean;
 	onAct(action: CellAction, state: ConnectionCell["state"]): void;
+	onMachines(list: MachineSummary[]): void;
 }) {
 	const { action } = cell;
 	return (
@@ -115,6 +200,7 @@ function Cell({
 					{actionWords(action, cell.state)}
 				</button>
 			) : null}
+			{cell.ownLogin ? <OwnLogin harness={harness} own={cell.ownLogin} onMachines={onMachines} /> : null}
 		</div>
 	);
 }
@@ -123,10 +209,12 @@ function Grid({
 	inputs,
 	machines,
 	onAct,
+	onMachines,
 }: {
 	inputs: ConnectionInputs;
 	machines: readonly MachineSummary[];
 	onAct(action: CellAction, state: ConnectionCell["state"]): void;
+	onMachines(list: MachineSummary[]): void;
 }) {
 	const hash = decodeURIComponent(useHash().slice(1));
 	return (
@@ -153,7 +241,7 @@ function Grid({
 				</thead>
 				<tbody>
 					{HARNESS_DISPLAY_ORDER.map(harness => {
-						const hosted = hostedCell(harness, inputs);
+						const hosted = withMachineLoginNote(hostedCell(harness, inputs), harness, machines);
 						return (
 							<tr key={harness} data-agent={harness}>
 								<th scope="row">
@@ -163,13 +251,25 @@ function Grid({
 									</span>
 								</th>
 								<td data-place="Hosted">
-									<Cell cell={hosted} target={hash === hosted.id} onAct={onAct} />
+									<Cell
+										cell={hosted}
+										harness={harness}
+										target={hash === hosted.id}
+										onAct={onAct}
+										onMachines={onMachines}
+									/>
 								</td>
 								{machines.map(machine => {
 									const cell = machineCell(harness, machine, hosted);
 									return (
 										<td key={machine.machineId} data-place={machineLabel(machine)}>
-											<Cell cell={cell} target={hash === cell.id} onAct={onAct} />
+											<Cell
+												cell={cell}
+												harness={harness}
+												target={hash === cell.id}
+												onAct={onAct}
+												onMachines={onMachines}
+											/>
 										</td>
 									);
 								})}
@@ -330,7 +430,12 @@ export function Connections() {
 							</p>
 						)
 					) : (
-						<Grid inputs={{ ...inputs, payWith: payWith.choices ?? [] }} machines={list} onAct={act} />
+						<Grid
+							inputs={{ ...inputs, payWith: payWith.choices ?? [] }}
+							machines={list}
+							onAct={act}
+							onMachines={machines.replace}
+						/>
 					)}
 				</SettingsGroup>
 

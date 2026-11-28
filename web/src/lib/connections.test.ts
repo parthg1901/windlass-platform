@@ -6,9 +6,11 @@ import {
 	cellId,
 	connectAction,
 	type ConnectionInputs,
+	HOSTED_NEEDS_WINDLASS,
 	hostedCell,
 	machineCell,
 	planBadge,
+	withMachineLoginNote,
 } from "./connections";
 import { clockTime } from "./format";
 
@@ -135,12 +137,13 @@ describe("a machine's cell", () => {
 
 	it("tells its own sign-in, the owner's key, a sign-in to do and a check that failed apart", () => {
 		const entry = { id: "claude" as const, adapter: "a", image: "i" };
-		expect(machineCell("claude", machine([{ ...entry, signIn: "token" }]), hosted)).toMatchObject({
+		const opencode = { ...entry, id: "opencode" as const };
+		expect(machineCell("opencode", machine([{ ...opencode, signIn: "token" }]), hosted)).toMatchObject({
 			state: "machine",
 			label: "Own sign-in",
 		});
 		expect(
-			machineCell("claude", machine([{ ...entry, signIn: "token", platformKeys: ["anthropic"] }]), hosted),
+			machineCell("opencode", machine([{ ...opencode, signIn: "token", platformKeys: ["anthropic"] }]), hosted),
 		).toMatchObject({ state: "key", label: "Your key", detail: "Anthropic" });
 		expect(machineCell("claude", machine([{ ...entry, signIn: "none" }]), hosted)).toMatchObject({
 			state: "none",
@@ -161,15 +164,53 @@ describe("a machine's cell", () => {
 				label: claudeHosted.label,
 				detail: "Same as Hosted",
 				action: null,
+				// The other way: a login kept on this machine only.
+				ownLogin: { state: "offered", machineId: "m_mac" },
 			});
-		// A Claude login kept on the machine wins there.
-		expect(machineCell("claude", machine([{ ...entry, signIn: "token" }]), claudeHosted)).toMatchObject({
+		// A Claude login kept on the machine wins there, and the cell offers the way back.
+		expect(machineCell("claude", machine([{ ...entry, signIn: "token" }]), claudeHosted)).toEqual({
+			id: "claude-m_mac",
 			state: "machine",
+			label: "This machine's own login",
+			detail: "Stays on this machine",
+			action: null,
+			ownLogin: { state: "kept", machineId: "m_mac" },
 		});
+		// Codex keeps no login on a machine: nothing to offer.
+		const codexHosted = hostedCell("codex", inputs());
+		expect(
+			machineCell("codex", machine([{ ...entry, id: "codex", signIn: "none", paysWith: true }]), codexHosted).ownLogin,
+		).toBeUndefined();
 		// No plan pays for OpenCode: its machine logins, as before.
 		expect(
 			machineCell("opencode", machine([{ ...entry, id: "opencode", signIn: "none" }]), claudeHosted),
 		).toMatchObject({ state: "none", label: "Sign in needed" });
+	});
+});
+
+describe("the Hosted cell beside a machine's own login", () => {
+	const entry = { id: "claude" as const, adapter: "a", image: "i" };
+	const kept = machine([{ ...entry, signIn: "token" }]);
+	const onPlan = machine([{ ...entry, signIn: "none", paysWith: true }]);
+
+	it("says plainly that Hosted needs the plan or a key on Windlass when only a machine's login is there", () => {
+		const nothing = hostedCell("claude", inputs());
+		expect(withMachineLoginNote(nothing, "claude", [onPlan, kept])).toEqual({
+			...nothing,
+			detail: HOSTED_NEEDS_WINDLASS("claude"),
+		});
+		expect(HOSTED_NEEDS_WINDLASS("claude")).toBe("Hosted Claude Code needs your plan or a key on Windlass.");
+	});
+
+	it("says nothing more with a plan or a key on Windlass, or with no login kept on a machine", () => {
+		const planned = hostedCell("claude", inputs({ plans: { allowed: true, plans: [plan("anthropic")] } }));
+		expect(withMachineLoginNote(planned, "claude", [kept])).toBe(planned);
+		const keyed = hostedCell("claude", inputs({ keys: [key("anthropic")] }));
+		expect(withMachineLoginNote(keyed, "claude", [kept])).toBe(keyed);
+		const nothing = hostedCell("claude", inputs());
+		expect(withMachineLoginNote(nothing, "claude", [onPlan])).toBe(nothing);
+		const codex = hostedCell("codex", inputs());
+		expect(withMachineLoginNote(codex, "codex", [kept])).toBe(codex);
 	});
 });
 

@@ -531,8 +531,14 @@ async function check() {
 		await eventually(() => returned.frames.some(f => f.kind === "remove" && f.sandbox === "deleted-sandbox"));
 		await eventually(() => returned.frames.some(f => f.kind === "forget-backup" && f.sessionId === "s_deleted"));
 		delete runner.report.sessionBackups;
+		step(
+			"Switch back to your plan: the runner removes the machine's own Claude login and answers; offline, nothing to ask",
+		);
+		assert.equal(await service().internalForgetClaudeLogin(), "removed");
+		assert.ok(returned.frames.some(f => f.kind === "forget-claude-login"));
 		returned.ws.close();
 		await eventually(async () => (await row()).status === "offline");
+		assert.equal(await service().internalForgetClaudeLogin(), "offline");
 
 		step("the real runner connects, and a second process epoch is refused without either control loop exiting");
 		// Use the real control loop and Docker executor. A missing local socket makes the Docker

@@ -213,6 +213,11 @@ export interface AcpProfile {
 	/** The providers whose subscription plan it can run on, hosted, through the relay: Claude Code on a Claude plan, Codex on a ChatGPT plan. */
 	planProviders: readonly PlanProvider[];
 	/**
+	 * Whether a machine's owner can keep a login of its own on that machine in place of the plan (Claude Code's
+	 * `windlass-runner login claude`, made with `connect claude --this-machine`). Kept there, it wins on that machine.
+	 */
+	ownMachineLogin?: true;
+	/**
 	 * What the cost in its `usage_update` covers, where the platform takes it as a turn's dollars (factory/cost.ts).
 	 * "turn": the agent process runs one turn, and its cost is that process's total (Claude Code's `total_cost_usd`).
 	 * Absent: its reported cost is not used, and its tokens are priced from the catalog instead.
@@ -247,6 +252,7 @@ export const CLAUDE: AcpProfile = {
 	capabilities: acpCapabilities({ platformTools: MCP_PLATFORM_TOOLS, modes: "launch", backups: true }),
 	keyProviders: ["anthropic"],
 	planProviders: ["anthropic"],
+	ownMachineLogin: true,
 	reportedCost: "turn",
 };
 

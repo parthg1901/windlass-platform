@@ -8,11 +8,15 @@
 
 /** The command the Machines page shows first. */
 export const MACHINE_CONNECT_COMMAND = "npx @windlassai/cli connect --machine";
+/** The command that keeps a Claude login on a paired machine only, for its Claude Code (Connections shows it). */
+export const THIS_MACHINE_CLAUDE_COMMAND = "npx @windlassai/cli connect claude --this-machine";
 
 /** The volume that keeps the runner's state, its machine key among it, across containers and updates. */
 export const RUNNER_STATE_VOLUME = "windlass-runner";
 export const RUNNER_STATE_DIR = "/var/lib/windlass-runner";
 export const DOCKER_SOCKET = "/var/run/docker.sock";
+/** The runner service's container, which the setup starts and a local `docker exec` reaches. */
+export const RUNNER_CONTAINER = "windlass-runner";
 
 /**
  * `docker` arguments of the setup's one-off container. `terminal`: the setup's questions on this terminal

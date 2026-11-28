@@ -241,7 +241,7 @@ the owner allows it and bubblewrap starts in a container there.
 When the machine reports Claude Code, `createSession` accepts
 `harness: "claude"` with `docker-hardened`. Its turns pay as hosted ones do, through Connections → Pay with: the
 connected Claude plan through a relay on the machine ([Plans on this machine](#plans-on-this-machine)), or a
-Settings key. A login kept on the machine with `windlass-runner login claude` wins for that machine
+Settings key. A login kept on the machine (`connect claude --this-machine`, or `windlass-runner login claude`) wins for that machine
 ([Claude Code's own login on this machine](#claude-codes-own-login-on-this-machine)). The platform clones the
 repository and runs its setup command before starting the adapter. The first prompt uses the
 adapter's default model. Later prompts can select a model and reasoning effort it offered.
@@ -379,13 +379,25 @@ separately.
 
 ### Claude Code's own login on this machine
 
-A machine's owner can keep Claude Code's own login on the machine: `docker exec -it windlass-runner windlass-runner
-login claude`. It is not shown in setup or onboarding; it is the fallback for when plans are off for the account, and
-a user's own Claude login on their own machine is always allowed. When present it wins for that machine's Claude Code:
-Pay with is not asked (`machinePaysWith` in `server/src/actors/agent-session.ts`), and the machine's listing has no
-`paysWith` for it. Build the runner with `WLP_RUNNER_HARNESSES=claude scripts/runner-build.sh`; only the hardened
-Docker profile offers Claude Code. Anthropic's `claude setup-token` opens its browser sign-in flow and prints a token in
-the attached terminal; paste it at the hidden prompt. A token minted on another computer works there too.
+A machine's owner can keep Claude Code's own login on the machine instead of paying with the plan from Windlass. It is
+a visible choice: Connections offers it in the machine's Claude Code cell ("This machine's own login — it never leaves
+this machine", `ownMachineLogin` in `server/src/sandbox/harnesses.ts`), and `npx @windlassai/cli connect --machine` asks
+at its end (interactive terminal only; `--local-claude` chooses it, and no terminal means the plan). A user's own Claude
+login on their own machine is always allowed, also with plans off for the account. When present it wins for that
+machine's Claude Code: Pay with is not asked (`machinePaysWith` in `server/src/actors/agent-session.ts`), and the
+machine's listing has no `paysWith` for it. Build the runner with `WLP_RUNNER_HARNESSES=claude scripts/runner-build.sh`;
+only the hardened Docker profile offers Claude Code.
+
+Three ways make the login, each storing it the same way:
+
+- `npx @windlassai/cli connect claude --this-machine` (`cli/src/local-login.ts`) runs `claude setup-token` on the
+  computer, reads the token off its screen without showing it, and hands it to the local runner with `docker exec -i
+  windlass-runner windlass-runner login claude --token-stdin`: on standard input only, never on an argument, never over
+  the network. It sends nothing to the platform; the runner's report carries the new sign-in state. Without a running
+  `windlass-runner` container it says "Pair this machine first: npx @windlassai/cli connect --machine".
+- `docker exec -it windlass-runner windlass-runner login claude` runs Anthropic's `claude setup-token` in the attached
+  terminal; paste the token at the hidden prompt. A token minted on another computer works there too.
+- `windlass-runner login claude --token-stdin` reads one setup token from a pipe (refused from a terminal).
 
 The runner stores the token in `wlp-harness-claude-<machine id>`. The local login helper writes it.
 A per-machine relay reads this volume for each request. Each hardened Claude session gets a
@@ -405,6 +417,13 @@ Anthropic. The agent keeps its original interfaces and mounts.
 `docker exec windlass-runner windlass-runner logout claude` removes the relay and token for each
 pairing, and Claude Code pays through Pay with again. The runner's `prune` also removes the socket and login volumes.
 
+"Switch back to your plan" on Connections does the same without a terminal, for the current pairing: the user action
+`removeMachineClaudeLogin` asks the machine actor (`internalForgetClaudeLogin`), which sends the control frame
+`forget-claude-login` and waits up to 45 seconds for `claude-login-forgotten` (`ok` false where Docker could not remove
+it). The runner removes the token as `logout claude` does, checks the sign-in again and reports. An offline runner is
+refused with `machine_not_connected`, a failed removal with `claude_login_kept`. Every runner from the minimum, 0.3.13,
+reads the frame, so it is not gated on a capability.
+
 ### Plans on this machine
 
 Every runner the platform serves (0.3.13 and later) runs a plan-paid turn's relay on the machine: the plan's token is
@@ -416,7 +435,7 @@ handed a ChatGPT access token. Who pays:
   `npx @windlassai/cli connect codex`. On a machine this is not behind `WLP_PLAN_USERS`.
 - **Claude Code and Codex**: Connections → Pay with decides, as for hosted turns: the plan, the key, or the plan then
   the key, and what a limited plan does. Codex has no login of its own on a machine. Claude Code's own login kept with
-  `windlass-runner login claude` wins on that machine. A Claude plan is behind `WLP_PLAN_USERS` on machines as hosted.
+  `connect claude --this-machine` (or `windlass-runner login claude`) wins on that machine. A Claude plan is behind `WLP_PLAN_USERS` on machines as hosted.
   The machine's listing (`listedHarness` in `server/src/sandbox/harnesses.ts`) marks such an agent `paysWith`, and
   its `signIn` is "token" when a connected plan usable there or a saved key can pay; the factory and the launch form
   read that.

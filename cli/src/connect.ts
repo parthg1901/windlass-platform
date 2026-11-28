@@ -158,7 +158,7 @@ async function chatgptSignIn(): Promise<SignInUpload> {
 }
 
 /** Runs `claude setup-token`; falls back to a hidden paste when the token could not be read off its output. */
-async function claudeToken(): Promise<string> {
+export async function claudeToken(): Promise<string> {
 	say("Running claude setup-token. Sign in to Claude there; the token it prints comes back here.\n");
 	const run = await runSetupToken();
 	if (run.token && validPlanToken("anthropic", run.token)) {

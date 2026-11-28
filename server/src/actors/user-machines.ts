@@ -405,6 +405,32 @@ export const machineActions = {
 		}
 		return listMachines(c);
 	},
+	/**
+	 * "Switch back to your plan": the machine's runner removes the Claude Code login kept there, so its Claude Code
+	 * pays through Pay with again. Its next report says so; the list is read after the runner answered.
+	 */
+	async removeMachineClaudeLogin(c: Ctx, input: { machineId: string }): Promise<MachineSummary[]> {
+		requireUser(c);
+		enabled();
+		if (typeof input?.machineId !== "string" || (await machineSecrets(c.db, input.machineId)) === null) throw missing();
+		let answer;
+		try {
+			answer = await machine(c, input.machineId).internalForgetClaudeLogin();
+		} catch (error) {
+			if (isActorGone(error)) throw missing();
+			throw error;
+		}
+		if (answer === "offline")
+			throw new UserError("The machine is offline. Start its runner, then switch back.", {
+				code: "machine_not_connected",
+			});
+		if (answer === "failed")
+			throw new UserError(
+				"The machine could not remove its Claude login. Try again, or run docker exec windlass-runner windlass-runner logout claude on it.",
+				{ code: "claude_login_kept" },
+			);
+		return listMachines(c);
+	},
 	async setMachineDetails(c: Ctx, input: { machineId: string } & import("../contract.js").MachineDetails) {
 		requireUser(c);
 		enabled();

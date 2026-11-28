@@ -1,5 +1,6 @@
 /** The CLI's own terminal: what it shows, the browser it opens and what it reads from its user. */
 import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 
 /** Server text is shown as plain text: no escapes or control characters reach the terminal. */
 export const printable = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]/g, "");
@@ -62,6 +63,21 @@ export function readHidden(question: string): Promise<string> {
 			}
 		};
 		input.on("data", onData);
+	});
+}
+
+/** Whether a person is at this terminal to answer a question. */
+export const interactive = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
+/** Reads one answered line. Only on a terminal. */
+export function ask(question: string): Promise<string> {
+	const lines = createInterface({ input: process.stdin, output: process.stdout });
+	return new Promise(resolve => {
+		lines.question(question, answer => {
+			resolve(answer.trim());
+			lines.close();
+		});
+		lines.once("close", () => resolve(""));
 	});
 }
 

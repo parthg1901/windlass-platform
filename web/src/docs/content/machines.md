@@ -43,7 +43,11 @@ npx @windlassai/cli connect --machine
 
 It checks that Docker is installed and running, and says what to do if it is not. Then it fetches the runner image, pairs the machine and opens a page here to approve it. The page and your terminal show the same pairing code and **machine key**: check that they match, then choose **Approve**. Choose **Deny** if they differ or you did not run the command yourself; nothing is connected and the terminal stops. The dialog on the Machines page notices the new machine by itself.
 
-After you approve, it starts the runner in the background with the defaults: every agent in the runner image offered, the recommended profiles (see [What you need](#what-you-need)), **Restricted** [network access](#network-access) and limits sized for the computer. It signs no agent in: the machine's agents use the plans and keys connected on **Connections**. To change the settings later, run setup on the machine:
+After you approve, it starts the runner in the background with the defaults: every agent in the runner image offered, the recommended profiles (see [What you need](#what-you-need)), **Restricted** [network access](#network-access) and limits sized for the computer. The machine's agents use the plans and keys connected on **Connections**.
+
+Last, it asks one question in the terminal: "Claude Code on this machine: use your Claude plan from Windlass (recommended), or keep a login on this machine only?" Press Enter for the plan. Choose the second to [keep Claude Code's own login on this machine](#claude-codes-own-login-on-this-machine) now. `--local-claude` chooses it without asking; without a terminal, the plan it is.
+
+To change the settings later, run setup on the machine:
 
 ```sh
 docker run -it --rm -v /var/run/docker.sock:/var/run/docker.sock \
@@ -307,7 +311,7 @@ The choice is saved at once. A machine that is not on **Any feature** says so on
 
 On a machine of yours you can run three more agents, each with your own account:
 
-- **Claude Code** uses your connected Claude plan or your Anthropic Settings key, as **Connections → Pay with** says.
+- **Claude Code** uses your connected Claude plan or your Anthropic Settings key, as **Connections → Pay with** says, or [its own login kept on this machine](#claude-codes-own-login-on-this-machine).
 - **OpenCode** uses the providers signed in on the machine, and your Settings keys for OpenAI, Anthropic, Google and OpenRouter where it has no login of its own.
 - **Codex** uses your connected ChatGPT plan or your OpenAI Settings key, as **Connections → Pay with** says.
 
@@ -333,6 +337,20 @@ None of these agents has a tool to publish: open the pull request from the sessi
 ## What pays on your machine
 
 Claude Code and Codex follow **Connections → Pay with**, as hosted agents do. With a key, the machine receives a temporary relay credential: the saved key stays on the platform, and the provider bills the key owner. Claude Code and Codex work items count API-key tokens toward their budget. Plan turns show token usage separately. The Machines page says what pays for each agent and links to its cell on **Connections**. Where neither a plan nor a key is connected, it says "no plan or key connected": connect one on **Connections**.
+
+### Claude Code's own login on this machine
+
+Instead of your plan from Windlass, Claude Code on one machine can use a Claude login kept on that machine only. It never leaves the machine: Windlass never receives it. On **Connections**, the machine's Claude Code cell offers two ways: **Your Claude plan, from Windlass** (the default) and **This machine's own login — it never leaves this machine**. Choose the second, then run the command it shows in a terminal on that machine, once it is paired:
+
+```sh
+npx @windlassai/cli connect claude --this-machine
+```
+
+It runs `claude setup-token` there. Sign in to Claude, and the command hands the token straight to the machine's runner, which keeps it in its Claude login volume. Nothing goes to Windlass: the runner reports that it has a login, and the cell turns to **This machine's own login · stays on this machine** by itself. Without a runner on the computer, the command says "Pair this machine first: npx @windlassai/cli connect --machine".
+
+While the login is kept, it pays for Claude Code on that machine, whatever **Pay with** says. Your plan and keys on Windlass still pay for Claude Code on Hosted and on your other machines. If nothing on Windlass pays for Claude Code, the Hosted cell says "Hosted Claude Code needs your plan or a key on Windlass."
+
+**Switch back to your plan** in the cell removes the login from the machine; its runner must be online. Claude Code there then pays through **Pay with** again. On the machine itself, `docker exec windlass-runner windlass-runner logout claude` does the same.
 
 ## Sign OpenCode in
 

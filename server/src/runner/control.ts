@@ -27,6 +27,12 @@
  *                                      machine's volume of copies; only to a runner whose report said
  *                                      `sessionBackups`; answered with `backup-forgotten`
  *   backup-forgotten  runner → actor   that copy is gone, or there was none
+ *   forget-claude-login     actor → runner   remove the Claude Code login kept on the machine (`windlass-runner
+ *                                            login claude`), so its Claude Code pays through Pay with again;
+ *                                            answered with `claude-login-forgotten`. Every runner from
+ *                                            MIN_RUNNER_VERSION (0.3.13) reads it, so it is not gated
+ *   claude-login-forgotten  runner → actor   `ok`: the login is gone (or there was none); false: Docker could not
+ *                                            remove it
  *
  * What a refusal leads to on the runner: it says the sentence, never exits (a container that exits is
  * started again by Docker, which would only repeat the refusal), and asks again after REFUSED_RETRY_MS.
@@ -325,7 +331,7 @@ const serverFrame = either(
 		object({ kind: oneOf("attach"), sessionId: name, ticket: text(1024) }),
 		either(
 			object({ kind: oneOf("remove"), sandbox: sandboxId }),
-			object({ kind: oneOf("forget-backup"), sessionId: name }),
+			either(object({ kind: oneOf("forget-backup"), sessionId: name }), object({ kind: oneOf("forget-claude-login") })),
 		),
 	),
 );
@@ -491,7 +497,10 @@ const runnerFrame = either(
 		object({ kind: oneOf("heartbeat") }),
 		either(
 			object({ kind: oneOf("removed"), sandbox: sandboxId }),
-			object({ kind: oneOf("backup-forgotten"), sessionId: name }),
+			either(
+				object({ kind: oneOf("backup-forgotten"), sessionId: name }),
+				object({ kind: oneOf("claude-login-forgotten"), ok: boolean }),
+			),
 		),
 	),
 );

@@ -93,6 +93,35 @@ h3.conn-agent {
 	text-underline-offset: 3px;
 }
 
+/* A machine's Claude Code: the plan from Windlass or the machine's own login, and the command for the latter. */
+.conn-own {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 6px 0 0;
+	padding: 0 0 0 12px;
+	border: 0;
+	min-width: 0;
+	font-size: var(--text-12);
+}
+.conn-own-option {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	color: var(--ink);
+	cursor: pointer;
+}
+.conn-own-command {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 4px;
+	max-width: 360px;
+}
+.conn-own > .conn-action {
+	margin-top: 0;
+}
+
 /* On a phone each agent is a block, each place a line in it: the place on the left, its state on the right. */
 @media (max-width: 560px) {
 	.conn-grid thead {

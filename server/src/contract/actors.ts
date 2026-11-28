@@ -342,6 +342,8 @@ export interface UserActions extends SlackSettingsActions {
 	 * UserError with code `machine_not_found` for one that is not the user's. Answers with the list as it is then.
 	 */
 	removeMachine(input: { machineId: string; removeSandboxes: boolean }): Promise<MachineSummary[]>;
+	/** Asks the machine's runner to remove the Claude Code login kept there ("Switch back to your plan"). Throws with code `machine_not_found`, `machine_not_connected` or `claude_login_kept`. */
+	removeMachineClaudeLogin(input: { machineId: string }): Promise<MachineSummary[]>;
 	/** Turns the sending of saved secrets to a machine's agents on or off, from each one's next turn. Throws as `removeMachine` does. */
 	setMachineDetails(input: { machineId: string } & MachineDetails): Promise<MachineSummary[]>;
 	setMachineSecrets(input: { machineId: string; send: boolean }): Promise<MachineSummary[]>;

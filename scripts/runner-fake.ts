@@ -122,6 +122,9 @@ export class FakeRunner {
 				case "forget-backup":
 					send({ kind: "backup-forgotten", sessionId: frame.sessionId });
 					break;
+				case "forget-claude-login":
+					send({ kind: "claude-login-forgotten", ok: true });
+					break;
 			}
 		});
 		return { ws, frames, proof: () => signature, send };

@@ -540,6 +540,16 @@ export async function control(
 						}
 						audit(f.sessionId, null, "forget-backup", "done");
 						if (ws.readyState === 1) send({ kind: "backup-forgotten", sessionId: f.sessionId });
+					} else if (f.kind === "forget-claude-login") {
+						let ok = true;
+						try {
+							await owner.forgetClaudeLogin();
+						} catch (error) {
+							ok = false;
+							audit(null, null, "forget-claude-login", category(error));
+						}
+						if (ok) audit(null, null, "forget-claude-login", "done");
+						if (ws.readyState === 1) send({ kind: "claude-login-forgotten", ok });
 					} else if (f.kind !== "heartbeat") {
 						reason = "Unexpected control frame";
 						disconnect();

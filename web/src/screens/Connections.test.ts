@@ -86,7 +86,7 @@ it("shows each agent at each place, and marks the cell a link names", async () =
 	expect(cell("codex-hosted")?.getAttribute("aria-current")).toBe("true");
 	expect(cell("codex-hosted")?.className).toContain("conn-cell-target");
 	expect(state("windlass-hosted")).toBe("Your keys");
-	expect(state(`claude-${mac!.machineId}`)).toBe("Own sign-in");
+	expect(state(`claude-${mac!.machineId}`)).toBe("This machine's own login");
 	expect(cell(`windlass-${mac!.machineId}`)?.textContent).toContain("Same as Hosted");
 	expect(document.title).toBe("Connections · Windlass");
 	expect(host.querySelector('.topbar-tab[aria-current="page"]')?.textContent).toBe("Connections");
@@ -210,4 +210,36 @@ it("badges a limited plan with its reset, and offers to reconnect one that stopp
 	await act(async () => reconnect!.click());
 	await settle();
 	expect(document.querySelector("dialog")?.textContent).toContain("ChatGPT plan");
+});
+
+it("a machine's own Claude login: kept and stays there, with the way back; then the two ways and the command", async () => {
+	client = createMockClient({ pace: 0, machine: "sources" });
+	render("/connections");
+	await settle();
+	const [mac] = await client.user(ada).machines();
+	const id = `claude-${mac!.machineId}`;
+	// Nothing on Windlass pays for Claude Code: Hosted says so plainly, beside the machine's login.
+	expect(state("claude-hosted")).toBe("Not connected");
+	expect(cell("claude-hosted")?.textContent).toContain("Hosted Claude Code needs your plan or a key on Windlass.");
+	expect(state(id)).toBe("This machine's own login");
+	expect(cell(id)?.textContent).toContain("Stays on this machine");
+	const back = [...(cell(id)?.querySelectorAll("button") ?? [])].find(
+		b => b.textContent === "Switch back to your plan",
+	);
+	expect(back).toBeDefined();
+	await act(async () => back!.click());
+	await settle(60);
+	// The other machine of the mock still keeps its own login: Hosted still says it needs one on Windlass.
+	expect(cell("claude-hosted")?.textContent).toContain("needs your plan or a key on Windlass");
+	expect(state(id)).toBe("Not connected");
+	const options = [...(cell(id)?.querySelectorAll<HTMLLabelElement>(".conn-own-option") ?? [])];
+	expect(options.map(option => option.textContent)).toEqual([
+		"Your Claude plan, from Windlass",
+		"This machine's own login — it never leaves this machine",
+	]);
+	expect(options[0]!.querySelector("input")!.checked).toBe(true);
+	expect(cell(id)?.querySelector("pre")).toBeNull();
+	await act(async () => options[1]!.querySelector("input")!.click());
+	expect(cell(id)?.querySelector("pre")?.textContent).toBe("npx @windlassai/cli connect claude --this-machine");
+	expect(cell(id)?.textContent).toContain("Waiting for the machine to report the login");
 });

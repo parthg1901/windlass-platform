@@ -1415,6 +1415,35 @@ try {
 		},
 	);
 	await checkControl(
+		"forget-claude-login removes the machine's own Claude login and answers whether it went, keeping the socket",
+		async () => {
+			for (const fails of [false, true]) {
+				await withControl([lease()], async r => {
+					let asked = 0;
+					Object.assign(r.owner, {
+						forgetClaudeLogin: async () => {
+							asked++;
+							if (fails) throw new Error("Docker could not update the Claude login volume.");
+						},
+					});
+					const ws = await r.online(0);
+					ws.frame({ kind: "forget-claude-login" });
+					await until(() => ws.sent.some(f => f.kind === "claude-login-forgotten"));
+					assert.equal(asked, 1);
+					assert.deepEqual(
+						ws.sent.filter(f => f.kind === "claude-login-forgotten"),
+						[{ kind: "claude-login-forgotten", ok: !fails }],
+					);
+					assert.equal(ws.readyState, 1);
+				});
+			}
+			assert.ok(parseServerFrame(JSON.stringify({ kind: "forget-claude-login" })));
+			assert.equal(parseServerFrame(JSON.stringify({ kind: "forget-claude-login", token: "x" })), null);
+			assert.ok(parseRunnerFrame(JSON.stringify({ kind: "claude-login-forgotten", ok: false })));
+			assert.equal(parseRunnerFrame(JSON.stringify({ kind: "claude-login-forgotten" })), null);
+		},
+	);
+	await checkControl(
 		"the snapshot and mirror limits: the owner's flags, held to the platform's caps from its welcome, reported only to a server that named store-limits",
 		async () => {
 			const { storeFlags } = await import("../runner/src/sizing.js");

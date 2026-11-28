@@ -60,6 +60,11 @@ export interface ConnectionCell {
 	action: CellAction | null;
 	/** What the relays last saw of the plan that pays here, where it is not simply usable (`planBadge`). */
 	badge?: CellBadge;
+	/**
+	 * A machine's agent that can keep a login of its own there (`ownMachineLogin`): "offered" while the account's plan
+	 * or key pays, "kept" while that login does. The cell offers the other way, on the machine `machineId`.
+	 */
+	ownLogin?: { state: "offered" | "kept"; machineId: string };
 }
 
 /** A plan's health in a few words: at its limit (until when), or refused twice and to be connected again. */
@@ -203,9 +208,26 @@ export function machineCell(harness: HarnessId, machine: MachineSummary, hosted:
 	if (harness === "windlass") return { ...hosted, id, detail: "Same as Hosted", action: null };
 	const entry = machine.harnesses?.find(one => one.id === harness);
 	if (!entry) return { id, state: "absent", label: "Not on this machine", detail: null, action: { kind: "machines" } };
+	const ownLogin = machineHarness(harness)?.ownMachineLogin === true;
 	// No login of its own there: Pay with decides as hosted (agent-session.ts `machinePaysWith`). A login kept on the
 	// machine wins for that machine.
-	if (entry.paysWith) return { ...hosted, id, detail: hosted.state === "none" ? null : "Same as Hosted", action: null };
+	if (entry.paysWith)
+		return {
+			...hosted,
+			id,
+			detail: hosted.state === "none" ? null : "Same as Hosted",
+			action: null,
+			...(ownLogin && { ownLogin: { state: "offered" as const, machineId: machine.machineId } }),
+		};
+	if (ownLogin && entry.signIn === "token")
+		return {
+			id,
+			state: "machine",
+			label: "This machine's own login",
+			detail: "Stays on this machine",
+			action: null,
+			ownLogin: { state: "kept", machineId: machine.machineId },
+		};
 	if (entry.signIn === "none")
 		return { id, state: "none", label: "Sign in needed", detail: null, action: { kind: "machines" } };
 	if (entry.signIn === "unknown")
@@ -219,6 +241,24 @@ export function machineCell(harness: HarnessId, machine: MachineSummary, hosted:
 	if (entry.platformKeys?.length && !entry.machineSignIns?.length)
 		return { id, state: "key", label: "Your key", detail: keyNames(entry.platformKeys), action: null };
 	return { id, state: "machine", label: "Own sign-in", detail: machineMethodWords(entry), action: null };
+}
+
+/** What the Hosted cell says when nothing on Windlass pays for the agent but a login is kept on one of the machines. */
+export const HOSTED_NEEDS_WINDLASS = (harness: HarnessId) =>
+	`Hosted ${machineHarness(harness)?.name ?? harness} needs your plan or a key on Windlass.`;
+
+/**
+ * The Hosted cell beside machines: where nothing on Windlass pays for an agent (no plan, no key) while a login of its
+ * own is kept on one of the machines, it says plainly that the machine's login does not serve Hosted.
+ */
+export function withMachineLoginNote(
+	cell: ConnectionCell,
+	harness: HarnessId,
+	machines: readonly MachineSummary[],
+): ConnectionCell {
+	if (cell.state !== "none" || !machineHarness(harness)?.ownMachineLogin) return cell;
+	const kept = machines.some(machine => machineCell(harness, machine, cell).ownLogin?.state === "kept");
+	return kept ? { ...cell, detail: HOSTED_NEEDS_WINDLASS(harness) } : cell;
 }
 
 /** Whether any agent can run anywhere yet: a plan, a checked key, the ChatGPT sign-in, or a machine's signed-in agent. */

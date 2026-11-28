@@ -328,6 +328,8 @@ export interface UserApi
 	denyMachine(input: { code: string }): Promise<void>;
 	/** Removes a machine; with `removeSandboxes` its runner also removes the agents' sandboxes on it. Throws with reason `machine_not_found`. */
 	removeMachine(input: { machineId: string; removeSandboxes: boolean }): Promise<MachineSummary[]>;
+	/** Removes the Claude Code login kept on a machine, so its Claude Code pays through Pay with again. Throws with reason `machine_not_found`, `machine_not_connected` (its runner is offline) or `claude_login_kept`. */
+	removeMachineClaudeLogin(input: { machineId: string }): Promise<MachineSummary[]>;
 	/** Turns the sending of saved secrets to a machine's agents on or off. Throws as `removeMachine` does. */
 	setMachineDetails(input: {
 		machineId: string;

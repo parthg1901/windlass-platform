@@ -5598,6 +5598,7 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 		| "confirmMachine"
 		| "denyMachine"
 		| "removeMachine"
+		| "removeMachineClaudeLogin"
 		| "setMachineDetails"
 		| "setMachineSecrets"
 	> {
@@ -5698,6 +5699,20 @@ export function createMockClient(options: MockOptions = {}): MockClient {
 				machineOf(auth, machineId);
 				const set = machinesOf(auth);
 				set.list = set.list.filter(one => one.machineId !== machineId);
+				machinesChanged(auth);
+				return machinesView(auth);
+			},
+			async removeMachineClaudeLogin({ machineId }) {
+				machinesOn();
+				await latency(600);
+				const machine = machineOf(auth, machineId);
+				if (machine.status !== "online")
+					throw new PlatformError("user", "The machine is offline. Start its runner, then switch back.", {
+						reason: "machine_not_connected",
+					});
+				machine.harnesses = machine.harnesses?.map(entry =>
+					entry.id === "claude" ? { ...entry, signIn: "none" as const } : entry,
+				);
 				machinesChanged(auth);
 				return machinesView(auth);
 			},

@@ -35,6 +35,7 @@ The runner takes one command. With none, it runs `run`.
 | `log` | Prints the runner's own record of what it was asked to do, for the last 14 days. |
 | `prune` | Removes all containers and data volumes of this runner's pairings. |
 | `login opencode` | Signs OpenCode in on this machine, in your terminal. The machine must be paired first. `--provider ID` skips the list of providers. See [Sign OpenCode in](/docs/machines#sign-opencode-in). Claude Code and Codex need no sign-in on the machine: they pay with your plan or key ([What pays on your machine](/docs/machines#what-pays-on-your-machine)). |
+| `login claude` | Keeps a Claude Code login on this machine only, in place of your plan from Windlass there. `--token-stdin` reads one setup token from standard input; `npx @windlassai/cli connect claude --this-machine` uses it. See [Claude Code's own login on this machine](/docs/machines#claude-codes-own-login-on-this-machine). `logout claude` removes it. |
 | `logout opencode` | Signs OpenCode out, for this pairing and every earlier one. |
 
 ### Setup

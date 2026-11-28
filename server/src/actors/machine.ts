@@ -79,7 +79,13 @@ interface Vars {
 	live: Live | null;
 	work: Promise<void>;
 	greeting: Socket | null;
+	/** The `internalForgetClaudeLogin` calls waiting for the runner's `claude-login-forgotten`. */
+	loginRemovals: Set<(answer: ClaudeLoginRemoval) => void>;
 }
+/** How a request to remove the machine's own Claude login ended: removed, refused by Docker, or no runner to ask. */
+export type ClaudeLoginRemoval = "removed" | "failed" | "offline";
+/** How long the runner has to remove the login and answer: a helper container and a relay to stop. */
+const LOGIN_REMOVAL_MS = 45_000;
 interface Ctx {
 	db: RawAccess;
 	vars: Vars;
@@ -282,9 +288,15 @@ async function tell(c: Ctx, row: Row | undefined, delay = 1000): Promise<void> {
 	}
 }
 
+function answerLoginRemovals(c: Ctx, answer: ClaudeLoginRemoval) {
+	for (const resolve of c.vars.loginRemovals) resolve(answer);
+	c.vars.loginRemovals.clear();
+}
+
 async function disconnected(c: Ctx, ws: Socket) {
 	if (c.vars.live?.ws !== ws) return;
 	c.vars.live = null;
+	answerLoginRemovals(c, "offline");
 	const [row] = await c.db.execute<Row>("UPDATE machine SET seen = ? WHERE removed_at IS NULL RETURNING *", Date.now());
 	await tell(c, row);
 }
@@ -310,6 +322,7 @@ async function revoke(c: Ctx, removeSandboxes: boolean, idle: boolean): Promise<
 		revokeMachineLeases(c.key[0], c.key[1]);
 		const live = c.vars.live;
 		c.vars.live = null;
+		answerLoginRemovals(c, "offline");
 		if (live) reject(live.ws, refuse("removed", { removeSandboxes }));
 		await publish(c, row);
 		// A turn paused while the machine was away cannot resume on it now: its session ends it.
@@ -416,6 +429,7 @@ export const machine = actor({
 		live: null,
 		work: Promise.resolve(),
 		greeting: null,
+		loginRemovals: new Set(),
 	}),
 	onCreate: async (c, input?: Input) => {
 		if (
@@ -648,6 +662,7 @@ export const machine = actor({
 					if (frame.kind === "removed") await c.db.execute("DELETE FROM pending WHERE sandbox = ?", frame.sandbox);
 					if (frame.kind === "backup-forgotten")
 						await c.db.execute("DELETE FROM pending_backups WHERE session = ?", frame.sessionId);
+					if (frame.kind === "claude-login-forgotten") answerLoginRemovals(c, frame.ok ? "removed" : "failed");
 					if (frame.kind === "host") {
 						const sample = frame.host ? JSON.stringify(frame.host) : null;
 						const changed = await storeHost(c.db, sample);
@@ -816,6 +831,25 @@ export const machine = actor({
 				if (!r || r.removed_at !== null) return;
 				await c.db.execute("INSERT OR IGNORE INTO pending_backups (session) VALUES (?)", sessionId);
 				if (c.vars.live?.backups) c.vars.live.ws.send({ kind: "forget-backup", sessionId });
+			});
+		},
+		/**
+		 * Asks the runner to remove the Claude Code login kept on the machine ("Switch back to your plan" on
+		 * Connections) and waits for its answer. Not queued behind `ordered`: the answer arrives through it.
+		 */
+		internalForgetClaudeLogin: async (c): Promise<ClaudeLoginRemoval> => {
+			requireServiceFor(c, "call");
+			const live = c.vars.live;
+			if (!live) return "offline";
+			return new Promise<ClaudeLoginRemoval>(resolve => {
+				const timer = setTimeout(() => done("failed"), LOGIN_REMOVAL_MS);
+				const done = (answer: ClaudeLoginRemoval) => {
+					clearTimeout(timer);
+					c.vars.loginRemovals.delete(done);
+					resolve(answer);
+				};
+				c.vars.loginRemovals.add(done);
+				if (!live.ws.send({ kind: "forget-claude-login" })) done("offline");
 			});
 		},
 		internalRevoke: async (c, removeSandboxes: boolean) => {

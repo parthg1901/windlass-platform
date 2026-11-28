@@ -381,6 +381,18 @@ test("on a machine Pay with decides a plan agent's turn as hosted; only Claude C
 	assert.equal(machinePaysWith("claude", { signIn: "token" }), false);
 	assert.equal(machinePaysWith("claude", { signIn: "none" }), true);
 	assert.equal(machinePaysWith("claude", { signIn: "unknown" }), true);
+	// The machine's listing says the same, even with a Claude plan connected and a key saved: no `paysWith` while the
+	// login is kept (`connect claude --this-machine`), and Pay with again once it is removed ("Switch back to your plan").
+	const { listedHarness } = await import("../server/src/sandbox/harnesses.js");
+	const kept = listedHarness({ id: "claude", signIn: "token", keyRelay: true } as const, ["anthropic"], ["anthropic"]);
+	assert.equal(kept.paysWith, undefined);
+	assert.equal(kept.method, "subscription");
+	const removed = listedHarness(
+		{ id: "claude", signIn: "none", keyRelay: true } as const,
+		["anthropic"],
+		["anthropic"],
+	);
+	assert.equal(removed.paysWith, true);
 	// Codex keeps no login on a machine: Pay with always decides.
 	assert.equal(machinePaysWith("codex", { signIn: "none" }), true);
 	assert.equal(machinePaysWith("codex", undefined), true);

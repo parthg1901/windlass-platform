@@ -112,6 +112,7 @@ async function main() {
 		allowPositionals: true,
 		options: {
 			provider: { type: "string" },
+			"token-stdin": { type: "boolean" },
 			egress: { type: "string" },
 			"egress-allow": { type: "string" },
 			"egress-domains": { type: "string" },
@@ -157,6 +158,11 @@ async function main() {
 	const agent = positionals[1] as MachineHarness;
 	if (values.provider && !(isMachineHarness(agent) && MACHINE_HARNESSES[agent].takesProvider && command === "login"))
 		throw new RunnerError("Use --provider with login opencode.");
+	if (
+		values["token-stdin"] &&
+		!(isMachineHarness(agent) && MACHINE_HARNESSES[agent].tokenFromStdin && command === "login")
+	)
+		throw new RunnerError("Use --token-stdin with login claude.");
 	// Setup without --harness is the wizard; it takes one section name, such as setup network.
 	const wizard = command === "setup" && wantsWizard(values);
 	const validCommand = auth
@@ -164,7 +170,7 @@ async function main() {
 		: positionals.length <= (wizard ? 2 : 1) && ["setup", "run", "pair", "status", "log", "prune"].includes(command);
 	if (!validCommand)
 		throw new RunnerError(
-			"Use windlass-runner [setup [--quick|--no-tui|--connect|name|agents|opencode|profile|network|limits]|run|pair|status|capabilities|log|prune|login opencode|logout opencode] [--platform URL] [--name TEXT] [--max-sandboxes N] [--max-running N] [--spares 0|1|2] [--slots N | --max-turns N] [--slot-cpus X] [--slot-memory Nm|Ng] [--sandbox-memory Ng] [--snapshot-disk SIZE] [--snapshot-user SIZE] [--keep-free SIZE] [--screenshots] [--harness claude] [--harness opencode] [--harness codex] [--allow-profile ID ...] [--egress open|restricted|none] [--egress-allow host[,host]] [--egress-domains host|*.host|@preset[,...]].",
+			"Use windlass-runner [setup [--quick|--no-tui|--connect|name|agents|opencode|profile|network|limits]|run|pair|status|capabilities|log|prune|login opencode|login claude [--token-stdin]|logout opencode|logout claude] [--platform URL] [--name TEXT] [--max-sandboxes N] [--max-running N] [--spares 0|1|2] [--slots N | --max-turns N] [--slot-cpus X] [--slot-memory Nm|Ng] [--sandbox-memory Ng] [--snapshot-disk SIZE] [--snapshot-user SIZE] [--keep-free SIZE] [--screenshots] [--harness claude] [--harness opencode] [--harness codex] [--allow-profile ID ...] [--egress open|restricted|none] [--egress-allow host[,host]] [--egress-domains host|*.host|@preset[,...]].",
 		);
 	if (values.name !== undefined && (!["setup", "run", "pair"].includes(command) || !validMachineName(values.name)))
 		throw new RunnerError("Use --name with setup, run or pair and a printable name of 1 to 64 characters.");
@@ -221,13 +227,15 @@ async function main() {
 	process.on("SIGTERM", stop);
 	try {
 		if (auth) {
-			const { changeLogin, signedOut } = MACHINE_HARNESSES[agent];
+			const { changeLogin, signedOut, tokenFromStdin } = MACHINE_HARNESSES[agent];
 			const label = HARNESS_LABELS[agent];
 			const paired = loadPair();
 			if (!paired || (command === "login" && !paired.key))
 				throw new RunnerError("Pair this machine before signing in to " + label + ".");
 			if (command === "login") {
-				await changeLogin(new Executor(paired.current, limits), true, abort.signal, values.provider);
+				const executor = new Executor(paired.current, limits);
+				if (values["token-stdin"] && tokenFromStdin) await tokenFromStdin(executor, abort.signal);
+				else await changeLogin(executor, true, abort.signal, values.provider);
 				console.log(label + ": signed in.");
 			} else {
 				for (const identity of [paired.current, ...paired.previous]) {

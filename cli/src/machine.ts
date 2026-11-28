@@ -4,7 +4,8 @@
  * the runner's setup in a one-off container (`setupRunArgs`, shared with install.sh). The runner makes its own key
  * pair and pairs as always; this only shows the code and machine key it reports and opens the page that approves
  * them (`machineApproveUrl`). The machine's key never leaves the container and its volume; nothing here holds a
- * secret. No agent signs in: the machine's agents pay with the plans and keys on the account.
+ * secret. No agent signs in here: the machine's agents pay with the plans and keys on the account, unless the
+ * question that follows (local-login.ts `chooseClaudeHere`) keeps a Claude login on this machine.
  */
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -72,13 +73,14 @@ function dockerHost(): DockerHost {
 	}
 }
 
-/** Docker is installed, running and this user's to use, or a message that says which is not. */
-async function checkDocker(): Promise<void> {
+/** Docker is installed, running and this user's to use, or a message that says which is not, then `next`. */
+export async function checkDocker(next?: string): Promise<void> {
 	const host = dockerHost();
 	const info = await docker(["info", "--format", "{{.ServerVersion}}"], "pipe");
-	if (info.missing) throw new CliError(DOCKER_HELP.missing[host]);
+	const fail = (message: string) => new CliError(next ? `${message} ${next}` : message);
+	if (info.missing) throw fail(DOCKER_HELP.missing[host]);
 	if (info.code === 0) return;
-	throw new CliError(dockerDenied(info.stderr) ? DOCKER_HELP.denied : DOCKER_HELP.stopped[host]);
+	throw fail(dockerDenied(info.stderr) ? DOCKER_HELP.denied : DOCKER_HELP.stopped[host]);
 }
 
 /** This computer's name for the Machines page; inside Docker Desktop the runner would only see its VM's. */
@@ -129,17 +131,19 @@ async function runSetup(args: string[], platformUrl: string, browser: boolean): 
 }
 
 /** Runs `docker`; `missing` when there is no docker command at all. */
-function docker(
+export function docker(
 	args: string[],
 	stdio: "inherit" | "pipe",
-): Promise<{ code: number | null; stderr: string; missing: boolean }> {
+): Promise<{ code: number | null; stdout: string; stderr: string; missing: boolean }> {
 	return new Promise(resolve => {
 		const child = spawn("docker", args, { stdio: ["ignore", stdio, stdio] });
+		let stdout = "";
 		let stderr = "";
+		child.stdout?.on("data", chunk => (stdout += chunk));
 		child.stderr?.on("data", chunk => (stderr += chunk));
 		child.once("error", error =>
-			resolve({ code: null, stderr, missing: (error as NodeJS.ErrnoException).code === "ENOENT" }),
+			resolve({ code: null, stdout, stderr, missing: (error as NodeJS.ErrnoException).code === "ENOENT" }),
 		);
-		child.once("close", code => resolve({ code, stderr, missing: false }));
+		child.once("close", code => resolve({ code, stdout, stderr, missing: false }));
 	});
 }

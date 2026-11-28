@@ -2,7 +2,7 @@
 import type { ModelProvider } from "../../server/src/contract.js";
 import { innerModesReason } from "../../server/src/sandbox/codex-modes.js";
 import { keyRelayUrl, openCodeCredentials, prepareRelay, type ProviderLogin } from "./claude-relay.js";
-import { changeClaudeLogin } from "./harness-login.js";
+import { changeClaudeLogin, claudeLoginFromStdin } from "./harness-login.js";
 import { changeProviderLogin, currentProvider } from "./opencode-login.js";
 import { providerHosts } from "./opencode-providers.js";
 import type { MachineDocker, MachineHarness } from "./policy.js";
@@ -42,6 +42,8 @@ export interface MachineHarnessRecord {
 	changeLogin: (m: MachineDocker, login: boolean, signal: AbortSignal, provider?: string) => Promise<unknown>;
 	/** Whether `login` takes `--provider`. */
 	takesProvider: boolean;
+	/** `login --token-stdin`: keeps a token piped in, with no questions (Claude Code's setup token). */
+	tokenFromStdin?: (m: MachineDocker, signal: AbortSignal) => Promise<void>;
 	/** The line after a successful logout. */
 	signedOut: string;
 }
@@ -68,6 +70,7 @@ export const MACHINE_HARNESSES: Record<MachineHarness, MachineHarnessRecord> = {
 		credentials: relayCredentials,
 		changeLogin: changeClaudeLogin,
 		takesProvider: false,
+		tokenFromStdin: claudeLoginFromStdin,
 		signedOut: "signed out.",
 	},
 	codex: {

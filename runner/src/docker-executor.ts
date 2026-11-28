@@ -74,6 +74,7 @@ import {
 	loginFileState,
 	dropDetachedLoginVolume,
 	retireClaudeRelay,
+	storeClaudeLogin,
 	withLoginVolume,
 } from "./harness-login.js";
 import { open, type Egress } from "./egress-policy.js";
@@ -699,6 +700,15 @@ export class Executor extends MachineDocker {
 			);
 		}, delay);
 		this.signInRetry.unref?.();
+	}
+	/**
+	 * The platform's `forget-claude-login` ("Switch back to your plan" on Connections): the Claude Code login kept on
+	 * this machine goes as with `logout claude`, for this pairing, and the report says Claude Code has none.
+	 */
+	async forgetClaudeLogin() {
+		await storeClaudeLogin(this, undefined);
+		await this.serial(() => this.loginChanged(false));
+		this.publishReport?.();
 	}
 	async loginChanged(signedIn: boolean) {
 		await this.refreshLogin();
