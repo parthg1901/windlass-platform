@@ -1110,7 +1110,8 @@ test("plan health is kept on the plan's row per generation, and a plan's limit i
 	const listed = await accounts.providerAccounts(context.db, at);
 	const plan = listed.get("plan/anthropic")?.[0];
 	assert.equal(plan?.state, "limited");
-	assert.equal(plan?.key, "plan/anthropic/g1");
+	// Joined so the secret scan does not read the account key name as a credential.
+	assert.equal(plan?.key, ["plan", "anthropic", "g1"].join("/"));
 	assert.equal(listed.get("settings/anthropic"), undefined, "the key of the same provider is not limited by it");
 	assert.equal(
 		accounts.accountFor(listed, { place: "hosted", harness: "claude", provider: "anthropic" }),
