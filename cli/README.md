@@ -72,7 +72,7 @@ that machine's Claude Code. **Switch back to your plan** there removes it again.
 
 ## Options
 
-- `--platform <url>` or `WINDLASS_PLATFORM`: a self-hosted platform (default `https://windlass.parthg.dev`).
+- `--platform <url>` or `WINDLASS_PLATFORM`: a self-hosted platform (default `https://usewindlass.com`).
 - `--no-browser`: print the connect page's address instead of opening it (for `--machine` too).
 - `--token-stdin` (`connect claude` only): read the setup token from standard input instead of running `claude setup-token`.
 - `--this-machine` (`connect claude` only): keep the login on this computer's runner instead of connecting the plan to your account.

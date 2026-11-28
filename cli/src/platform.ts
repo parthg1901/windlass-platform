@@ -1,7 +1,7 @@
 /** The platform the CLI talks to, and its JSON requests. */
 
 /** The hosted Windlass platform; `--platform <url>` or `WINDLASS_PLATFORM` names another (a self-hosted one). */
-export const DEFAULT_PLATFORM = "https://windlass.parthg.dev";
+export const DEFAULT_PLATFORM = "https://usewindlass.com";
 
 export class CliError extends Error {}
 

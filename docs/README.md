@@ -2,7 +2,7 @@
 
 These files are for people who run, self-host or work on Windlass Platform. People who use the product
 read the user docs instead: they live in [`web/src/docs/content/`](../web/src/docs/content/) and are served
-at `/docs`, for example at <https://windlass.parthg.dev/docs>.
+at `/docs`, for example at <https://usewindlass.com/docs>.
 
 | File | What it covers |
 |---|---|
